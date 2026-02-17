@@ -831,9 +831,58 @@ function showAddMetricModal() {
                             Да/Нет + Варианты
                         </button>
                     </div>
+
+                    <div id="compound-config-number" class="compound-config" style="display: none;">
+                        <label class="form-label">
+                            <span class="label-text">Текст вопроса</span>
+                            <input id="compound-question-num" placeholder="Например: Употреблял алкоголь" class="form-input">
+                        </label>
+                        <div class="form-label">
+                            <span class="label-text">Число появляется при выборе:</span>
+                            <div class="radio-group-inline">
+                                <label class="radio-inline">
+                                    <input type="radio" name="compound-condition-num" value="true" checked>
+                                    <span>Да</span>
+                                </label>
+                                <label class="radio-inline">
+                                    <input type="radio" name="compound-condition-num" value="false">
+                                    <span>Нет</span>
+                                </label>
+                            </div>
+                        </div>
+                        <label class="form-label">
+                            <span class="label-text">Подпись числа</span>
+                            <input id="compound-num-label" placeholder="Например: Количество порций" class="form-input">
+                        </label>
+                    </div>
+
+                    <div id="compound-config-enum" class="compound-config" style="display: none;">
+                        <label class="form-label">
+                            <span class="label-text">Текст вопроса</span>
+                            <input id="compound-question-enum" placeholder="Например: Была тренировка" class="form-input">
+                        </label>
+                        <div class="form-label">
+                            <span class="label-text">Варианты появляются при выборе:</span>
+                            <div class="radio-group-inline">
+                                <label class="radio-inline">
+                                    <input type="radio" name="compound-condition-enum" value="true" checked>
+                                    <span>Да</span>
+                                </label>
+                                <label class="radio-inline">
+                                    <input type="radio" name="compound-condition-enum" value="false">
+                                    <span>Нет</span>
+                                </label>
+                            </div>
+                        </div>
+                        <label class="form-label">
+                            <span class="label-text">Варианты выбора (через запятую)</span>
+                            <input id="compound-enum-options" placeholder="кардио, силовая, растяжка, йога" class="form-input">
+                            <span class="label-hint">Введите варианты через запятую</span>
+                        </label>
+                    </div>
+
                     <div class="label-hint">
-                        <strong>Да/Нет + Число:</strong> Сначала выбор да/нет, при "да" появляется поле с числом (например: пил алкоголь → сколько порций)<br>
-                        <strong>Да/Нет + Варианты:</strong> Сначала выбор да/нет, при "да" появляется выбор из вариантов (например: была тренировка → какой тип)
+                        💡 <strong>Совет:</strong> В превью справа можно кликать по кнопкам, чтобы увидеть как работает условная логика
                     </div>
                 </div>
             </div>
@@ -856,22 +905,33 @@ function showAddMetricModal() {
     `;
     document.body.appendChild(overlay);
 
-    // Compound examples
-    let currentCompoundConfig = null;
+    // Compound configuration
+    let currentCompoundType = null;
 
-    const compoundExamples = {
-        bool_number: {
-            fields: [
-                { name: 'has', type: 'boolean', label: 'Было' },
-                { name: 'amount', type: 'number', label: 'Количество', condition: 'has == true' }
-            ]
-        },
-        bool_enum: {
-            fields: [
-                { name: 'has', type: 'boolean', label: 'Было' },
-                { name: 'type', type: 'enum', label: 'Тип', options: ['вариант 1', 'вариант 2', 'вариант 3'], condition: 'has == true' }
-            ]
+    const buildCompoundConfig = () => {
+        if (currentCompoundType === 'bool_number') {
+            const question = document.getElementById('compound-question-num').value || 'Было';
+            const condition = document.querySelector('input[name="compound-condition-num"]:checked').value;
+            const numLabel = document.getElementById('compound-num-label').value || 'Количество';
+            return {
+                fields: [
+                    { name: 'has', type: 'boolean', label: question },
+                    { name: 'amount', type: 'number', label: numLabel, condition: `has == ${condition}` }
+                ]
+            };
+        } else if (currentCompoundType === 'bool_enum') {
+            const question = document.getElementById('compound-question-enum').value || 'Было';
+            const condition = document.querySelector('input[name="compound-condition-enum"]:checked').value;
+            const optionsStr = document.getElementById('compound-enum-options').value || 'вариант 1, вариант 2, вариант 3';
+            const options = optionsStr.split(',').map(s => s.trim()).filter(Boolean);
+            return {
+                fields: [
+                    { name: 'has', type: 'boolean', label: question },
+                    { name: 'type', type: 'enum', label: 'Тип', options, condition: `has == ${condition}` }
+                ]
+            };
         }
+        return null;
     };
 
     // Update preview on any change
@@ -931,8 +991,11 @@ function showAddMetricModal() {
             mockMetric.config.min = parseFloat(document.getElementById('nm-min').value) || 0;
             mockMetric.config.max = parseFloat(document.getElementById('nm-max').value) || 100;
             mockMetric.config.step = parseFloat(document.getElementById('nm-step').value) || 1;
-        } else if (type === 'compound' && currentCompoundConfig) {
-            mockMetric.config.fields = currentCompoundConfig.fields;
+        } else if (type === 'compound') {
+            const compoundConfig = buildCompoundConfig();
+            if (compoundConfig) {
+                mockMetric.config.fields = compoundConfig.fields;
+            }
         }
 
         // Render preview
@@ -950,19 +1013,60 @@ function showAddMetricModal() {
         } else if (type === 'time') {
             previewHTML = renderTime(mockMetric, null);
         } else if (type === 'compound') {
-            previewHTML = currentCompoundConfig
+            const compoundConfig = buildCompoundConfig();
+            previewHTML = compoundConfig
                 ? renderCompound(mockMetric, null)
-                : '<div class="label-hint">Выберите пример составной метрики</div>';
+                : '<div class="label-hint">Выберите структуру составной метрики</div>';
         }
 
         preview.innerHTML = `
-            <div class="metric-card">
+            <div class="metric-card" id="preview-card">
                 <div class="metric-header">
                     <label class="metric-label">${name}</label>
                 </div>
                 <div class="metric-input">${previewHTML}</div>
             </div>
         `;
+
+        // Make preview interactive for compound metrics
+        if (type === 'compound') {
+            const previewCard = document.getElementById('preview-card');
+            previewCard.querySelectorAll('.bool-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const parent = btn.parentElement;
+                    parent.querySelectorAll('.bool-btn').forEach(b => b.classList.remove('active', 'yes', 'no'));
+
+                    const value = btn.dataset.value === 'true';
+                    if (value) {
+                        btn.classList.add('active', 'yes');
+                    } else {
+                        btn.classList.add('active', 'no');
+                    }
+
+                    // Show/hide conditional fields
+                    const compoundField = btn.closest('.compound-fields');
+                    if (compoundField) {
+                        const condition = btn.dataset.compoundField;
+                        const compoundConfig = buildCompoundConfig();
+                        if (compoundConfig && compoundConfig.fields) {
+                            compoundConfig.fields.forEach(field => {
+                                if (field.condition) {
+                                    const match = field.condition.match(/(\w+)\s*==\s*(true|false)/);
+                                    if (match) {
+                                        const condValue = match[2] === 'true';
+                                        const condField = compoundField.querySelector(`[data-cfield="${field.name}"]`);
+                                        if (condField) {
+                                            condField.classList.toggle('hidden', value !== condValue);
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    }
+                });
+            });
+        }
     };
 
     // Attach event listeners
@@ -979,12 +1083,40 @@ function showAddMetricModal() {
     document.querySelectorAll('.compound-example-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const example = btn.dataset.example;
-            currentCompoundConfig = compoundExamples[example];
+            currentCompoundType = example;
+
+            // Show/hide config sections
+            document.getElementById('compound-config-number').style.display = example === 'bool_number' ? 'block' : 'none';
+            document.getElementById('compound-config-enum').style.display = example === 'bool_enum' ? 'block' : 'none';
+
+            // Set active button
             document.querySelectorAll('.compound-example-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
+
+            // Set default values if empty
+            if (example === 'bool_number') {
+                if (!document.getElementById('compound-question-num').value) {
+                    document.getElementById('compound-question-num').value = 'Употреблял алкоголь';
+                    document.getElementById('compound-num-label').value = 'Количество порций';
+                }
+            } else if (example === 'bool_enum') {
+                if (!document.getElementById('compound-question-enum').value) {
+                    document.getElementById('compound-question-enum').value = 'Была тренировка';
+                    document.getElementById('compound-enum-options').value = 'кардио, силовая, растяжка, йога';
+                }
+            }
+
             updatePreview();
         });
     });
+
+    // Compound config inputs
+    document.getElementById('compound-question-num').addEventListener('input', updatePreview);
+    document.getElementById('compound-num-label').addEventListener('input', updatePreview);
+    document.querySelectorAll('input[name="compound-condition-num"]').forEach(r => r.addEventListener('change', updatePreview));
+    document.getElementById('compound-question-enum').addEventListener('input', updatePreview);
+    document.getElementById('compound-enum-options').addEventListener('input', updatePreview);
+    document.querySelectorAll('input[name="compound-condition-enum"]').forEach(r => r.addEventListener('change', updatePreview));
 
     updatePreview(); // Initial render
 
@@ -1019,11 +1151,12 @@ function showAddMetricModal() {
             config.max = parseFloat(document.getElementById('nm-max').value) || 100;
             config.step = parseFloat(document.getElementById('nm-step').value) || 1;
         } else if (type === 'compound') {
-            if (!currentCompoundConfig) {
-                alert('Выберите пример составной метрики');
+            const compoundConfig = buildCompoundConfig();
+            if (!compoundConfig) {
+                alert('Настройте составную метрику');
                 return;
             }
-            config.fields = currentCompoundConfig.fields;
+            config.fields = compoundConfig.fields;
         }
 
         try {
