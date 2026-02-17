@@ -1,10 +1,12 @@
 #!/bin/bash
-cd "$(dirname "$0")/backend"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+cd "$SCRIPT_DIR/backend"
 source venv/bin/activate
 python -m uvicorn app.main:app --reload --port 8000 &
 BACKEND_PID=$!
 
-cd "$(dirname "$0")/frontend"
+cd "$SCRIPT_DIR/frontend"
 python -m http.server 3000 &
 FRONTEND_PID=$!
 

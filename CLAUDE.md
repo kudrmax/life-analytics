@@ -17,6 +17,7 @@ Life Analytics — a personal daily metrics tracker with flexible metric configu
 - Values stored as JSON blobs in SQLite (`value_json` column) for flexibility.
 - Two entry modes: **daily** (one entry per metric per day) and **multiple** (several timestamped entries per day, e.g. mood).
 - Aggregations for multi-entry metrics: average, min/max, intra-day dynamics.
+- Uses `aiosqlite` (async SQLite) with WAL mode and foreign keys enabled.
 
 ### Key API Groups
 - `/api/metrics` — CRUD for metric definitions
@@ -33,6 +34,13 @@ Life Analytics — a personal daily metrics tracker with flexible metric configu
 ## Commands
 
 ```bash
+# Initial setup (one-time)
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cd ..
+
 # Run everything (backend + frontend)
 ./run.sh
 
@@ -45,7 +53,9 @@ cd frontend && python -m http.server 3000
 
 - Backend: http://localhost:8000 (API docs at /docs)
 - Frontend: http://localhost:3000
-- DB file: `backend/life_analytics.db` (created on first run)
+- DB file: `backend/life_analytics.db` (created on first run, configurable via `LA_DB_PATH` env var)
+
+**Note:** No tests exist yet in this project.
 
 ## Project Structure
 
