@@ -18,7 +18,8 @@
       "Bash(if [ -f \"/Users/mdmkudryashov/PycharmProjects/life-analytics/backend/app/seed.py\" ])",
       "Bash(then)",
       "Bash(else)",
-      "Bash(fi)"
+      "Bash(fi)",
+      "Bash(pkill:*)"
     ]
   }
 }

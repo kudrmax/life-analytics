@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Life Analytics — a multi-user daily metrics tracker with JWT authentication, flexible metric configuration, multi-entry support, and CSV export/import.
+Life Analytics — a multi-user daily metrics tracker with JWT authentication, flexible metric configuration, multi-entry support, and ZIP export/import.
 
 ## Architecture
 
@@ -17,11 +17,12 @@ Life Analytics — a multi-user daily metrics tracker with JWT authentication, f
 - **JWT tokens** with 7-day expiration (HS256 algorithm)
 - **Password hashing** using bcrypt (12 rounds)
 - **User isolation**: Each user has their own metrics and entries
-- **Default metrics**: 22 metrics automatically created on registration
+- **Default metrics**: 23 metrics automatically created on registration from `seed.py`
 - **Session management**: Token stored in localStorage, auto-redirect on 401
 
 Environment variables:
 - `LA_SECRET_KEY` — JWT signing key (default: "dev-secret-key-change-in-production")
+- `LA_DB_PATH` — database file path (default: "life_analytics.db")
 
 ### Database Schema
 
@@ -39,7 +40,7 @@ users (1) ──→ (N) entries          [ON DELETE CASCADE]
 - `entries` — id, metric_id, user_id, date, timestamp, value_json
 
 **JSON fields for flexibility:**
-- `config_json` — metric settings (min/max, options, compound fields)
+- `config_json` — metric settings (min/max, options, compound fields with conditions)
 - `value_json` — entry values (varies by type: {"value": 5}, {"period": "morning", "value": 4}, etc.)
 
 **Indexes:** user_id on all tables, (metric_id, date) on entries, date on entries
@@ -52,14 +53,16 @@ users (1) ──→ (N) entries          [ON DELETE CASCADE]
 - **daily** — one entry per day
 - **multiple** — three entries per day (morning/day/evening) with automatic aggregation
 
-**Sources:** manual (default), todoist, google_calendar
+**Sources:** manual (default), todoist, google_calendar (integrations not yet implemented)
 
-**Compound metrics:** Support conditional fields (e.g., "workout done?" → if yes, show "type" dropdown)
+**Compound metrics:** Support conditional fields using "condition" property (e.g., "planned == true" to show field only when another is true)
+
+**Default metrics location:** `backend/app/seed.py` — edit `DEFAULT_METRICS` list to customize metrics for new users
 
 ### API Structure
 
 **Authentication:**
-- `POST /api/auth/register` — create user + return JWT
+- `POST /api/auth/register` — create user, seed default metrics, return JWT
 - `POST /api/auth/login` — authenticate + return JWT
 - `GET /api/auth/me` — get current user info
 
@@ -74,8 +77,8 @@ users (1) ──→ (N) entries          [ON DELETE CASCADE]
 - `/api/analytics/streaks` — consecutive days for boolean metrics
 
 **Export/Import:**
-- `GET /api/export/csv` — export all user entries to CSV
-- `POST /api/export/import` — import entries from CSV (with duplicate detection)
+- `GET /api/export/csv` — export ZIP archive with metrics.csv + entries.csv
+- `POST /api/export/import` — import ZIP archive (creates/updates metrics, imports entries)
 
 All endpoints except `/api/auth/*` require `Authorization: Bearer <token>` header.
 
@@ -88,7 +91,7 @@ All endpoints except `/api/auth/*` require `Authorization: Bearer <token>` heade
 
 **Key files:**
 - `js/api.js` — API client with token management and 401 handling
-- `js/app.js` — routing, rendering, auth state, all page logic
+- `js/app.js` — routing, rendering, auth state, all page logic (1200+ lines)
 
 **Auth flow:**
 1. App loads → check token in localStorage
@@ -100,8 +103,8 @@ All endpoints except `/api/auth/*` require `Authorization: Bearer <token>` heade
 - Visual feedback: filled daily metrics dimmed (50% opacity)
 - Quick actions: +/- buttons for numbers, × clear button per metric
 - Period-based tracking: morning/day/evening sections for multiple-frequency metrics
-- Export: downloads CSV file with auto-generated filename
-- Import: file picker → upload → shows import summary (imported/skipped/errors)
+- Export: downloads ZIP file with metrics.csv + entries.csv
+- Import: file picker (accepts .zip) → upload → shows detailed summary (metrics: imported/updated, entries: imported/skipped/errors)
 
 ## Commands
 
@@ -130,6 +133,9 @@ sqlite3 backend/life_analytics.db ".schema"
 
 # Query database
 sqlite3 backend/life_analytics.db "SELECT * FROM users"
+
+# Count metrics per user
+sqlite3 backend/life_analytics.db "SELECT username, COUNT(m.id) FROM users u LEFT JOIN metric_configs m ON u.id = m.user_id GROUP BY username"
 ```
 
 **URLs:**
@@ -155,22 +161,22 @@ backend/
     main.py            — FastAPI app, CORS, startup (init_db)
     database.py        — SQLite connection, schema init with users table
     schemas.py         — Pydantic models (auth + metrics + entries)
-    auth.py            — JWT utils (create_token, verify_token, hash_password)
-    seed.py            — DEFAULT_METRICS definitions
+    auth.py            — JWT utils (create_token, verify_token, hash_password with bcrypt)
+    seed.py            — DEFAULT_METRICS definitions (23 metrics)
     routers/
-      auth.py          — /api/auth/* (register, login, me)
+      auth.py          — /api/auth/* (register with metric seeding, login, me)
       metrics.py       — /api/metrics CRUD (protected)
       entries.py       — /api/entries CRUD (protected)
       daily.py         — /api/daily/{date} summary (protected)
       analytics.py     — trends, correlations, streaks (protected)
-      export_import.py — CSV export/import (protected)
-  requirements.txt     — dependencies (includes bcrypt, python-jose)
+      export_import.py — ZIP export/import (protected)
+  requirements.txt     — dependencies (bcrypt, python-jose, etc.)
 
 frontend/
   index.html           — main HTML with nav
   js/
     api.js             — API client + token management
-    app.js             — SPA: routing, auth, all pages (login/register/today/history/dashboard/settings)
+    app.js             — SPA: routing, auth, all pages
   css/style.css        — dark theme styles + auth pages
 
 life_analytics.db      — SQLite database (gitignored)
@@ -189,16 +195,17 @@ run.sh                 — convenience script to run backend + frontend
 - Metrics with same ID allowed across users (composite PK: id + user_id)
 - Return 404 (not 403) on unauthorized access to prevent info disclosure
 
-**CSV format:**
-```csv
-date,metric_id,metric_name,timestamp,value_json
-2026-02-17,mood,Настроение,2026-02-17T12:00:00,"{""period"": ""morning"", ""value"": 5}"
+**ZIP export format:**
+```
+archive.zip
+├── metrics.csv     — id, name, category, type, frequency, source, config_json, enabled, sort_order
+└── entries.csv     — date, metric_id, timestamp, value_json
 ```
 
 **Import behavior:**
-- Skips duplicate entries (same metric_id, date, value_json, user_id)
-- Only imports metrics that exist for the user
-- Returns summary: {imported: N, skipped: N, errors: [...]}
+- Imports metrics first (creates new or updates existing by id+user_id)
+- Then imports entries (skips duplicates: same metric_id, date, value_json, user_id)
+- Returns detailed summary: {metrics: {imported, updated, errors}, entries: {imported, skipped, errors}}
 
 **Metric config examples:**
 ```json
@@ -208,7 +215,7 @@ date,metric_id,metric_name,timestamp,value_json
 // Number
 {"min": 0, "max": 20, "label": "чашек"}
 
-// Compound
+// Compound with conditional fields
 {
   "fields": [
     {"name": "done", "type": "boolean", "label": "Была тренировка"},
@@ -233,6 +240,32 @@ date,metric_id,metric_name,timestamp,value_json
 {"done": true, "type": "кардио"}
 ```
 
+## Customizing Default Metrics
+
+**File:** `backend/app/seed.py`
+
+Edit `DEFAULT_METRICS` list to customize metrics created for new users on registration.
+
+**Structure:**
+```python
+{
+    "id": "unique_id",           # Unique identifier
+    "name": "Display Name",      # User-facing name
+    "category": "Category",      # For grouping in UI
+    "type": "scale",             # scale/boolean/number/time/enum/compound
+    "frequency": "daily",        # daily/multiple
+    "source": "manual",          # manual/todoist/google_calendar (optional)
+    "config": {                  # Type-specific config
+        "min": 1,
+        "max": 5
+    },
+    "enabled": True,             # Default True (optional)
+    "sort_order": 0              # Display order (optional)
+}
+```
+
+**Important:** Changes only affect NEW users. Existing users must add metrics via UI or import.
+
 ## Common Workflows
 
 **Add new router:**
@@ -244,10 +277,22 @@ date,metric_id,metric_name,timestamp,value_json
 **Add new metric type:**
 1. Update frontend rendering in `app.js` (renderMetricInput function)
 2. Update config validation if needed
-3. Default metrics use `seed.py` DEFAULT_METRICS list
+3. Add to DEFAULT_METRICS in `seed.py` if should be default
+
+**Modify default metrics:**
+1. Edit `backend/app/seed.py` DEFAULT_METRICS list
+2. Restart backend
+3. Changes apply only to new registrations
+4. Existing users unaffected
 
 **Database changes:**
 1. Update schema in `database.py` init_db()
-2. Delete `life_analytics.db` file
+2. Delete `backend/life_analytics.db` file
 3. Restart backend (will recreate DB)
 4. Note: This loses all data — migrations not implemented yet
+
+**Migrate user to new metrics:**
+1. Register new account (gets updated DEFAULT_METRICS)
+2. Export data from old account (Settings → Export ZIP)
+3. Import into new account (Settings → Import ZIP)
+4. Old metrics will be created/updated during import
