@@ -817,10 +817,10 @@ async function renderSettings(container) {
     html += '<h2>Настройки метрик</h2>';
     html += '<div class="settings-actions">';
     html += '<button class="btn-primary" id="add-metric">+ Новая метрика</button>';
-    html += '<button class="btn-small" id="export-btn">📥 Экспорт CSV</button>';
-    html += '<button class="btn-small" id="import-btn">📤 Импорт CSV</button>';
+    html += '<button class="btn-small" id="export-btn">📥 Экспорт ZIP</button>';
+    html += '<button class="btn-small" id="import-btn">📤 Импорт ZIP</button>';
     html += '</div>';
-    html += '<input type="file" id="import-file" accept=".csv" style="display:none">';
+    html += '<input type="file" id="import-file" accept=".zip" style="display:none">';
 
     const categories = {};
     for (const m of allMetrics) {
@@ -871,13 +871,13 @@ async function renderSettings(container) {
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `life_analytics_${localStorage.getItem('la_username')}_${new Date().toISOString().slice(0,10)}.csv`;
+            a.download = `life_analytics_${localStorage.getItem('la_username')}_${new Date().toISOString().slice(0,10)}.zip`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
             window.URL.revokeObjectURL(url);
 
-            alert('✅ Данные экспортированы!');
+            alert('✅ Данные экспортированы!\n\nСкачан ZIP архив с метриками и записями.');
         } catch (error) {
             alert('Ошибка экспорта: ' + error.message);
         }
@@ -906,9 +906,29 @@ async function renderSettings(container) {
             if (!response.ok) throw new Error('Import failed');
 
             const result = await response.json();
-            alert(`✅ Импорт завершён!\n\nИмпортировано: ${result.imported}\nПропущено: ${result.skipped}${result.errors.length > 0 ? '\n\nОшибки:\n' + result.errors.join('\n') : ''}`);
+
+            let message = '✅ Импорт завершён!\n\n';
+            message += `📊 Метрики:\n`;
+            message += `  Создано: ${result.metrics.imported}\n`;
+            message += `  Обновлено: ${result.metrics.updated}\n`;
+            message += `\n📝 Записи:\n`;
+            message += `  Импортировано: ${result.entries.imported}\n`;
+            message += `  Пропущено: ${result.entries.skipped}\n`;
+
+            if (result.metrics.errors.length > 0 || result.entries.errors.length > 0) {
+                message += '\n⚠️ Ошибки:\n';
+                if (result.metrics.errors.length > 0) {
+                    message += 'Метрики:\n' + result.metrics.errors.join('\n') + '\n';
+                }
+                if (result.entries.errors.length > 0) {
+                    message += 'Записи:\n' + result.entries.errors.join('\n');
+                }
+            }
+
+            alert(message);
 
             // Refresh page to show new data
+            await loadMetrics();
             navigateTo('today');
         } catch (error) {
             alert('Ошибка импорта: ' + error.message);

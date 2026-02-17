@@ -7,7 +7,11 @@
       "Bash(timeout 5 python:*)",
       "Bash(sqlite3:*)",
       "Bash(curl:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(unzip:*)",
+      "Bash(__NEW_LINE_f8bf20c808b9f2ee__ echo \"\")",
+      "Bash(__NEW_LINE_c69cbd82a190e506__ echo \"\")",
+      "Bash(__NEW_LINE_33cf1aca7ab1e3e1__ echo \"\")"
     ]
   }
 }
