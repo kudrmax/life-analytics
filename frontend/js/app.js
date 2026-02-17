@@ -663,9 +663,13 @@ async function renderSettings(container) {
     for (const [cat, items] of Object.entries(categories)) {
         html += `<div class="category"><h3>${cat}</h3>`;
         for (const m of items) {
+            const typeLabel = getTypeLabel(m.type);
+            const freqLabel = getFrequencyLabel(m.frequency);
             html += `<div class="setting-row">
-                <span class="setting-name ${m.enabled ? '' : 'disabled'}">${m.name}</span>
-                <span class="setting-type">${m.type} | ${m.frequency} | ${m.source}</span>
+                <div class="setting-info">
+                    <span class="setting-name ${m.enabled ? '' : 'disabled'}">${m.name}</span>
+                    <span class="setting-type">${typeLabel} • ${freqLabel}</span>
+                </div>
                 <div class="setting-actions">
                     <button class="btn-icon toggle-btn" data-metric="${m.id}" data-enabled="${m.enabled}">${m.enabled ? '&#x2714;' : '&#x2716;'}</button>
                     <button class="btn-icon delete-btn" data-metric="${m.id}">&times;</button>
@@ -717,46 +721,326 @@ function showAddMetricModal() {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
-        <div class="modal">
-            <h3>Новая метрика</h3>
-            <label>ID <input id="nm-id" placeholder="my_metric"></label>
-            <label>Название <input id="nm-name" placeholder="Моя метрика"></label>
-            <label>Категория <input id="nm-cat" placeholder="Категория"></label>
-            <label>Тип <select id="nm-type">
-                <option value="boolean">boolean</option>
-                <option value="number">number</option>
-                <option value="scale">scale</option>
-                <option value="time">time</option>
-            </select></label>
-            <label>Частота <select id="nm-freq">
-                <option value="daily">daily</option>
-                <option value="multiple">multiple</option>
-            </select></label>
+        <div class="modal modal-large">
+            <h3>Создать метрику</h3>
+
+            <div class="modal-content-split">
+            <div class="modal-form">
+                <label class="form-label">
+                    <span class="label-text">Название</span>
+                    <input id="nm-name" placeholder="Например: Экранное время" class="form-input">
+                    <span class="label-hint">Как метрика будет отображаться</span>
+                </label>
+
+                <label class="form-label">
+                    <span class="label-text">Категория</span>
+                    <input id="nm-cat" placeholder="Например: Продуктивность" class="form-input">
+                    <span class="label-hint">Для группировки метрик</span>
+                </label>
+
+                <div class="form-section" id="type-section">
+                    <span class="label-text">Тип значения</span>
+                    <div class="radio-group">
+                        <label class="radio-option">
+                            <input type="radio" name="type" value="boolean" checked>
+                            <div class="radio-content">
+                                <strong>Да/Нет</strong>
+                                <span>Простой выбор (например: "Тренировка была?")</span>
+                            </div>
+                        </label>
+                        <label class="radio-option">
+                            <input type="radio" name="type" value="number">
+                            <div class="radio-content">
+                                <strong>Число</strong>
+                                <span>Количество (например: "5 чашек кофе", "2.5 часа работы")</span>
+                            </div>
+                        </label>
+                        <label class="radio-option">
+                            <input type="radio" name="type" value="scale">
+                            <div class="radio-content">
+                                <strong>Шкала 1-5</strong>
+                                <span>Оценка (например: "Качество сна: 4 из 5")</span>
+                            </div>
+                        </label>
+                        <label class="radio-option">
+                            <input type="radio" name="type" value="time">
+                            <div class="radio-content">
+                                <strong>Время</strong>
+                                <span>Указать время (например: "Подъем в 07:30")</span>
+                            </div>
+                        </label>
+                        <label class="radio-option">
+                            <input type="radio" name="type" value="compound">
+                            <div class="radio-content">
+                                <strong>Составная (условная)</strong>
+                                <span>Несколько полей с условиями (например: "Алкоголь: да/нет + количество порций")</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-section" id="frequency-section">
+                    <span class="label-text">Как часто заполнять</span>
+                    <div class="radio-group">
+                        <label class="radio-option">
+                            <input type="radio" name="frequency" value="daily" checked>
+                            <div class="radio-content">
+                                <strong>Один раз в день</strong>
+                                <span>Заполняется вечером при подведении итогов</span>
+                            </div>
+                        </label>
+                        <label class="radio-option">
+                            <input type="radio" name="frequency" value="multiple">
+                            <div class="radio-content">
+                                <strong>Три раза в день (оценка 1-5)</strong>
+                                <span>Заполняется утром, днём и вечером. Автоматически использует шкалу 1-5 (для настроения, энергии, стресса)</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <div id="number-options" class="form-section" style="display: none;">
+                    <span class="label-text">Настройки числа</span>
+                    <div class="number-options-grid">
+                        <label class="form-label-inline">
+                            <span>Единица</span>
+                            <input id="nm-unit" placeholder="часов" class="form-input-small">
+                        </label>
+                        <label class="form-label-inline">
+                            <span>Мин</span>
+                            <input id="nm-min" type="number" value="0" class="form-input-small">
+                        </label>
+                        <label class="form-label-inline">
+                            <span>Макс</span>
+                            <input id="nm-max" type="number" value="100" class="form-input-small">
+                        </label>
+                        <label class="form-label-inline">
+                            <span>Шаг</span>
+                            <input id="nm-step" type="number" value="1" step="0.1" class="form-input-small">
+                        </label>
+                    </div>
+                </div>
+
+                <div id="compound-options" class="form-section" style="display: none;">
+                    <span class="label-text">Выберите структуру</span>
+                    <div class="compound-examples">
+                        <button type="button" class="compound-example-btn" data-example="bool_number">
+                            Да/Нет + Число
+                        </button>
+                        <button type="button" class="compound-example-btn" data-example="bool_enum">
+                            Да/Нет + Варианты
+                        </button>
+                    </div>
+                    <div class="label-hint">
+                        <strong>Да/Нет + Число:</strong> Сначала выбор да/нет, при "да" появляется поле с числом (например: пил алкоголь → сколько порций)<br>
+                        <strong>Да/Нет + Варианты:</strong> Сначала выбор да/нет, при "да" появляется выбор из вариантов (например: была тренировка → какой тип)
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-preview-column">
+                <div class="preview-sticky">
+                    <span class="label-text">Превью</span>
+                    <div id="metric-preview" class="metric-preview">
+                        <!-- Preview will be rendered here -->
+                    </div>
+                </div>
+            </div>
+            </div>
+
             <div class="modal-actions">
-                <button class="btn-primary" id="nm-save">Создать</button>
+                <button class="btn-primary" id="nm-save">Создать метрику</button>
                 <button class="btn-small" id="nm-cancel">Отмена</button>
             </div>
         </div>
     `;
     document.body.appendChild(overlay);
 
+    // Compound examples
+    let currentCompoundConfig = null;
+
+    const compoundExamples = {
+        bool_number: {
+            fields: [
+                { name: 'has', type: 'boolean', label: 'Было' },
+                { name: 'amount', type: 'number', label: 'Количество', condition: 'has == true' }
+            ]
+        },
+        bool_enum: {
+            fields: [
+                { name: 'has', type: 'boolean', label: 'Было' },
+                { name: 'type', type: 'enum', label: 'Тип', options: ['вариант 1', 'вариант 2', 'вариант 3'], condition: 'has == true' }
+            ]
+        }
+    };
+
+    // Update preview on any change
+    const updatePreview = () => {
+        const name = document.getElementById('nm-name').value || 'Название метрики';
+        const frequency = document.querySelector('input[name="frequency"]:checked').value;
+
+        // Get current type (or default to scale for multiple)
+        let type;
+        if (frequency === 'multiple') {
+            type = 'scale';
+            document.getElementById('type-section').style.display = 'none';
+        } else {
+            type = document.querySelector('input[name="type"]:checked').value;
+            document.getElementById('type-section').style.display = 'block';
+        }
+
+        // Show/hide and enable/disable frequency options based on type
+        const frequencySection = document.getElementById('frequency-section');
+        const multipleOption = document.querySelector('input[name="frequency"][value="multiple"]');
+        const multipleLabel = multipleOption.closest('.radio-option');
+
+        if (frequency === 'daily') {
+            // When editing type, check if multiple should be available
+            if (type === 'scale') {
+                // Scale can use multiple frequency
+                multipleLabel.style.display = 'flex';
+            } else {
+                // Other types can only use daily frequency
+                multipleLabel.style.display = 'none';
+                // Make sure daily is selected
+                document.querySelector('input[name="frequency"][value="daily"]').checked = true;
+            }
+        }
+
+        // Show/hide options based on type
+        const numberOpts = document.getElementById('number-options');
+        const compoundOpts = document.getElementById('compound-options');
+        numberOpts.style.display = (type === 'number' && frequency === 'daily') ? 'block' : 'none';
+        compoundOpts.style.display = (type === 'compound' && frequency === 'daily') ? 'block' : 'none';
+
+        // Build mock metric object
+        const mockMetric = {
+            metric_id: 'preview',
+            name: name,
+            type: type,
+            frequency: frequency,
+            config: {},
+            entries: []
+        };
+
+        if (type === 'scale') {
+            mockMetric.config.min = 1;
+            mockMetric.config.max = 5;
+        } else if (type === 'number') {
+            mockMetric.config.label = document.getElementById('nm-unit').value;
+            mockMetric.config.min = parseFloat(document.getElementById('nm-min').value) || 0;
+            mockMetric.config.max = parseFloat(document.getElementById('nm-max').value) || 100;
+            mockMetric.config.step = parseFloat(document.getElementById('nm-step').value) || 1;
+        } else if (type === 'compound' && currentCompoundConfig) {
+            mockMetric.config.fields = currentCompoundConfig.fields;
+        }
+
+        // Render preview
+        const preview = document.getElementById('metric-preview');
+        let previewHTML = '';
+
+        if (frequency === 'multiple') {
+            previewHTML = renderMultipleInput(mockMetric);
+        } else if (type === 'scale') {
+            previewHTML = renderScale(mockMetric, null);
+        } else if (type === 'boolean') {
+            previewHTML = renderBoolean(mockMetric, null);
+        } else if (type === 'number') {
+            previewHTML = renderNumber(mockMetric, null);
+        } else if (type === 'time') {
+            previewHTML = renderTime(mockMetric, null);
+        } else if (type === 'compound') {
+            previewHTML = currentCompoundConfig
+                ? renderCompound(mockMetric, null)
+                : '<div class="label-hint">Выберите пример составной метрики</div>';
+        }
+
+        preview.innerHTML = `
+            <div class="metric-card">
+                <div class="metric-header">
+                    <label class="metric-label">${name}</label>
+                </div>
+                <div class="metric-input">${previewHTML}</div>
+            </div>
+        `;
+    };
+
+    // Attach event listeners
+    document.getElementById('nm-name').addEventListener('input', updatePreview);
+    document.getElementById('nm-cat').addEventListener('input', updatePreview);
+    document.querySelectorAll('input[name="type"]').forEach(r => r.addEventListener('change', updatePreview));
+    document.querySelectorAll('input[name="frequency"]').forEach(r => r.addEventListener('change', updatePreview));
+    document.getElementById('nm-unit').addEventListener('input', updatePreview);
+    document.getElementById('nm-min').addEventListener('input', updatePreview);
+    document.getElementById('nm-max').addEventListener('input', updatePreview);
+    document.getElementById('nm-step').addEventListener('input', updatePreview);
+
+    // Compound example buttons
+    document.querySelectorAll('.compound-example-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const example = btn.dataset.example;
+            currentCompoundConfig = compoundExamples[example];
+            document.querySelectorAll('.compound-example-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            updatePreview();
+        });
+    });
+
+    updatePreview(); // Initial render
+
     document.getElementById('nm-cancel').onclick = () => overlay.remove();
     document.getElementById('nm-save').onclick = async () => {
-        const type = document.getElementById('nm-type').value;
-        const config = {};
-        if (type === 'scale') { config.min = 1; config.max = 5; }
+        const name = document.getElementById('nm-name').value;
+        const category = document.getElementById('nm-cat').value;
 
-        await api.createMetric({
-            id: document.getElementById('nm-id').value,
-            name: document.getElementById('nm-name').value,
-            category: document.getElementById('nm-cat').value,
-            type,
-            frequency: document.getElementById('nm-freq').value,
-            config,
-        });
-        overlay.remove();
-        await loadMetrics();
-        navigateTo('settings');
+        if (!name || !category) {
+            alert('Заполните название и категорию');
+            return;
+        }
+
+        const frequency = document.querySelector('input[name="frequency"]:checked').value;
+
+        // For multiple frequency, always use scale type
+        const type = frequency === 'multiple' ? 'scale' : document.querySelector('input[name="type"]:checked').value;
+
+        // Generate ID from name
+        const id = name.toLowerCase()
+            .replace(/\s+/g, '_')
+            .replace(/[^a-z0-9_]/g, '')
+            || 'metric_' + Date.now();
+
+        const config = {};
+        if (type === 'scale') {
+            config.min = 1;
+            config.max = 5;
+        } else if (type === 'number') {
+            config.label = document.getElementById('nm-unit').value;
+            config.min = parseFloat(document.getElementById('nm-min').value) || 0;
+            config.max = parseFloat(document.getElementById('nm-max').value) || 100;
+            config.step = parseFloat(document.getElementById('nm-step').value) || 1;
+        } else if (type === 'compound') {
+            if (!currentCompoundConfig) {
+                alert('Выберите пример составной метрики');
+                return;
+            }
+            config.fields = currentCompoundConfig.fields;
+        }
+
+        try {
+            await api.createMetric({
+                id,
+                name,
+                category,
+                type,
+                frequency,
+                config,
+            });
+            overlay.remove();
+            await loadMetrics();
+            navigateTo('settings');
+        } catch (error) {
+            alert('Ошибка создания метрики: ' + error.message);
+        }
     };
 }
 
@@ -782,4 +1066,24 @@ function daysAgo(n) {
     const d = new Date();
     d.setDate(d.getDate() - n);
     return d.toISOString().slice(0, 10);
+}
+
+function getTypeLabel(type) {
+    const labels = {
+        'boolean': 'Да/Нет',
+        'number': 'Число',
+        'scale': 'Шкала 1-5',
+        'time': 'Время',
+        'enum': 'Варианты',
+        'compound': 'Составная'
+    };
+    return labels[type] || type;
+}
+
+function getFrequencyLabel(frequency) {
+    const labels = {
+        'daily': 'Раз в день',
+        'multiple': '3 раза в день'
+    };
+    return labels[frequency] || frequency;
 }
