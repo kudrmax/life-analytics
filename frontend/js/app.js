@@ -228,12 +228,7 @@ function evaluateCondition(condition, val) {
 
 // ─── Event Handlers ───
 function attachInputHandlers() {
-    // Scale buttons
-    document.querySelectorAll('.metric-card:not([data-metric-id]) .scale-btn, .metric-card .scale-buttons:not(.quick-add) .scale-btn').forEach(btn => {
-        btn.addEventListener('click', handleScaleClick);
-    });
-
-    // Simpler approach: delegate events from metrics-form
+    // Delegate events from metrics-form
     const form = document.getElementById('metrics-form');
     form.addEventListener('click', handleFormClick);
     form.addEventListener('change', handleFormChange);
@@ -247,15 +242,24 @@ async function handleFormClick(e) {
     const metricId = card.dataset.metricId;
     const entryId = card.dataset.entryId;
 
+    console.log('Click detected:', { metricId, entryId, btn: btn.className });
+
     // Quick add for multiple-frequency
     if (btn.dataset.quickValue) {
-        await api.createEntry({
-            metric_id: metricId,
-            date: currentDate,
-            timestamp: new Date().toISOString(),
-            value: { value: parseInt(btn.dataset.quickValue) },
-        });
-        renderTodayForm();
+        try {
+            console.log('Quick add detected:', { metricId, value: btn.dataset.quickValue });
+            const result = await api.createEntry({
+                metric_id: metricId,
+                date: currentDate,
+                timestamp: new Date().toISOString(),
+                value: { value: parseInt(btn.dataset.quickValue) },
+            });
+            console.log('Quick add result:', result);
+            await renderTodayForm();
+        } catch (error) {
+            console.error('Error in quick add:', error);
+            alert('Ошибка: ' + error.message);
+        }
         return;
     }
 
@@ -268,38 +272,59 @@ async function handleFormClick(e) {
 
     // Scale buttons (daily)
     if (btn.classList.contains('scale-btn') && !btn.dataset.quickValue) {
-        const value = { value: parseInt(btn.dataset.value) };
-        await saveDaily(metricId, entryId, value);
-        renderTodayForm();
+        try {
+            const value = { value: parseInt(btn.dataset.value) };
+            console.log('Saving scale value:', { metricId, entryId, value });
+            await saveDaily(metricId, entryId, value);
+            console.log('Save successful, re-rendering...');
+            await renderTodayForm();
+        } catch (error) {
+            console.error('Error saving scale value:', error);
+            alert('Ошибка сохранения: ' + error.message);
+        }
         return;
     }
 
     // Boolean buttons
     if (btn.classList.contains('bool-btn')) {
-        const boolVal = btn.dataset.value === 'true';
+        try {
+            const boolVal = btn.dataset.value === 'true';
+            console.log('Boolean button clicked:', { metricId, boolVal });
 
-        if (btn.dataset.compoundField) {
-            // Compound field
-            const currentVal = await getCurrentValue(metricId, entryId);
-            currentVal[btn.dataset.compoundField] = boolVal;
-            // Reset conditional fields if needed
-            await saveDaily(metricId, entryId, currentVal);
-            renderTodayForm();
-        } else {
-            await saveDaily(metricId, entryId, { value: boolVal });
-            renderTodayForm();
+            if (btn.dataset.compoundField) {
+                // Compound field
+                const currentVal = await getCurrentValue(metricId, entryId);
+                currentVal[btn.dataset.compoundField] = boolVal;
+                // Reset conditional fields if needed
+                await saveDaily(metricId, entryId, currentVal);
+                await renderTodayForm();
+            } else {
+                await saveDaily(metricId, entryId, { value: boolVal });
+                await renderTodayForm();
+            }
+        } catch (error) {
+            console.error('Error in boolean handler:', error);
+            alert('Ошибка: ' + error.message);
         }
         return;
     }
 
     // Enum buttons
     if (btn.classList.contains('enum-btn')) {
-        const currentVal = await getCurrentValue(metricId, entryId);
-        currentVal[btn.dataset.compoundField] = btn.dataset.value;
-        await saveDaily(metricId, entryId, currentVal);
-        renderTodayForm();
+        try {
+            console.log('Enum button clicked');
+            const currentVal = await getCurrentValue(metricId, entryId);
+            currentVal[btn.dataset.compoundField] = btn.dataset.value;
+            await saveDaily(metricId, entryId, currentVal);
+            await renderTodayForm();
+        } catch (error) {
+            console.error('Error in enum handler:', error);
+            alert('Ошибка: ' + error.message);
+        }
         return;
     }
+
+    console.log('No handler matched for this button:', btn);
 }
 
 async function handleFormChange(e) {
@@ -330,14 +355,22 @@ async function getCurrentValue(metricId, entryId) {
 }
 
 async function saveDaily(metricId, entryId, value) {
-    if (entryId) {
-        await api.updateEntry(parseInt(entryId), { value });
-    } else {
-        await api.createEntry({
-            metric_id: metricId,
-            date: currentDate,
-            value,
-        });
+    console.log('saveDaily called:', { metricId, entryId, value, currentDate });
+    try {
+        if (entryId) {
+            const result = await api.updateEntry(parseInt(entryId), { value });
+            console.log('Update result:', result);
+        } else {
+            const result = await api.createEntry({
+                metric_id: metricId,
+                date: currentDate,
+                value,
+            });
+            console.log('Create result:', result);
+        }
+    } catch (error) {
+        console.error('Error in saveDaily:', error);
+        throw error;
     }
 }
 
@@ -508,12 +541,13 @@ function renderMiniCharts() {
 
 // ─── Settings Page ───
 async function renderSettings(container) {
-    await loadMetrics();
+    // Load ALL metrics for settings (not just enabled)
+    const allMetrics = await api.getMetrics(false);
     let html = '<h2>Настройки метрик</h2>';
     html += '<button class="btn-primary" id="add-metric">+ Новая метрика</button>';
 
     const categories = {};
-    for (const m of metrics) {
+    for (const m of allMetrics) {
         categories[m.category] = categories[m.category] || [];
         categories[m.category].push(m);
     }
@@ -537,18 +571,35 @@ async function renderSettings(container) {
     document.getElementById('add-metric').addEventListener('click', showAddMetricModal);
 
     container.querySelectorAll('.toggle-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            const enabled = btn.dataset.enabled !== 'true';
-            await api.updateMetric(btn.dataset.metric, { enabled });
-            renderSettings(container);
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const metricId = btn.dataset.metric;
+            const currentEnabled = btn.dataset.enabled === 'true';
+            const newEnabled = !currentEnabled;
+            console.log('Toggle clicked:', { metricId, currentEnabled, newEnabled });
+            try {
+                await api.updateMetric(metricId, { enabled: newEnabled });
+                await renderSettings(container);
+            } catch (error) {
+                console.error('Error toggling metric:', error);
+                alert('Ошибка: ' + error.message);
+            }
         });
     });
 
     container.querySelectorAll('.delete-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const metricId = btn.dataset.metric;
+            console.log('Delete clicked:', metricId);
             if (confirm('Удалить метрику?')) {
-                await api.deleteMetric(btn.dataset.metric);
-                renderSettings(container);
+                try {
+                    await api.deleteMetric(metricId);
+                    await renderSettings(container);
+                } catch (error) {
+                    console.error('Error deleting metric:', error);
+                    alert('Ошибка: ' + error.message);
+                }
             }
         });
     });
