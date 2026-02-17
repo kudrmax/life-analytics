@@ -221,7 +221,33 @@ h3 {
 .number-input {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+}
+
+.number-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 18px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    user-select: none;
+}
+
+.number-btn:hover {
+    border-color: var(--accent);
+    background: var(--border);
+}
+
+.number-btn:active {
+    transform: scale(0.95);
 }
 
 input[type="number"], input[type="time"], .time-input {
@@ -231,7 +257,8 @@ input[type="number"], input[type="time"], .time-input {
     padding: 8px 12px;
     border-radius: 8px;
     font-size: 15px;
-    width: 120px;
+    width: 80px;
+    text-align: center;
 }
 
 input[type="number"]:focus, input[type="time"]:focus {

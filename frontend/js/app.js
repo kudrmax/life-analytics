@@ -143,13 +143,17 @@ function renderBoolean(m, val) {
 }
 
 function renderNumber(m, val) {
-    const current = val ? val.value : '';
+    const current = val ? val.value : 0;
     const cfg = m.config;
     const step = cfg.step || 1;
+    const min = cfg.min ?? 0;
+    const max = cfg.max ?? 999;
     const label = cfg.label || '';
     return `<div class="number-input">
-        <input type="number" value="${current}" step="${step}" min="${cfg.min ?? ''}" max="${cfg.max ?? ''}" data-field="value">
+        <button class="number-btn" data-action="decrement" data-step="${step}" data-min="${min}">−</button>
+        <input type="number" value="${current}" step="${step}" min="${min}" max="${max}" data-field="value">
         <span class="unit">${label}</span>
+        <button class="number-btn" data-action="increment" data-step="${step}" data-max="${max}">+</button>
     </div>`;
 }
 
@@ -247,6 +251,34 @@ async function handleFormClick(e) {
     const entryId = card.dataset.entryId;
 
     console.log('Click detected:', { metricId, entryId, btn: btn.className });
+
+    // Number increment/decrement buttons
+    if (btn.dataset.action === 'increment' || btn.dataset.action === 'decrement') {
+        try {
+            const input = card.querySelector('input[type="number"]');
+            const step = parseFloat(btn.dataset.step) || 1;
+            const currentValue = parseFloat(input.value) || 0;
+            let newValue;
+
+            if (btn.dataset.action === 'increment') {
+                const max = parseFloat(btn.dataset.max) || 999;
+                newValue = Math.min(currentValue + step, max);
+            } else {
+                const min = parseFloat(btn.dataset.min) || 0;
+                newValue = Math.max(currentValue - step, min);
+            }
+
+            input.value = newValue;
+            console.log('Number button clicked:', { action: btn.dataset.action, currentValue, newValue });
+
+            await saveDaily(metricId, entryId, { value: newValue });
+            await renderTodayForm();
+        } catch (error) {
+            console.error('Error in number button handler:', error);
+            alert('Ошибка: ' + error.message);
+        }
+        return;
+    }
 
     // Quick add for multiple-frequency
     if (btn.dataset.quickValue) {
