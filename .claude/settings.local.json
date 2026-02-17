@@ -11,7 +11,14 @@
       "Bash(unzip:*)",
       "Bash(__NEW_LINE_f8bf20c808b9f2ee__ echo \"\")",
       "Bash(__NEW_LINE_c69cbd82a190e506__ echo \"\")",
-      "Bash(__NEW_LINE_33cf1aca7ab1e3e1__ echo \"\")"
+      "Bash(__NEW_LINE_33cf1aca7ab1e3e1__ echo \"\")",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(__NEW_LINE_de9c839a17577ba7__ echo \"\")",
+      "Bash(if [ -f \"/Users/mdmkudryashov/PycharmProjects/life-analytics/backend/app/seed.py\" ])",
+      "Bash(then)",
+      "Bash(else)",
+      "Bash(fi)"
     ]
   }
 }
