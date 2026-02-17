@@ -1,0 +1,522 @@
+:root {
+    --bg: #0f0f0f;
+    --surface: #1a1a1a;
+    --surface2: #252525;
+    --border: #333;
+    --text: #e0e0e0;
+    --text-dim: #888;
+    --accent: #6c8cff;
+    --accent-hover: #8aa4ff;
+    --green: #4caf50;
+    --red: #ef5350;
+    --yellow: #ffc107;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 0 16px 80px;
+}
+
+/* ─── Nav ─── */
+nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: center;
+    gap: 0;
+    z-index: 100;
+    padding: 0;
+}
+
+nav button {
+    flex: 1;
+    max-width: 150px;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    padding: 12px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+nav button.active {
+    color: var(--accent);
+}
+
+nav button:hover {
+    color: var(--text);
+}
+
+/* ─── Page Header ─── */
+.page-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 20px 0 16px;
+    justify-content: center;
+}
+
+.page-header h2 {
+    font-size: 18px;
+    font-weight: 500;
+    min-width: 180px;
+    text-align: center;
+}
+
+h2 {
+    padding: 20px 0 16px;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+    padding-top: 8px;
+}
+
+/* ─── Buttons ─── */
+.btn-icon {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-small {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.btn-primary {
+    background: var(--accent);
+    border: none;
+    color: #fff;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 16px;
+}
+
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-small:hover, .btn-icon:hover { background: var(--border); }
+
+/* ─── Category ─── */
+.category {
+    margin-bottom: 16px;
+}
+
+/* ─── Metric Card ─── */
+.metric-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+}
+
+.metric-label {
+    display: block;
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 8px;
+}
+
+/* ─── Scale Buttons ─── */
+.scale-buttons {
+    display: flex;
+    gap: 6px;
+}
+
+.scale-btn {
+    flex: 1;
+    padding: 8px 0;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 15px;
+    font-weight: 500;
+    transition: all 0.15s;
+}
+
+.scale-btn:hover { border-color: var(--accent); }
+.scale-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+/* ─── Bool Buttons ─── */
+.bool-buttons {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.field-label {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-right: 8px;
+    min-width: 100px;
+}
+
+.bool-btn {
+    padding: 6px 16px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.15s;
+}
+
+.bool-btn:hover { border-color: var(--accent); }
+.bool-btn.active.yes { background: var(--green); border-color: var(--green); color: #fff; }
+.bool-btn.active.no { background: var(--red); border-color: var(--red); color: #fff; }
+
+/* ─── Number / Time Inputs ─── */
+.number-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+input[type="number"], input[type="time"], .time-input {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 15px;
+    width: 120px;
+}
+
+input[type="number"]:focus, input[type="time"]:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.unit {
+    color: var(--text-dim);
+    font-size: 13px;
+}
+
+/* ─── Compound ─── */
+.compound-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.compound-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.compound-field.hidden { display: none; }
+
+/* ─── Enum ─── */
+.enum-buttons {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.enum-btn {
+    padding: 4px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.enum-btn:hover { border-color: var(--accent); }
+.enum-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ─── Multiple Entry ─── */
+.multiple-entry { display: flex; flex-direction: column; gap: 8px; }
+
+.entry-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.entry-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 4px 10px;
+    font-size: 13px;
+}
+
+.delete-entry {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 2px;
+}
+
+.summary-line {
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+/* ─── History ─── */
+input[type="month"], input[type="date"] {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    margin-bottom: 16px;
+}
+
+.calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    margin-bottom: 16px;
+}
+
+.cal-header {
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 4px;
+}
+
+.cal-day {
+    text-align: center;
+    padding: 10px 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.cal-day:hover { border-color: var(--accent); }
+.cal-day.today { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.cal-empty { padding: 10px; }
+
+.day-summary {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+}
+
+.summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.summary-row:last-child { border-bottom: none; }
+.summary-label { color: var(--text-dim); font-size: 14px; }
+.summary-value { font-weight: 500; font-size: 14px; }
+
+/* ─── Dashboard ─── */
+.dashboard-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+}
+
+.streaks {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+}
+
+.streak-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    text-align: center;
+    min-width: 100px;
+}
+
+.streak-count {
+    display: block;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--accent);
+}
+
+.streak-label {
+    display: block;
+    font-size: 13px;
+    color: var(--text);
+}
+
+.streak-unit {
+    display: block;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.trends {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.trend-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+}
+
+.trend-card h4 {
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 8px;
+}
+
+.mini-chart {
+    width: 100%;
+    height: 60px;
+}
+
+.corr-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.corr-controls select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+.corr-value {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 16px;
+    font-weight: 500;
+}
+
+/* ─── Settings ─── */
+.setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+}
+
+.setting-name { font-size: 14px; font-weight: 500; }
+.setting-name.disabled { color: var(--text-dim); text-decoration: line-through; }
+.setting-type { font-size: 12px; color: var(--text-dim); }
+.setting-actions { display: flex; gap: 4px; }
+
+/* ─── Modal ─── */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+}
+
+.modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    width: 90%;
+    max-width: 400px;
+}
+
+.modal h3 { margin-bottom: 16px; padding-top: 0; }
+
+.modal label {
+    display: block;
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+}
+
+.modal input, .modal select {
+    display: block;
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 14px;
+    margin-top: 4px;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+    justify-content: flex-end;
+}
