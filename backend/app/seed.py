@@ -1,5 +1,89 @@
 DEFAULT_METRICS = [
-    # Сон и энергия
+    # ═══════════════════════════════════════════════════════
+    # Утренние рутины
+    # ═══════════════════════════════════════════════════════
+    {
+        "id": "first_alarm",
+        "name": "Встал с первого будильника",
+        "category": "Утро",
+        "type": "boolean",
+        "frequency": "daily",
+        "config": {},
+    },
+    {
+        "id": "cold_shower",
+        "name": "Холодные процедуры",
+        "category": "Утро",
+        "type": "boolean",
+        "frequency": "daily",
+        "config": {},
+    },
+    {
+        "id": "morning_exercise",
+        "name": "Зарядка",
+        "category": "Утро",
+        "type": "boolean",
+        "frequency": "daily",
+        "config": {},
+    },
+
+    # ═══════════════════════════════════════════════════════
+    # Планирование и продуктивность
+    # ═══════════════════════════════════════════════════════
+    {
+        "id": "top_tasks",
+        "name": "Топ задачи на день",
+        "category": "Планирование",
+        "type": "compound",
+        "frequency": "daily",
+        "config": {
+            "fields": [
+                {"name": "planned", "type": "boolean", "label": "Поставил топ задачи"},
+                {
+                    "name": "count",
+                    "type": "number",
+                    "label": "Количество задач",
+                    "condition": "planned == true",
+                },
+            ]
+        },
+    },
+    {
+        "id": "timeblocking_planned",
+        "name": "Распланировал день",
+        "category": "Планирование",
+        "type": "boolean",
+        "frequency": "daily",
+        "config": {},
+    },
+    {
+        "id": "timeblocking_followed",
+        "name": "Следовал тайм-блокингу",
+        "category": "Планирование",
+        "type": "scale",
+        "frequency": "daily",
+        "config": {"min": 1, "max": 5},
+    },
+    {
+        "id": "procrastination",
+        "name": "Уровень прокрастинации",
+        "category": "Продуктивность",
+        "type": "scale",
+        "frequency": "daily",
+        "config": {"min": 1, "max": 5},
+    },
+    {
+        "id": "entertainment_content",
+        "name": "Развлекательный контент",
+        "category": "Продуктивность",
+        "type": "scale",
+        "frequency": "daily",
+        "config": {"min": 1, "max": 5},
+    },
+
+    # ═══════════════════════════════════════════════════════
+    # Сон
+    # ═══════════════════════════════════════════════════════
     {
         "id": "wake_up_time",
         "name": "Время подъёма",
@@ -24,11 +108,14 @@ DEFAULT_METRICS = [
         "frequency": "daily",
         "config": {"min": 1, "max": 5},
     },
-    # Многоразовые
+
+    # ═══════════════════════════════════════════════════════
+    # Ментальное состояние (3 раза в день)
+    # ═══════════════════════════════════════════════════════
     {
         "id": "mood",
         "name": "Настроение",
-        "category": "Ментальное",
+        "category": "Состояние",
         "type": "scale",
         "frequency": "multiple",
         "config": {"min": 1, "max": 5},
@@ -36,7 +123,7 @@ DEFAULT_METRICS = [
     {
         "id": "energy",
         "name": "Уровень энергии",
-        "category": "Ментальное",
+        "category": "Состояние",
         "type": "scale",
         "frequency": "multiple",
         "config": {"min": 1, "max": 5},
@@ -44,76 +131,65 @@ DEFAULT_METRICS = [
     {
         "id": "stress",
         "name": "Уровень стресса",
-        "category": "Ментальное",
+        "category": "Состояние",
         "type": "scale",
         "frequency": "multiple",
         "config": {"min": 1, "max": 5},
     },
+
+    # ═══════════════════════════════════════════════════════
     # Здоровье
-    {
-        "id": "workout",
-        "name": "Тренировка",
-        "category": "Здоровье",
-        "type": "compound",
-        "frequency": "daily",
-        "config": {
-            "fields": [
-                {"name": "done", "type": "boolean", "label": "Была тренировка"},
-                {
-                    "name": "type",
-                    "type": "enum",
-                    "label": "Тип",
-                    "options": ["кардио", "силовая", "растяжка", "йога", "другое"],
-                    "condition": "done == true",
-                },
-            ]
-        },
-    },
-    {
-        "id": "alcohol",
-        "name": "Алкоголь",
-        "category": "Здоровье",
-        "type": "compound",
-        "frequency": "daily",
-        "config": {
-            "fields": [
-                {"name": "consumed", "type": "boolean", "label": "Пил алкоголь"},
-                {
-                    "name": "amount",
-                    "type": "number",
-                    "label": "Порций",
-                    "condition": "consumed == true",
-                },
-            ]
-        },
-    },
-    {
-        "id": "fastfood",
-        "name": "Фастфуд",
-        "category": "Здоровье",
-        "type": "boolean",
-        "frequency": "daily",
-        "config": {},
-    },
-    {
-        "id": "meals",
-        "name": "Приёмов пищи",
-        "category": "Здоровье",
-        "type": "number",
-        "frequency": "daily",
-        "config": {"min": 0, "max": 10},
-    },
+    # ═══════════════════════════════════════════════════════
     {
         "id": "coffee",
         "name": "Кофе",
         "category": "Здоровье",
         "type": "number",
         "frequency": "daily",
-        "config": {"min": 0, "max": 20, "label": "чашек"},
+        "config": {"min": 0, "max": 10, "label": "чашек"},
     },
-    # Социальное
     {
-        "id": "friends",
+        "id": "alcohol",
+        "name": "Алкоголь",
+        "category": "Здоровье",
+        "type": "boolean",
+        "frequency": "daily",
+        "config": {},
+    },
+    {
+        "id": "restaurant",
+        "name": "Еда в ресторане",
+        "category": "Здоровье",
+        "type": "boolean",
+        "frequency": "daily",
+        "config": {},
+    },
+
+    # ═══════════════════════════════════════════════════════
+    # Саморазвитие
+    # ═══════════════════════════════════════════════════════
+    {
+        "id": "audiobooks",
+        "name": "Аудиокниги",
+        "category": "Саморазвитие",
+        "type": "boolean",
+        "frequency": "daily",
+        "config": {},
+    },
+    {
+        "id": "books",
+        "name": "Книги",
+        "category": "Саморазвитие",
+        "type": "boolean",
+        "frequency": "daily",
+        "config": {},
+    },
+
+    # ═══════════════════════════════════════════════════════
+    # Социальное
+    # ═══════════════════════════════════════════════════════
+    {
+        "id": "friends_offline",
         "name": "Виделся с друзьями",
         "category": "Социальное",
         "type": "boolean",
@@ -126,114 +202,26 @@ DEFAULT_METRICS = [
         "category": "Социальное",
         "type": "number",
         "frequency": "daily",
-        "config": {"min": 0},
+        "config": {"min": 0, "max": 20},
     },
-    # Ментальное (daily)
+
+    # ═══════════════════════════════════════════════════════
+    # Цели
+    # ═══════════════════════════════════════════════════════
     {
-        "id": "meditation",
-        "name": "Медитация",
-        "category": "Ментальное",
-        "type": "compound",
+        "id": "blog_work",
+        "name": "Работал над блогом",
+        "category": "Цели",
+        "type": "scale",
         "frequency": "daily",
-        "config": {
-            "fields": [
-                {"name": "done", "type": "boolean", "label": "Медитировал"},
-                {
-                    "name": "minutes",
-                    "type": "number",
-                    "label": "Минут",
-                    "condition": "done == true",
-                },
-            ]
-        },
+        "config": {"min": 1, "max": 5},
     },
     {
-        "id": "reading",
-        "name": "Чтение",
-        "category": "Ментальное",
-        "type": "compound",
+        "id": "diploma_work",
+        "name": "Работал над дипломом",
+        "category": "Цели",
+        "type": "scale",
         "frequency": "daily",
-        "config": {
-            "fields": [
-                {"name": "done", "type": "boolean", "label": "Читал"},
-                {
-                    "name": "minutes",
-                    "type": "number",
-                    "label": "Минут",
-                    "condition": "done == true",
-                },
-            ]
-        },
-    },
-    # Продуктивность
-    {
-        "id": "productive_hours",
-        "name": "Часов продуктивной работы",
-        "category": "Продуктивность",
-        "type": "number",
-        "frequency": "daily",
-        "config": {"min": 0, "max": 24, "step": 0.5},
-    },
-    {
-        "id": "screen_time",
-        "name": "Экранное время",
-        "category": "Продуктивность",
-        "type": "number",
-        "frequency": "daily",
-        "config": {"min": 0, "max": 24, "step": 0.5, "label": "часов"},
-    },
-    {
-        "id": "todoist_planned",
-        "name": "Задач запланировано",
-        "category": "Продуктивность",
-        "type": "number",
-        "frequency": "daily",
-        "source": "todoist",
-        "config": {},
-    },
-    {
-        "id": "todoist_completed",
-        "name": "Задач выполнено",
-        "category": "Продуктивность",
-        "type": "number",
-        "frequency": "daily",
-        "source": "todoist",
-        "config": {},
-    },
-    {
-        "id": "gcal_events",
-        "name": "Событий в календаре",
-        "category": "Продуктивность",
-        "type": "number",
-        "frequency": "daily",
-        "source": "google_calendar",
-        "config": {},
-    },
-    # Финансы
-    {
-        "id": "big_expense",
-        "name": "Крупные траты",
-        "category": "Финансы",
-        "type": "compound",
-        "frequency": "daily",
-        "config": {
-            "fields": [
-                {"name": "had", "type": "boolean", "label": "Были крупные траты"},
-                {
-                    "name": "amount",
-                    "type": "number",
-                    "label": "Сумма",
-                    "condition": "had == true",
-                },
-            ]
-        },
-    },
-    {
-        "id": "impulse_buy",
-        "name": "Импульсивные покупки",
-        "category": "Финансы",
-        "type": "boolean",
-        "frequency": "daily",
-        "config": {},
+        "config": {"min": 1, "max": 5},
     },
 ]
