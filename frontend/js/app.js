@@ -93,6 +93,10 @@ function renderMetricInput(m) {
     const val = entry ? entry.value : null;
     const entryId = entry ? entry.id : null;
 
+    // Check if daily metric is filled
+    const isFilled = m.frequency === 'daily' && entry;
+    const filledClass = isFilled ? 'filled' : '';
+
     let input = '';
 
     if (m.frequency === 'multiple') {
@@ -110,7 +114,7 @@ function renderMetricInput(m) {
         input = renderCompound(m, val);
     }
 
-    return `<div class="metric-card" data-metric-id="${m.metric_id}" data-entry-id="${entryId || ''}">
+    return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-entry-id="${entryId || ''}">
         <label class="metric-label">${m.name}</label>
         <div class="metric-input">${input}</div>
     </div>`;
