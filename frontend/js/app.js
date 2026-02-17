@@ -114,8 +114,16 @@ function renderMetricInput(m) {
         input = renderCompound(m, val);
     }
 
+    // Add clear button for daily metrics with entries
+    const clearBtn = (m.frequency === 'daily' && entry)
+        ? `<button class="metric-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`
+        : '';
+
     return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-entry-id="${entryId || ''}">
-        <label class="metric-label">${m.name}</label>
+        <div class="metric-header">
+            <label class="metric-label">${m.name}</label>
+            ${clearBtn}
+        </div>
         <div class="metric-input">${input}</div>
     </div>`;
 }
@@ -198,28 +206,51 @@ function renderMultipleInput(m) {
     const min = cfg.min || 1;
     const max = cfg.max || 5;
 
-    let html = '<div class="multiple-entry">';
-    html += '<div class="scale-buttons quick-add">';
-    for (let i = min; i <= max; i++) {
-        html += `<button class="scale-btn" data-quick-value="${i}">${i}</button>`;
+    // Group entries by period
+    const periods = { morning: null, day: null, evening: null };
+    for (const e of m.entries) {
+        const period = e.value.period;
+        if (period && periods.hasOwnProperty(period)) {
+            // Keep the latest entry for each period
+            if (!periods[period] || e.id > periods[period].id) {
+                periods[period] = e;
+            }
+        }
     }
-    html += '</div>';
 
-    // List existing entries
-    if (m.entries.length > 0) {
-        html += '<div class="entry-list">';
-        for (const e of m.entries) {
-            const time = e.timestamp.slice(11, 16);
-            html += `<div class="entry-chip" data-entry-id="${e.id}">
-                <span>${time}: ${e.value.value}</span>
-                <button class="delete-entry" data-delete-entry="${e.id}">&times;</button>
-            </div>`;
+    const periodLabels = {
+        morning: 'Утро',
+        day: 'День',
+        evening: 'Вечер'
+    };
+
+    let html = '<div class="multiple-entry">';
+
+    for (const [period, label] of Object.entries(periodLabels)) {
+        const entry = periods[period];
+        const currentValue = entry ? entry.value.value : null;
+        const entryId = entry ? entry.id : '';
+        const clearBtn = entry ? `<button class="period-clear-btn" data-clear-period-entry="${entryId}" title="Очистить">&times;</button>` : '';
+
+        html += `<div class="period-section" data-period="${period}" data-period-entry-id="${entryId}">`;
+        html += `<div class="period-header">`;
+        html += `<label class="period-label">${label}</label>`;
+        html += clearBtn;
+        html += `</div>`;
+        html += '<div class="scale-buttons">';
+        for (let i = min; i <= max; i++) {
+            const active = currentValue === i ? 'active' : '';
+            html += `<button class="scale-btn ${active}" data-period-value="${i}" data-period="${period}">${i}</button>`;
         }
         html += '</div>';
-        if (m.summary) {
-            html += `<div class="summary-line">Среднее: ${m.summary.avg} | Мин: ${m.summary.min} | Макс: ${m.summary.max}</div>`;
-        }
+        html += '</div>';
     }
+
+    // Show summary if there are any entries
+    if (m.summary && (periods.morning || periods.day || periods.evening)) {
+        html += `<div class="summary-line">Среднее: ${m.summary.avg} | Мин: ${m.summary.min} | Макс: ${m.summary.max}</div>`;
+    }
+
     html += '</div>';
     return html;
 }
@@ -252,6 +283,34 @@ async function handleFormClick(e) {
 
     console.log('Click detected:', { metricId, entryId, btn: btn.className });
 
+    // Clear metric entry (daily metrics)
+    if (btn.dataset.clearEntry) {
+        try {
+            const clearEntryId = parseInt(btn.dataset.clearEntry);
+            console.log('Clear entry clicked:', clearEntryId);
+            await api.deleteEntry(clearEntryId);
+            await renderTodayForm();
+        } catch (error) {
+            console.error('Error clearing entry:', error);
+            alert('Ошибка при удалении: ' + error.message);
+        }
+        return;
+    }
+
+    // Clear period entry (multiple-frequency metrics)
+    if (btn.dataset.clearPeriodEntry) {
+        try {
+            const clearEntryId = parseInt(btn.dataset.clearPeriodEntry);
+            console.log('Clear period entry clicked:', clearEntryId);
+            await api.deleteEntry(clearEntryId);
+            await renderTodayForm();
+        } catch (error) {
+            console.error('Error clearing period entry:', error);
+            alert('Ошибка при удалении: ' + error.message);
+        }
+        return;
+    }
+
     // Number increment/decrement buttons
     if (btn.dataset.action === 'increment' || btn.dataset.action === 'decrement') {
         try {
@@ -280,20 +339,33 @@ async function handleFormClick(e) {
         return;
     }
 
-    // Quick add for multiple-frequency
-    if (btn.dataset.quickValue) {
+    // Period-based scale buttons (for multiple-frequency metrics)
+    if (btn.dataset.periodValue && btn.dataset.period) {
         try {
-            console.log('Quick add detected:', { metricId, value: btn.dataset.quickValue });
-            const result = await api.createEntry({
-                metric_id: metricId,
-                date: currentDate,
-                timestamp: new Date().toISOString(),
-                value: { value: parseInt(btn.dataset.quickValue) },
-            });
-            console.log('Quick add result:', result);
+            const period = btn.dataset.period;
+            const value = parseInt(btn.dataset.periodValue);
+            const periodSection = btn.closest('.period-section');
+            const periodEntryId = periodSection ? periodSection.dataset.periodEntryId : '';
+
+            console.log('Period button clicked:', { metricId, period, value, periodEntryId });
+
+            if (periodEntryId) {
+                // Update existing entry
+                await api.updateEntry(parseInt(periodEntryId), {
+                    value: { period, value }
+                });
+            } else {
+                // Create new entry
+                await api.createEntry({
+                    metric_id: metricId,
+                    date: currentDate,
+                    timestamp: new Date().toISOString(),
+                    value: { period, value },
+                });
+            }
             await renderTodayForm();
         } catch (error) {
-            console.error('Error in quick add:', error);
+            console.error('Error in period button handler:', error);
             alert('Ошибка: ' + error.message);
         }
         return;
