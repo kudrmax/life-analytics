@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.database import init_db, get_db, DB_PATH
 from app.seed import DEFAULT_METRICS
-from app.routers import metrics, entries, daily, analytics, auth
+from app.routers import metrics, entries, daily, analytics, auth, export_import
 
 app = FastAPI(title="Life Analytics API", version="1.0.0")
 
@@ -22,6 +22,7 @@ app.include_router(metrics.router)
 app.include_router(entries.router)
 app.include_router(daily.router)
 app.include_router(analytics.router)
+app.include_router(export_import.router)
 
 
 @app.on_event("startup")

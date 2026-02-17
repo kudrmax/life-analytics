@@ -19,6 +19,7 @@ function clearToken() {
 }
 
 const api = {
+    API_BASE,
     async request(method, path, body = null) {
         const opts = {
             method,

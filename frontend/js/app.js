@@ -815,7 +815,12 @@ async function renderSettings(container) {
     html += '<button class="btn-small" id="logout-btn">Выйти</button>';
     html += '</div>';
     html += '<h2>Настройки метрик</h2>';
+    html += '<div class="settings-actions">';
     html += '<button class="btn-primary" id="add-metric">+ Новая метрика</button>';
+    html += '<button class="btn-small" id="export-btn">📥 Экспорт CSV</button>';
+    html += '<button class="btn-small" id="import-btn">📤 Импорт CSV</button>';
+    html += '</div>';
+    html += '<input type="file" id="import-file" accept=".csv" style="display:none">';
 
     const categories = {};
     for (const m of allMetrics) {
@@ -851,6 +856,66 @@ async function renderSettings(container) {
     });
 
     document.getElementById('add-metric').addEventListener('click', showAddMetricModal);
+
+    // Export button
+    document.getElementById('export-btn').addEventListener('click', async () => {
+        try {
+            const token = api.getToken();
+            const response = await fetch(`${api.API_BASE}/api/export/csv`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (!response.ok) throw new Error('Export failed');
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `life_analytics_${localStorage.getItem('la_username')}_${new Date().toISOString().slice(0,10)}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+
+            alert('✅ Данные экспортированы!');
+        } catch (error) {
+            alert('Ошибка экспорта: ' + error.message);
+        }
+    });
+
+    // Import button
+    document.getElementById('import-btn').addEventListener('click', () => {
+        document.getElementById('import-file').click();
+    });
+
+    document.getElementById('import-file').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const token = api.getToken();
+            const response = await fetch(`${api.API_BASE}/api/export/import`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` },
+                body: formData
+            });
+
+            if (!response.ok) throw new Error('Import failed');
+
+            const result = await response.json();
+            alert(`✅ Импорт завершён!\n\nИмпортировано: ${result.imported}\nПропущено: ${result.skipped}${result.errors.length > 0 ? '\n\nОшибки:\n' + result.errors.join('\n') : ''}`);
+
+            // Refresh page to show new data
+            navigateTo('today');
+        } catch (error) {
+            alert('Ошибка импорта: ' + error.message);
+        } finally {
+            e.target.value = ''; // Reset file input
+        }
+    });
 
     container.querySelectorAll('.toggle-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {

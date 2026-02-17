@@ -1012,3 +1012,10 @@ input[type="month"], input[type="date"] {
     color: var(--text-dim);
     font-size: 14px;
 }
+
+.settings-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
