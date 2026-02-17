@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query
 import aiosqlite
 
 from app.database import get_db
+from app.auth import get_current_user
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -35,17 +36,18 @@ async def trends(
     start: str = Query(..., description="YYYY-MM-DD"),
     end: str = Query(..., description="YYYY-MM-DD"),
     db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     metric = await db.execute(
-        "SELECT * FROM metric_configs WHERE id = ?", (metric_id,)
+        "SELECT * FROM metric_configs WHERE id = ? AND user_id = ?", (metric_id, current_user["id"])
     )
     metric = await metric.fetchone()
     if not metric:
         return {"error": "Metric not found"}
 
     rows = await db.execute(
-        "SELECT * FROM entries WHERE metric_id = ? AND date >= ? AND date <= ? ORDER BY date, timestamp",
-        (metric_id, start, end),
+        "SELECT * FROM entries WHERE metric_id = ? AND date >= ? AND date <= ? AND user_id = ? ORDER BY date, timestamp",
+        (metric_id, start, end, current_user["id"]),
     )
     entries = await rows.fetchall()
 
@@ -83,22 +85,23 @@ async def correlations(
     start: str = Query(...),
     end: str = Query(...),
     db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
-    ma = await db.execute("SELECT * FROM metric_configs WHERE id = ?", (metric_a,))
+    ma = await db.execute("SELECT * FROM metric_configs WHERE id = ? AND user_id = ?", (metric_a, current_user["id"]))
     ma = await ma.fetchone()
-    mb = await db.execute("SELECT * FROM metric_configs WHERE id = ?", (metric_b,))
+    mb = await db.execute("SELECT * FROM metric_configs WHERE id = ? AND user_id = ?", (metric_b, current_user["id"]))
     mb = await mb.fetchone()
     if not ma or not mb:
         return {"error": "Metric not found"}
 
     # Get entries for both
     rows_a = await db.execute(
-        "SELECT * FROM entries WHERE metric_id = ? AND date >= ? AND date <= ?",
-        (metric_a, start, end),
+        "SELECT * FROM entries WHERE metric_id = ? AND date >= ? AND date <= ? AND user_id = ?",
+        (metric_a, start, end, current_user["id"]),
     )
     rows_b = await db.execute(
-        "SELECT * FROM entries WHERE metric_id = ? AND date >= ? AND date <= ?",
-        (metric_b, start, end),
+        "SELECT * FROM entries WHERE metric_id = ? AND date >= ? AND date <= ? AND user_id = ?",
+        (metric_b, start, end, current_user["id"]),
     )
 
     # Aggregate by date
@@ -150,18 +153,19 @@ async def correlations(
 
 
 @router.get("/streaks")
-async def streaks(db=Depends(get_db)):
+async def streaks(db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Boolean metrics — consecutive days with value=true
     metrics = await db.execute(
-        "SELECT * FROM metric_configs WHERE enabled = 1 AND type IN ('boolean', 'compound') ORDER BY sort_order"
+        "SELECT * FROM metric_configs WHERE enabled = 1 AND type IN ('boolean', 'compound') AND user_id = ? ORDER BY sort_order",
+        (current_user["id"],)
     )
     metrics = await metrics.fetchall()
 
     result = []
     for m in metrics:
         rows = await db.execute(
-            "SELECT DISTINCT date, value_json FROM entries WHERE metric_id = ? ORDER BY date DESC",
-            (m["id"],),
+            "SELECT DISTINCT date, value_json FROM entries WHERE metric_id = ? AND user_id = ? ORDER BY date DESC",
+            (m["id"], current_user["id"]),
         )
         entries = await rows.fetchall()
 

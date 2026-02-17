@@ -2,6 +2,8 @@
 let currentDate = todayStr();
 let metrics = [];
 let currentPage = 'today';
+let currentUser = null;
+let isAuthenticated = false;
 
 function todayStr() {
     return new Date().toISOString().slice(0, 10);
@@ -10,9 +12,31 @@ function todayStr() {
 // ─── Init ───
 document.addEventListener('DOMContentLoaded', async () => {
     setupNav();
-    await loadMetrics();
-    navigateTo('today');
+    await checkAuth();
+
+    if (isAuthenticated) {
+        await loadMetrics();
+        navigateTo('today');
+    } else {
+        navigateTo('login');
+    }
 });
+
+async function checkAuth() {
+    const token = api.getToken();
+    if (!token) {
+        isAuthenticated = false;
+        return;
+    }
+
+    try {
+        currentUser = await api.getCurrentUser();
+        isAuthenticated = true;
+    } catch (error) {
+        isAuthenticated = false;
+        api.clearToken();
+    }
+}
 
 function setupNav() {
     document.querySelectorAll('[data-page]').forEach(btn => {
@@ -26,15 +50,150 @@ async function loadMetrics() {
 
 function navigateTo(page) {
     currentPage = page;
+
+    // Hide nav for auth pages
+    const nav = document.querySelector('nav');
+    if (nav) {
+        nav.style.display = (page === 'login' || page === 'register') ? 'none' : 'flex';
+    }
+
     document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === page));
     const main = document.getElementById('main');
 
     switch (page) {
+        case 'login': renderLogin(main); break;
+        case 'register': renderRegister(main); break;
         case 'today': renderToday(main); break;
         case 'history': renderHistory(main); break;
         case 'dashboard': renderDashboard(main); break;
         case 'settings': renderSettings(main); break;
     }
+}
+
+// Make navigateTo global for API error handling
+window.navigateTo = navigateTo;
+
+// ─── Auth Pages ───
+function renderLogin(container) {
+    container.innerHTML = `
+        <div class="auth-container">
+            <div class="auth-card">
+                <h2>Life Analytics</h2>
+                <p class="auth-subtitle">Вход в систему</p>
+                <form id="login-form" class="auth-form">
+                    <label class="form-label">
+                        <span class="label-text">Имя пользователя</span>
+                        <input id="login-username" class="form-input" required autocomplete="username">
+                    </label>
+                    <label class="form-label">
+                        <span class="label-text">Пароль</span>
+                        <input id="login-password" type="password" class="form-input" required autocomplete="current-password">
+                    </label>
+                    <div id="login-error" class="error-message"></div>
+                    <button type="submit" class="btn-primary btn-full">Войти</button>
+                </form>
+                <div class="auth-footer">
+                    Нет аккаунта? <a href="#" id="goto-register">Зарегистрироваться</a>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const username = document.getElementById('login-username').value.trim();
+        const password = document.getElementById('login-password').value;
+        const errorEl = document.getElementById('login-error');
+
+        try {
+            errorEl.textContent = '';
+            const response = await api.login(username, password);
+            api.setToken(response.access_token, response.username);
+            isAuthenticated = true;
+            currentUser = { username: response.username };
+            await loadMetrics();
+            navigateTo('today');
+        } catch (error) {
+            errorEl.textContent = error.message || 'Неверные учетные данные';
+        }
+    });
+
+    document.getElementById('goto-register').addEventListener('click', (e) => {
+        e.preventDefault();
+        navigateTo('register');
+    });
+}
+
+function renderRegister(container) {
+    container.innerHTML = `
+        <div class="auth-container">
+            <div class="auth-card">
+                <h2>Life Analytics</h2>
+                <p class="auth-subtitle">Регистрация</p>
+                <form id="register-form" class="auth-form">
+                    <label class="form-label">
+                        <span class="label-text">Имя пользователя</span>
+                        <input id="register-username" class="form-input" required autocomplete="username" minlength="3" maxlength="30">
+                        <span class="field-hint">От 3 до 30 символов</span>
+                    </label>
+                    <label class="form-label">
+                        <span class="label-text">Пароль</span>
+                        <input id="register-password" type="password" class="form-input" required autocomplete="new-password" minlength="8">
+                        <span class="field-hint">Минимум 8 символов</span>
+                    </label>
+                    <label class="form-label">
+                        <span class="label-text">Подтверждение пароля</span>
+                        <input id="register-password2" type="password" class="form-input" required autocomplete="new-password">
+                    </label>
+                    <div id="register-error" class="error-message"></div>
+                    <button type="submit" class="btn-primary btn-full">Зарегистрироваться</button>
+                </form>
+                <div class="auth-footer">
+                    Уже есть аккаунт? <a href="#" id="goto-login">Войти</a>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('register-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const username = document.getElementById('register-username').value.trim();
+        const password = document.getElementById('register-password').value;
+        const password2 = document.getElementById('register-password2').value;
+        const errorEl = document.getElementById('register-error');
+
+        if (username.length < 3 || username.length > 30) {
+            errorEl.textContent = 'Имя пользователя должно быть от 3 до 30 символов';
+            return;
+        }
+
+        if (password.length < 8) {
+            errorEl.textContent = 'Пароль должен содержать минимум 8 символов';
+            return;
+        }
+
+        if (password !== password2) {
+            errorEl.textContent = 'Пароли не совпадают';
+            return;
+        }
+
+        try {
+            errorEl.textContent = '';
+            const response = await api.register(username, password);
+            api.setToken(response.access_token, response.username);
+            isAuthenticated = true;
+            currentUser = { username: response.username };
+            await loadMetrics();
+            navigateTo('today');
+        } catch (error) {
+            errorEl.textContent = error.message || 'Ошибка регистрации';
+        }
+    });
+
+    document.getElementById('goto-login').addEventListener('click', (e) => {
+        e.preventDefault();
+        navigateTo('login');
+    });
 }
 
 // ─── Today Page ───
@@ -651,7 +810,11 @@ function renderMiniCharts() {
 async function renderSettings(container) {
     // Load ALL metrics for settings (not just enabled)
     const allMetrics = await api.getMetrics(false);
-    let html = '<h2>Настройки метрик</h2>';
+    let html = '<div class="settings-header">';
+    html += `<div class="user-info">Пользователь: ${localStorage.getItem('la_username') || 'Unknown'}</div>`;
+    html += '<button class="btn-small" id="logout-btn">Выйти</button>';
+    html += '</div>';
+    html += '<h2>Настройки метрик</h2>';
     html += '<button class="btn-primary" id="add-metric">+ Новая метрика</button>';
 
     const categories = {};
@@ -679,6 +842,13 @@ async function renderSettings(container) {
         html += '</div>';
     }
     container.innerHTML = html;
+
+    document.getElementById('logout-btn').addEventListener('click', () => {
+        api.logout();
+        isAuthenticated = false;
+        currentUser = null;
+        navigateTo('login');
+    });
 
     document.getElementById('add-metric').addEventListener('click', showAddMetricModal);
 

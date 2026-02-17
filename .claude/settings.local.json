@@ -4,7 +4,10 @@
       "Bash(python3 -m venv:*)",
       "Bash(source:*)",
       "Bash(pip install:*)",
-      "Bash(timeout 5 python:*)"
+      "Bash(timeout 5 python:*)",
+      "Bash(sqlite3:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)"
     ]
   }
 }

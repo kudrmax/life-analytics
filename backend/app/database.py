@@ -21,9 +21,19 @@ async def init_db():
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA foreign_keys=ON")
 
+        # Create users table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS metric_configs (
-                id TEXT PRIMARY KEY,
+                id TEXT NOT NULL,
                 name TEXT NOT NULL,
                 category TEXT NOT NULL DEFAULT '',
                 type TEXT NOT NULL,
@@ -32,7 +42,9 @@ async def init_db():
                 config_json TEXT NOT NULL DEFAULT '{}',
                 enabled INTEGER NOT NULL DEFAULT 1,
                 sort_order INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                PRIMARY KEY (id, user_id)
             )
         """)
 
@@ -43,15 +55,22 @@ async def init_db():
                 date TEXT NOT NULL,
                 timestamp TEXT NOT NULL DEFAULT (datetime('now')),
                 value_json TEXT NOT NULL DEFAULT '{}',
-                FOREIGN KEY (metric_id) REFERENCES metric_configs(id) ON DELETE CASCADE
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE
             )
         """)
 
+        # Create indexes
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_entries_date ON entries(date)
         """)
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_entries_metric_date ON entries(metric_id, date)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_metric_configs_user ON metric_configs(user_id)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_entries_user ON entries(user_id)
         """)
 
         await db.commit()

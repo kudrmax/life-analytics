@@ -1,13 +1,48 @@
 const API_BASE = window.API_BASE || 'http://localhost:8000';
 
+// Token management
+const TOKEN_KEY = 'la_auth_token';
+const USERNAME_KEY = 'la_username';
+
+function getToken() {
+    return localStorage.getItem(TOKEN_KEY);
+}
+
+function setToken(token, username) {
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(USERNAME_KEY, username);
+}
+
+function clearToken() {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USERNAME_KEY);
+}
+
 const api = {
     async request(method, path, body = null) {
         const opts = {
             method,
             headers: { 'Content-Type': 'application/json' },
         };
+
+        // Add Authorization header if token exists
+        const token = getToken();
+        if (token) {
+            opts.headers['Authorization'] = `Bearer ${token}`;
+        }
+
         if (body) opts.body = JSON.stringify(body);
         const res = await fetch(`${API_BASE}${path}`, opts);
+
+        // Handle 401 - clear token and redirect to login
+        if (res.status === 401) {
+            clearToken();
+            if (window.navigateTo) {
+                window.navigateTo('login');
+            }
+            throw new Error('Session expired');
+        }
+
         if (res.status === 204) return null;
         if (!res.ok) {
             const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -15,6 +50,23 @@ const api = {
         }
         return res.json();
     },
+
+    // Auth
+    register(username, password) {
+        return this.request('POST', '/api/auth/register', { username, password });
+    },
+    login(username, password) {
+        return this.request('POST', '/api/auth/login', { username, password });
+    },
+    getCurrentUser() {
+        return this.request('GET', '/api/auth/me');
+    },
+    logout() {
+        clearToken();
+    },
+    setToken,
+    getToken,
+    clearToken,
 
     // Metrics
     getMetrics(enabledOnly = false) {

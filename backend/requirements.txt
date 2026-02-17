@@ -2,3 +2,6 @@ fastapi
 uvicorn
 aiosqlite
 pydantic
+python-jose[cryptography]
+bcrypt
+python-multipart

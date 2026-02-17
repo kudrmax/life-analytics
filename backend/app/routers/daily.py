@@ -5,21 +5,23 @@ from fastapi import APIRouter, Depends
 import aiosqlite
 
 from app.database import get_db
+from app.auth import get_current_user
 
 router = APIRouter(prefix="/api/daily", tags=["daily"])
 
 
 @router.get("/{date}")
-async def daily_summary(date: str, db=Depends(get_db)):
-    # Get all enabled metrics
+async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Get all enabled metrics for user
     metrics_rows = await db.execute(
-        "SELECT * FROM metric_configs WHERE enabled = 1 ORDER BY sort_order, rowid"
+        "SELECT * FROM metric_configs WHERE enabled = 1 AND user_id = ? ORDER BY sort_order, rowid",
+        (current_user["id"],)
     )
     metrics = await metrics_rows.fetchall()
 
-    # Get all entries for date
+    # Get all entries for date and user
     entries_rows = await db.execute(
-        "SELECT * FROM entries WHERE date = ? ORDER BY timestamp", (date,)
+        "SELECT * FROM entries WHERE date = ? AND user_id = ? ORDER BY timestamp", (date, current_user["id"])
     )
     entries = await entries_rows.fetchall()
 

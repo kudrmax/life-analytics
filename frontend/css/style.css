@@ -924,3 +924,91 @@ input[type="month"], input[type="date"] {
     padding-top: 20px;
     border-top: 1px solid var(--border);
 }
+
+/* ─── Auth Pages ─── */
+.auth-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.auth-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 40px;
+    max-width: 400px;
+    width: 100%;
+}
+
+.auth-card h2 {
+    text-align: center;
+    margin-bottom: 8px;
+    color: var(--accent);
+}
+
+.auth-subtitle {
+    text-align: center;
+    color: var(--text-dim);
+    margin-bottom: 32px;
+    font-size: 14px;
+}
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.btn-full {
+    width: 100%;
+}
+
+.error-message {
+    color: var(--red);
+    font-size: 14px;
+    min-height: 20px;
+    text-align: center;
+}
+
+.auth-footer {
+    margin-top: 24px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 14px;
+}
+
+.auth-footer a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.auth-footer a:hover {
+    text-decoration: underline;
+}
+
+.field-hint {
+    display: block;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 4px;
+}
+
+/* ─── Settings Header ─── */
+.settings-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.user-info {
+    color: var(--text-dim);
+    font-size: 14px;
+}
