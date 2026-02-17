@@ -9,8 +9,49 @@ function todayStr() {
     return new Date().toISOString().slice(0, 10);
 }
 
+// ─── Theme Management ───
+const THEME_KEY = 'la_theme';
+
+function initTheme() {
+    const savedTheme = localStorage.getItem(THEME_KEY) || 'dark';
+    applyTheme(savedTheme);
+}
+
+function applyTheme(theme) {
+    if (theme === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+        updateThemeIcon('☀️');
+    } else {
+        document.documentElement.removeAttribute('data-theme');
+        updateThemeIcon('🌙');
+    }
+    localStorage.setItem(THEME_KEY, theme);
+}
+
+function updateThemeIcon(icon) {
+    const themeIcon = document.querySelector('.theme-icon');
+    if (themeIcon) {
+        themeIcon.textContent = icon;
+    }
+}
+
+function toggleTheme() {
+    const currentTheme = localStorage.getItem(THEME_KEY) || 'dark';
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+    applyTheme(newTheme);
+}
+
+function setupThemeToggle() {
+    const themeToggle = document.getElementById('theme-toggle');
+    if (themeToggle) {
+        themeToggle.addEventListener('click', toggleTheme);
+    }
+}
+
 // ─── Init ───
 document.addEventListener('DOMContentLoaded', async () => {
+    initTheme();
+    setupThemeToggle();
     setupNav();
     await checkAuth();
 
