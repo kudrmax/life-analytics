@@ -112,3 +112,90 @@ async def delete_metric(metric_id: str, db=Depends(get_db), current_user: dict =
     await get_metric(metric_id, db, current_user)  # 404 if not found
     await db.execute("DELETE FROM metric_configs WHERE id = ? AND user_id = ?", (metric_id, current_user["id"]))
     await db.commit()
+
+
+@router.post("/import-defaults", status_code=200)
+async def import_default_metrics(
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Import or update metrics from DEFAULT_METRICS seed data.
+    Uses same conflict resolution as ZIP import:
+    - Existing metrics (by ID) are updated
+    - New metrics are created
+    - User entries are never affected
+    """
+    from app.seed import DEFAULT_METRICS
+
+    imported = 0
+    updated = 0
+    errors = []
+
+    for metric in DEFAULT_METRICS:
+        try:
+            metric_id = metric['id']
+
+            # Check if metric exists for this user
+            cursor = await db.execute(
+                "SELECT id FROM metric_configs WHERE id = ? AND user_id = ?",
+                (metric_id, current_user["id"])
+            )
+            existing = await cursor.fetchone()
+
+            config_json = json.dumps(metric.get('config', {}))
+
+            if existing:
+                # UPDATE existing metric (preserves entries)
+                await db.execute(
+                    """UPDATE metric_configs
+                       SET name = ?, category = ?, type = ?, frequency = ?,
+                           source = ?, config_json = ?, sort_order = ?
+                       WHERE id = ? AND user_id = ?""",
+                    (
+                        metric['name'],
+                        metric.get('category', ''),
+                        metric['type'],
+                        metric.get('frequency', 'daily'),
+                        metric.get('source', 'manual'),
+                        config_json,
+                        metric.get('sort_order', 0),
+                        metric_id,
+                        current_user["id"]
+                    )
+                )
+                updated += 1
+            else:
+                # INSERT new metric
+                await db.execute(
+                    """INSERT INTO metric_configs
+                       (id, name, category, type, frequency, source,
+                        config_json, enabled, sort_order, user_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        metric_id,
+                        metric['name'],
+                        metric.get('category', ''),
+                        metric['type'],
+                        metric.get('frequency', 'daily'),
+                        metric.get('source', 'manual'),
+                        config_json,
+                        1 if metric.get('enabled', True) else 0,
+                        metric.get('sort_order', 0),
+                        current_user["id"]
+                    )
+                )
+                imported += 1
+
+        except Exception as e:
+            errors.append(f"Metric '{metric.get('id', 'unknown')}': {str(e)}")
+            if len(errors) >= 10:
+                break
+
+    await db.commit()
+
+    return {
+        "imported": imported,
+        "updated": updated,
+        "errors": errors
+    }

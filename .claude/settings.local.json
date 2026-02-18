@@ -19,7 +19,8 @@
       "Bash(then)",
       "Bash(else)",
       "Bash(fi)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(./run.sh:*)"
     ]
   }
 }

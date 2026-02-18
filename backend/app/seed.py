@@ -144,9 +144,19 @@ DEFAULT_METRICS = [
         "id": "coffee",
         "name": "Кофе",
         "category": "Здоровье",
-        "type": "number",
+        "type": "compound",
         "frequency": "daily",
-        "config": {"min": 0, "max": 10, "label": "чашек"},
+        "config": {
+            "fields": [
+                {"name": "had_coffee", "type": "boolean", "label": "Пил кофе"},
+                {
+                    "name": "cups",
+                    "type": "number",
+                    "label": "Количество чашек",
+                    "condition": "had_coffee == true",
+                },
+            ]
+        },
     },
     {
         "id": "alcohol",
@@ -200,9 +210,19 @@ DEFAULT_METRICS = [
         "id": "new_people",
         "name": "Новые знакомства",
         "category": "Социальное",
-        "type": "number",
+        "type": "compound",
         "frequency": "daily",
-        "config": {"min": 0, "max": 20},
+        "config": {
+            "fields": [
+                {"name": "met_new", "type": "boolean", "label": "Были новые знакомства"},
+                {
+                    "name": "count",
+                    "type": "number",
+                    "label": "Количество человек",
+                    "condition": "met_new == true",
+                },
+            ]
+        },
     },
 
     # ═══════════════════════════════════════════════════════

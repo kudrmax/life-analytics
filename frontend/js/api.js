@@ -83,6 +83,9 @@ const api = {
     deleteMetric(id) {
         return this.request('DELETE', `/api/metrics/${id}`);
     },
+    importDefaults() {
+        return this.request('POST', '/api/metrics/import-defaults');
+    },
 
     // Entries
     getEntries(date, metricId = null) {

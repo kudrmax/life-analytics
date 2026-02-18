@@ -371,6 +371,26 @@ function renderTime(m, val) {
 }
 
 function renderCompound(m, val) {
+    // BACKWARD COMPATIBILITY: Handle old number-type entries
+    // Old format: {value: 2} → New format: {had_coffee: true, cups: 2}
+    if (val && val.value !== undefined && m.config.fields && m.config.fields[0]) {
+        const boolField = m.config.fields[0].name;
+        if (!val.hasOwnProperty(boolField)) {
+            // Legacy data detected - convert for display only
+            const legacyValue = val.value;
+            if (legacyValue > 0) {
+                val = {
+                    [m.config.fields[0].name]: true,
+                    [m.config.fields[1].name]: legacyValue
+                };
+            } else {
+                val = {
+                    [m.config.fields[0].name]: false
+                };
+            }
+        }
+    }
+
     const fields = m.config.fields || [];
     let html = '<div class="compound-fields">';
     for (const f of fields) {
@@ -858,6 +878,7 @@ async function renderSettings(container) {
     html += '<h2>Настройки метрик</h2>';
     html += '<div class="settings-actions">';
     html += '<button class="btn-primary" id="add-metric">+ Новая метрика</button>';
+    html += '<button class="btn-small" id="import-defaults-btn">📋 Добавить дефолтные метрики</button>';
     html += '<button class="btn-small" id="export-btn">📥 Экспорт ZIP</button>';
     html += '<button class="btn-small" id="import-btn">📤 Импорт ZIP</button>';
     html += '</div>';
@@ -880,6 +901,7 @@ async function renderSettings(container) {
                     <span class="setting-type">${typeLabel} • ${freqLabel}</span>
                 </div>
                 <div class="setting-actions">
+                    <button class="btn-icon edit-btn" data-metric="${m.id}">✏️</button>
                     <button class="btn-icon toggle-btn" data-metric="${m.id}" data-enabled="${m.enabled}">${m.enabled ? '&#x2714;' : '&#x2716;'}</button>
                     <button class="btn-icon delete-btn" data-metric="${m.id}">&times;</button>
                 </div>
@@ -897,6 +919,34 @@ async function renderSettings(container) {
     });
 
     document.getElementById('add-metric').addEventListener('click', showAddMetricModal);
+
+    // Import default metrics button
+    document.getElementById('import-defaults-btn').addEventListener('click', async () => {
+        if (!confirm('Импортировать дефолтные метрики?\n\n' +
+                     'Существующие метрики будут обновлены, новые — добавлены.\n' +
+                     'Ваши записи не будут затронуты.')) {
+            return;
+        }
+
+        try {
+            const result = await api.importDefaults();
+
+            let message = '✅ Импорт дефолтных метрик завершён!\n\n';
+            message += `📊 Создано: ${result.imported}\n`;
+            message += `🔄 Обновлено: ${result.updated}\n`;
+
+            if (result.errors && result.errors.length > 0) {
+                message += '\n⚠️ Ошибки:\n' + result.errors.slice(0, 5).join('\n');
+            }
+
+            alert(message);
+
+            await loadMetrics();
+            await renderSettings(container);
+        } catch (error) {
+            alert('❌ Ошибка импорта: ' + error.message);
+        }
+    });
 
     // Export button
     document.getElementById('export-btn').addEventListener('click', async () => {
@@ -978,6 +1028,18 @@ async function renderSettings(container) {
         }
     });
 
+    // Edit button listeners
+    container.querySelectorAll('.edit-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const metricId = btn.dataset.metric;
+            const metric = allMetrics.find(m => m.id === metricId);
+            if (metric) {
+                showEditMetricModal(metric);
+            }
+        });
+    });
+
     container.querySelectorAll('.toggle-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
             e.stopPropagation();
@@ -1013,60 +1075,64 @@ async function renderSettings(container) {
     });
 }
 
-function showAddMetricModal() {
+function showMetricModal(mode = 'create', existingMetric = null) {
+    const isEdit = mode === 'edit';
+    const title = isEdit ? 'Редактировать метрику' : 'Создать метрику';
+    const buttonText = isEdit ? 'Сохранить изменения' : 'Создать метрику';
+
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
         <div class="modal modal-large">
-            <h3>Создать метрику</h3>
+            <h3>${title}</h3>
 
             <div class="modal-content-split">
             <div class="modal-form">
                 <label class="form-label">
                     <span class="label-text">Название</span>
-                    <input id="nm-name" placeholder="Например: Экранное время" class="form-input">
+                    <input id="nm-name" placeholder="Например: Экранное время" class="form-input" value="${existingMetric?.name || ''}">
                     <span class="label-hint">Как метрика будет отображаться</span>
                 </label>
 
                 <label class="form-label">
                     <span class="label-text">Категория</span>
-                    <input id="nm-cat" placeholder="Например: Продуктивность" class="form-input">
+                    <input id="nm-cat" placeholder="Например: Продуктивность" class="form-input" value="${existingMetric?.category || ''}">
                     <span class="label-hint">Для группировки метрик</span>
                 </label>
 
                 <div class="form-section" id="type-section">
-                    <span class="label-text">Тип значения</span>
+                    <span class="label-text">Тип значения${isEdit ? ' <span style="color: #666;">(нельзя изменить)</span>' : ''}</span>
                     <div class="radio-group">
                         <label class="radio-option">
-                            <input type="radio" name="type" value="boolean" checked>
+                            <input type="radio" name="type" value="boolean" ${!existingMetric || existingMetric.type === 'boolean' ? 'checked' : ''} ${isEdit ? 'disabled' : ''}>
                             <div class="radio-content">
                                 <strong>Да/Нет</strong>
                                 <span>Простой выбор (например: "Тренировка была?")</span>
                             </div>
                         </label>
                         <label class="radio-option">
-                            <input type="radio" name="type" value="number">
+                            <input type="radio" name="type" value="number" ${existingMetric?.type === 'number' ? 'checked' : ''} ${isEdit ? 'disabled' : ''}>
                             <div class="radio-content">
                                 <strong>Число</strong>
                                 <span>Количество (например: "5 чашек кофе", "2.5 часа работы")</span>
                             </div>
                         </label>
                         <label class="radio-option">
-                            <input type="radio" name="type" value="scale">
+                            <input type="radio" name="type" value="scale" ${existingMetric?.type === 'scale' ? 'checked' : ''} ${isEdit ? 'disabled' : ''}>
                             <div class="radio-content">
                                 <strong>Шкала 1-5</strong>
                                 <span>Оценка (например: "Качество сна: 4 из 5")</span>
                             </div>
                         </label>
                         <label class="radio-option">
-                            <input type="radio" name="type" value="time">
+                            <input type="radio" name="type" value="time" ${existingMetric?.type === 'time' ? 'checked' : ''} ${isEdit ? 'disabled' : ''}>
                             <div class="radio-content">
                                 <strong>Время</strong>
                                 <span>Указать время (например: "Подъем в 07:30")</span>
                             </div>
                         </label>
                         <label class="radio-option">
-                            <input type="radio" name="type" value="compound">
+                            <input type="radio" name="type" value="compound" ${existingMetric?.type === 'compound' ? 'checked' : ''} ${isEdit ? 'disabled' : ''}>
                             <div class="radio-content">
                                 <strong>Составная (условная)</strong>
                                 <span>Несколько полей с условиями (например: "Алкоголь: да/нет + количество порций")</span>
@@ -1079,14 +1145,14 @@ function showAddMetricModal() {
                     <span class="label-text">Как часто заполнять</span>
                     <div class="radio-group">
                         <label class="radio-option">
-                            <input type="radio" name="frequency" value="daily" checked>
+                            <input type="radio" name="frequency" value="daily" ${!existingMetric || existingMetric.frequency === 'daily' ? 'checked' : ''}>
                             <div class="radio-content">
                                 <strong>Один раз в день</strong>
                                 <span>Заполняется вечером при подведении итогов</span>
                             </div>
                         </label>
                         <label class="radio-option">
-                            <input type="radio" name="frequency" value="multiple">
+                            <input type="radio" name="frequency" value="multiple" ${existingMetric?.frequency === 'multiple' ? 'checked' : ''}>
                             <div class="radio-content">
                                 <strong>Три раза в день (оценка 1-5)</strong>
                                 <span>Заполняется утром, днём и вечером. Автоматически использует шкалу 1-5 (для настроения, энергии, стресса)</span>
@@ -1194,7 +1260,7 @@ function showAddMetricModal() {
             </div>
 
             <div class="modal-actions">
-                <button class="btn-primary" id="nm-save">Создать метрику</button>
+                <button class="btn-primary" id="nm-save">${buttonText}</button>
                 <button class="btn-small" id="nm-cancel">Отмена</button>
             </div>
         </div>
@@ -1203,6 +1269,73 @@ function showAddMetricModal() {
 
     // Compound configuration
     let currentCompoundType = null;
+
+    // Initialize compound fields if editing a compound metric
+    if (isEdit && existingMetric && existingMetric.type === 'compound' && existingMetric.config.fields) {
+        const fields = existingMetric.config.fields;
+        const hasNumberField = fields.some(f => f.type === 'number');
+        const hasEnumField = fields.some(f => f.type === 'enum');
+
+        if (hasNumberField) {
+            currentCompoundType = 'bool_number';
+            const boolField = fields.find(f => f.type === 'boolean');
+            const numField = fields.find(f => f.type === 'number');
+
+            if (boolField && numField) {
+                document.getElementById('compound-question-num').value = boolField.label || '';
+                document.getElementById('compound-num-label').value = numField.label || '';
+
+                // Extract condition value (e.g., "has == true" → "true")
+                const condMatch = numField.condition?.match(/==\s*(true|false)/);
+                if (condMatch) {
+                    const condRadio = document.querySelector(`input[name="compound-condition-num"][value="${condMatch[1]}"]`);
+                    if (condRadio) condRadio.checked = true;
+                }
+            }
+
+            document.getElementById('compound-config-number').style.display = 'block';
+            document.querySelectorAll('.compound-example-btn').forEach(btn => {
+                if (btn.dataset.example === 'bool_number') btn.classList.add('active');
+            });
+        } else if (hasEnumField) {
+            currentCompoundType = 'bool_enum';
+            const boolField = fields.find(f => f.type === 'boolean');
+            const enumField = fields.find(f => f.type === 'enum');
+
+            if (boolField && enumField) {
+                document.getElementById('compound-question-enum').value = boolField.label || '';
+                document.getElementById('compound-enum-options').value = enumField.options?.join(', ') || '';
+
+                // Extract condition value
+                const condMatch = enumField.condition?.match(/==\s*(true|false)/);
+                if (condMatch) {
+                    const condRadio = document.querySelector(`input[name="compound-condition-enum"][value="${condMatch[1]}"]`);
+                    if (condRadio) condRadio.checked = true;
+                }
+            }
+
+            document.getElementById('compound-config-enum').style.display = 'block';
+            document.querySelectorAll('.compound-example-btn').forEach(btn => {
+                if (btn.dataset.example === 'bool_enum') btn.classList.add('active');
+            });
+        }
+    }
+
+    // Initialize number fields if editing a number metric
+    if (isEdit && existingMetric && existingMetric.type === 'number' && existingMetric.config) {
+        if (existingMetric.config.label) {
+            document.getElementById('nm-unit').value = existingMetric.config.label;
+        }
+        if (existingMetric.config.min !== undefined) {
+            document.getElementById('nm-min').value = existingMetric.config.min;
+        }
+        if (existingMetric.config.max !== undefined) {
+            document.getElementById('nm-max').value = existingMetric.config.max;
+        }
+        if (existingMetric.config.step !== undefined) {
+            document.getElementById('nm-step').value = existingMetric.config.step;
+        }
+    }
 
     const buildCompoundConfig = () => {
         if (currentCompoundType === 'bool_number') {
@@ -1429,13 +1562,10 @@ function showAddMetricModal() {
         const frequency = document.querySelector('input[name="frequency"]:checked').value;
 
         // For multiple frequency, always use scale type
-        const type = frequency === 'multiple' ? 'scale' : document.querySelector('input[name="type"]:checked').value;
-
-        // Generate ID from name
-        const id = name.toLowerCase()
-            .replace(/\s+/g, '_')
-            .replace(/[^a-z0-9_]/g, '')
-            || 'metric_' + Date.now();
+        // In edit mode, use existing type (it's disabled anyway)
+        const type = isEdit
+            ? existingMetric.type
+            : (frequency === 'multiple' ? 'scale' : document.querySelector('input[name="type"]:checked').value);
 
         const config = {};
         if (type === 'scale') {
@@ -1456,21 +1586,48 @@ function showAddMetricModal() {
         }
 
         try {
-            await api.createMetric({
-                id,
-                name,
-                category,
-                type,
-                frequency,
-                config,
-            });
+            if (isEdit) {
+                // Update existing metric (type excluded)
+                await api.updateMetric(existingMetric.id, {
+                    name,
+                    category,
+                    frequency,
+                    config
+                });
+            } else {
+                // Generate ID from name (only for new metrics)
+                const id = name.toLowerCase()
+                    .replace(/\s+/g, '_')
+                    .replace(/[^a-z0-9_]/g, '')
+                    || 'metric_' + Date.now();
+
+                // Create new metric
+                await api.createMetric({
+                    id,
+                    name,
+                    category,
+                    type,
+                    frequency,
+                    config,
+                });
+            }
+
             overlay.remove();
             await loadMetrics();
             navigateTo('settings');
         } catch (error) {
-            alert('Ошибка создания метрики: ' + error.message);
+            alert(`Ошибка ${isEdit ? 'обновления' : 'создания'} метрики: ` + error.message);
         }
     };
+}
+
+// Wrapper functions for compatibility
+function showAddMetricModal() {
+    showMetricModal('create');
+}
+
+function showEditMetricModal(metric) {
+    showMetricModal('edit', metric);
 }
 
 // ─── Helpers ───
