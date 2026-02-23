@@ -1,4 +1,4 @@
-const API_BASE = window.API_BASE || 'http://localhost:8000';
+const API_BASE = window.API_BASE || '';
 
 // Token management
 const TOKEN_KEY = 'la_auth_token';
