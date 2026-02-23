@@ -1,3 +1,5 @@
+SHELL := /bin/bash
+
 .PHONY: update restart logs status
 
 # Обновление проекта (git pull + requirements + restart)
