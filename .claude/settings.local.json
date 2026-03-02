@@ -20,7 +20,8 @@
       "Bash(else)",
       "Bash(fi)",
       "Bash(pkill:*)",
-      "Bash(./run.sh:*)"
+      "Bash(./run.sh:*)",
+      "Bash(docker compose exec:*)"
     ]
   }
 }

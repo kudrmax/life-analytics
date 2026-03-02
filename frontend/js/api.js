@@ -67,7 +67,7 @@ const api = {
     getToken,
     clearToken,
 
-    // Metrics (metric_id is now int)
+    // Metrics
     getMetrics(enabledOnly = false) {
         const q = enabledOnly ? '?enabled_only=true' : '';
         return this.request('GET', `/api/metrics${q}`);
@@ -81,11 +81,8 @@ const api = {
     deleteMetric(id) {
         return this.request('DELETE', `/api/metrics/${id}`);
     },
-    importDefaults() {
-        return this.request('POST', '/api/metrics/import-defaults');
-    },
 
-    // Entries (metric_id is now int, uses measurement_number)
+    // Entries
     getEntries(date, metricId = null) {
         let q = `?date=${date}`;
         if (metricId) q += `&metric_id=${metricId}`;

@@ -1,18 +1,9 @@
 from pydantic import BaseModel
-from typing import Any
 from enum import Enum
 
 
 class MetricType(str, Enum):
     bool = "bool"
-    number = "number"
-    scale = "scale"
-    time = "time"
-
-
-class NumberDisplayMode(str, Enum):
-    number_only = "number_only"
-    bool_number = "bool_number"
 
 
 class MetricDefinitionCreate(BaseModel):
@@ -22,9 +13,6 @@ class MetricDefinitionCreate(BaseModel):
     type: MetricType
     enabled: bool = True
     sort_order: int = 0
-    measurements_per_day: int = 1
-    measurement_labels: list[str] = []
-    config: dict[str, Any] = {}
 
 
 class MetricDefinitionUpdate(BaseModel):
@@ -32,9 +20,6 @@ class MetricDefinitionUpdate(BaseModel):
     category: str | None = None
     enabled: bool | None = None
     sort_order: int | None = None
-    measurements_per_day: int | None = None
-    measurement_labels: list[str] | None = None
-    config: dict[str, Any] | None = None
 
 
 class MetricDefinitionOut(BaseModel):
@@ -45,29 +30,24 @@ class MetricDefinitionOut(BaseModel):
     type: MetricType
     enabled: bool
     sort_order: int
-    measurements_per_day: int
-    measurement_labels: list[str]
-    config: dict[str, Any]
 
 
 class EntryCreate(BaseModel):
     metric_id: int
     date: str  # YYYY-MM-DD
-    measurement_number: int = 1
-    value: dict[str, Any]
+    value: bool
 
 
 class EntryUpdate(BaseModel):
-    value: dict[str, Any]
+    value: bool
 
 
 class EntryOut(BaseModel):
     id: int
     metric_id: int
     date: str
-    measurement_number: int
     recorded_at: str
-    value: dict[str, Any]
+    value: bool
 
 
 # Auth schemas

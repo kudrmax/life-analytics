@@ -32,14 +32,7 @@ async def init_db():
         # Create ENUM types
         await conn.execute("""
             DO $$ BEGIN
-                CREATE TYPE metric_type AS ENUM ('bool', 'number', 'scale', 'time');
-            EXCEPTION WHEN duplicate_object THEN NULL;
-            END $$;
-        """)
-
-        await conn.execute("""
-            DO $$ BEGIN
-                CREATE TYPE number_display_mode AS ENUM ('number_only', 'bool_number');
+                CREATE TYPE metric_type AS ENUM ('bool');
             EXCEPTION WHEN duplicate_object THEN NULL;
             END $$;
         """)
@@ -65,102 +58,28 @@ async def init_db():
                 type metric_type NOT NULL,
                 enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 sort_order INTEGER NOT NULL DEFAULT 0,
-                measurements_per_day SMALLINT NOT NULL DEFAULT 1
-                    CHECK (measurements_per_day >= 1 AND measurements_per_day <= 10),
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 UNIQUE(user_id, slug)
             )
         """)
 
-        # Measurement labels
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS measurement_labels (
-                id SERIAL PRIMARY KEY,
-                metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
-                measurement_number SMALLINT NOT NULL,
-                label VARCHAR(100) NOT NULL,
-                UNIQUE(metric_id, measurement_number)
-            )
-        """)
-
-        # Config tables (one per metric type)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS config_bool (
-                metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
-                true_label VARCHAR(50) NOT NULL DEFAULT 'Да',
-                false_label VARCHAR(50) NOT NULL DEFAULT 'Нет'
-            )
-        """)
-
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS config_number (
-                metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
-                min_value NUMERIC,
-                max_value NUMERIC,
-                step NUMERIC NOT NULL DEFAULT 1,
-                unit_label VARCHAR(50) NOT NULL DEFAULT '',
-                display_mode number_display_mode NOT NULL DEFAULT 'number_only',
-                bool_label VARCHAR(200) NOT NULL DEFAULT '',
-                number_label VARCHAR(200) NOT NULL DEFAULT ''
-            )
-        """)
-
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS config_scale (
-                metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
-                min_value INTEGER NOT NULL DEFAULT 1,
-                max_value INTEGER NOT NULL DEFAULT 5,
-                step INTEGER NOT NULL DEFAULT 1
-            )
-        """)
-
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS config_time (
-                metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
-                placeholder VARCHAR(50) NOT NULL DEFAULT ''
-            )
-        """)
-
-        # Entries (spine table)
+        # Entries (spine table — one row per metric per user per date)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS entries (
                 id SERIAL PRIMARY KEY,
                 metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 date DATE NOT NULL,
-                measurement_number SMALLINT NOT NULL DEFAULT 1,
                 recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                UNIQUE(metric_id, user_id, date, measurement_number)
+                UNIQUE(metric_id, user_id, date)
             )
         """)
 
-        # Value tables (one per metric type)
+        # Value table for bool metrics
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS values_bool (
                 entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
                 value BOOLEAN NOT NULL
-            )
-        """)
-
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS values_number (
-                entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
-                bool_value BOOLEAN,
-                number_value NUMERIC
-            )
-        """)
-
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS values_scale (
-                entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
-                value INTEGER NOT NULL
-            )
-        """)
-
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS values_time (
-                entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
-                value TIME NOT NULL
             )
         """)
 

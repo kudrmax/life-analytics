@@ -6,33 +6,15 @@ from fastapi import APIRouter, Depends, Query
 
 from app.database import get_db
 from app.auth import get_current_user
-from app.metric_helpers import VALUE_TABLE_MAP, _decimal_to_num
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
-def _extract_numeric(metric_type: str, value_row) -> float | None:
-    """Extract a numeric value from a typed value row."""
+def _extract_numeric(value_row) -> float | None:
+    """Extract a numeric value from a bool value row (True=1, False=0)."""
     if not value_row:
         return None
-    if metric_type == "bool":
-        return 1.0 if value_row["value"] else 0.0
-    elif metric_type == "scale":
-        return float(value_row["value"])
-    elif metric_type == "number":
-        nv = value_row.get("number_value")
-        if nv is not None:
-            return float(nv)
-        bv = value_row.get("bool_value")
-        if bv is not None:
-            return 1.0 if bv else 0.0
-        return None
-    elif metric_type == "time":
-        t = value_row.get("value")
-        if t:
-            return t.hour * 60 + t.minute
-        return None
-    return None
+    return 1.0 if value_row["value"] else 0.0
 
 
 @router.get("/trends")
@@ -50,34 +32,23 @@ async def trends(
     if not metric:
         return {"error": "Metric not found"}
 
-    metric_type = metric["type"]
-    value_table = VALUE_TABLE_MAP[metric_type]
-
     rows = await db.fetch(
-        f"""SELECT e.date, v.*
+        """SELECT e.date, v.value
             FROM entries e
-            JOIN {value_table} v ON v.entry_id = e.id
+            JOIN values_bool v ON v.entry_id = e.id
             WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4
             ORDER BY e.date""",
         metric_id, date_type.fromisoformat(start), date_type.fromisoformat(end), current_user["id"],
     )
 
-    by_date: dict[str, list[float]] = defaultdict(list)
-    for r in rows:
-        v = _extract_numeric(metric_type, r)
-        if v is not None:
-            by_date[str(r["date"])].append(v)
-
     points = []
-    for d in sorted(by_date):
-        vals = by_date[d]
-        points.append({
-            "date": d,
-            "avg": round(mean(vals), 2),
-            "min": min(vals),
-            "max": max(vals),
-            "count": len(vals),
-        })
+    for r in rows:
+        v = _extract_numeric(r)
+        if v is not None:
+            points.append({
+                "date": str(r["date"]),
+                "value": v,
+            })
 
     return {
         "metric_id": metric_id,
@@ -108,24 +79,18 @@ async def correlations(
     if not ma or not mb:
         return {"error": "Metric not found"}
 
-    async def aggregate_by_date(mid, mtype):
-        vtable = VALUE_TABLE_MAP[mtype]
+    async def values_by_date(mid):
         rows = await db.fetch(
-            f"""SELECT e.date, v.*
+            """SELECT e.date, v.value
                 FROM entries e
-                JOIN {vtable} v ON v.entry_id = e.id
+                JOIN values_bool v ON v.entry_id = e.id
                 WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4""",
             mid, date_type.fromisoformat(start), date_type.fromisoformat(end), current_user["id"],
         )
-        by_date = defaultdict(list)
-        for r in rows:
-            v = _extract_numeric(mtype, r)
-            if v is not None:
-                by_date[str(r["date"])].append(v)
-        return {d: mean(vs) for d, vs in by_date.items()}
+        return {str(r["date"]): (1.0 if r["value"] else 0.0) for r in rows}
 
-    a_by_date = await aggregate_by_date(metric_a, ma["type"])
-    b_by_date = await aggregate_by_date(metric_b, mb["type"])
+    a_by_date = await values_by_date(metric_a)
+    b_by_date = await values_by_date(metric_b)
 
     common = sorted(set(a_by_date) & set(b_by_date))
     if len(common) < 3:
@@ -163,59 +128,29 @@ async def correlations(
 
 @router.get("/streaks")
 async def streaks(db=Depends(get_db), current_user: dict = Depends(get_current_user)):
-    # Bool metrics and number metrics with bool_number display
     metrics = await db.fetch(
-        """SELECT md.* FROM metric_definitions md
-           WHERE md.enabled = TRUE AND md.user_id = $1
-           AND (
-               md.type = 'bool'
-               OR (md.type = 'number' AND EXISTS (
-                   SELECT 1 FROM config_number cn
-                   WHERE cn.metric_id = md.id AND cn.display_mode = 'bool_number'
-               ))
-           )
-           ORDER BY md.sort_order""",
+        """SELECT * FROM metric_definitions
+           WHERE enabled = TRUE AND user_id = $1 AND type = 'bool'
+           ORDER BY sort_order""",
         current_user["id"],
     )
 
     result = []
     for m in metrics:
-        metric_type = m["type"]
-
-        if metric_type == "bool":
-            rows = await db.fetch(
-                """SELECT DISTINCT e.date, vb.value
-                   FROM entries e
-                   JOIN values_bool vb ON vb.entry_id = e.id
-                   WHERE e.metric_id = $1 AND e.user_id = $2
-                   ORDER BY e.date DESC""",
-                m["id"], current_user["id"],
-            )
-            current_streak = 0
-            for r in rows:
-                if r["value"] is True:
-                    current_streak += 1
-                else:
-                    break
-
-        elif metric_type == "number":
-            rows = await db.fetch(
-                """SELECT DISTINCT e.date, vn.bool_value
-                   FROM entries e
-                   JOIN values_number vn ON vn.entry_id = e.id
-                   WHERE e.metric_id = $1 AND e.user_id = $2
-                   ORDER BY e.date DESC""",
-                m["id"], current_user["id"],
-            )
-            current_streak = 0
-            for r in rows:
-                if r["bool_value"] is True:
-                    current_streak += 1
-                else:
-                    break
-
-        else:
-            continue
+        rows = await db.fetch(
+            """SELECT DISTINCT e.date, vb.value
+               FROM entries e
+               JOIN values_bool vb ON vb.entry_id = e.id
+               WHERE e.metric_id = $1 AND e.user_id = $2
+               ORDER BY e.date DESC""",
+            m["id"], current_user["id"],
+        )
+        current_streak = 0
+        for r in rows:
+            if r["value"] is True:
+                current_streak += 1
+            else:
+                break
 
         if current_streak > 0:
             result.append({

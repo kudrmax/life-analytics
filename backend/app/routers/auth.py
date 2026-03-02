@@ -5,8 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.database import get_db
 from app.schemas import UserRegister, UserLogin, TokenResponse, UserOut
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
-from app.seed import DEFAULT_METRICS
-from app.metric_helpers import seed_metrics_for_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -36,12 +34,10 @@ async def register(data: UserRegister, db=Depends(get_db)):
 
     password_hash = hash_password(data.password)
 
-    async with db.transaction():
-        user_id = await db.fetchval(
-            "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id",
-            data.username, password_hash,
-        )
-        await seed_metrics_for_user(db, user_id, DEFAULT_METRICS)
+    user_id = await db.fetchval(
+        "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id",
+        data.username, password_hash,
+    )
 
     access_token = create_access_token(user_id, data.username)
     return TokenResponse(access_token=access_token, username=data.username)
