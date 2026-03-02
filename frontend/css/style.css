@@ -127,6 +127,8 @@ nav button:hover { color: var(--text); }
     padding: 0 4px;
     white-space: nowrap;
     user-select: none;
+    min-width: 155px;
+    text-align: center;
 }
 
 .day-progress {
@@ -160,10 +162,26 @@ nav button:hover { color: var(--text); }
     flex-shrink: 0;
 }
 
-.day-nav-today-wrap {
-    text-align: center;
-    margin-bottom: 8px;
+.go-today-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
 }
+
+.go-today-btn:hover {
+    background: var(--surface2);
+    color: var(--accent-hover);
+}
+
+.go-today-btn svg { width: 18px; height: 18px; }
 
 h2 {
     padding: 20px 0 16px;

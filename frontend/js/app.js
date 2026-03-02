@@ -248,6 +248,9 @@ async function renderToday(container) {
                 </div>
                 <span class="progress-count" id="progress-count">0%</span>
             </div>
+            <button class="go-today-btn" id="go-today" style="display:none" title="Вернуться к сегодня">
+                <i data-lucide="undo-2"></i>
+            </button>
             <div class="day-nav">
                 <button class="day-nav-arrow" id="prev-day">
                     <i data-lucide="chevron-left"></i>
@@ -257,9 +260,6 @@ async function renderToday(container) {
                     <i data-lucide="chevron-right"></i>
                 </button>
             </div>
-        </div>
-        <div class="day-nav-today-wrap" id="go-today-wrap" style="display:none">
-            <button class="btn-small" id="go-today">Вернуться к сегодня</button>
         </div>
         <div id="metrics-form"></div>
     `;
@@ -282,9 +282,9 @@ function changeDay(delta) {
 
 async function renderTodayForm() {
     document.getElementById('current-date-label').textContent = formatDate(currentDate);
-    const goTodayWrap = document.getElementById('go-today-wrap');
-    if (goTodayWrap) {
-        goTodayWrap.style.display = (currentDate === todayStr()) ? 'none' : '';
+    const goTodayBtn = document.getElementById('go-today');
+    if (goTodayBtn) {
+        goTodayBtn.style.display = (currentDate === todayStr()) ? 'none' : '';
     }
     const summary = await api.getDailySummary(currentDate);
     const form = document.getElementById('metrics-form');
