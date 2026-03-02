@@ -320,13 +320,9 @@ function renderBoolean(val) {
 
 function renderTime(val) {
     if (val) {
-        return `<div class="time-picker-display" data-action="pick-time">
-            <span class="time-value">${val}</span>
-        </div>`;
+        return `<button type="button" class="time-picker-btn has-value" data-action="pick-time">${val}</button>`;
     }
-    return `<div class="time-picker-display" data-action="pick-time">
-        <span class="time-placeholder">Указать время</span>
-    </div>`;
+    return `<button type="button" class="time-picker-btn" data-action="pick-time">Указать время</button>`;
 }
 
 // ─── Event Handlers ───
@@ -370,8 +366,8 @@ async function handleFormClick(e) {
     // Time picker
     const timeTrigger = btn.closest('[data-action="pick-time"]');
     if (timeTrigger) {
-        const timeVal = card.querySelector('.time-value');
-        const currentVal = timeVal ? timeVal.textContent : '';
+        if (document.querySelector('.cp-overlay')) return; // prevent multiple
+        const currentVal = timeTrigger.classList.contains('has-value') ? timeTrigger.textContent.trim() : '';
         showClockPicker(currentVal, async (newVal) => {
             try {
                 await saveDaily(metricId, entryId, newVal);
@@ -733,7 +729,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
 
     function previewInputHtml(type) {
         if (type === 'time') {
-            return `<div class="time-picker-display"><span class="time-placeholder">Указать время</span></div>`;
+            return `<button type="button" class="time-picker-btn">Указать время</button>`;
         }
         return `<div class="bool-buttons">
             <button class="bool-btn" data-value="true">Да</button>
@@ -915,7 +911,9 @@ function showClockPicker(initialValue, callback) {
 
     const overlay = document.createElement('div');
     overlay.className = 'cp-overlay';
-    document.body.appendChild(overlay);
+    // Inline critical styles so no CSS can override the fixed overlay
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.7);z-index:9999';
+    document.documentElement.appendChild(overlay);
 
     overlay.addEventListener('click', (e) => {
         if (e.target === overlay) overlay.remove();
