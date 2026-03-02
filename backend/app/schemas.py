@@ -1,53 +1,59 @@
 from pydantic import BaseModel
 from typing import Any
+from enum import Enum
 
 
-class MetricFieldConfig(BaseModel):
-    name: str
-    type: str
-    label: str = ""
-    condition: str | None = None
+class MetricType(str, Enum):
+    bool = "bool"
+    number = "number"
+    scale = "scale"
+    time = "time"
 
 
-class MetricConfigCreate(BaseModel):
-    id: str
+class NumberDisplayMode(str, Enum):
+    number_only = "number_only"
+    bool_number = "bool_number"
+
+
+class MetricDefinitionCreate(BaseModel):
+    slug: str
     name: str
     category: str = ""
-    type: str  # scale, boolean, number, time, enum, compound
-    frequency: str = "daily"  # daily, multiple
-    source: str = "manual"  # manual, todoist, google_calendar
-    config: dict[str, Any] = {}
+    type: MetricType
     enabled: bool = True
     sort_order: int = 0
+    measurements_per_day: int = 1
+    measurement_labels: list[str] = []
+    config: dict[str, Any] = {}
 
 
-class MetricConfigUpdate(BaseModel):
+class MetricDefinitionUpdate(BaseModel):
     name: str | None = None
     category: str | None = None
-    type: str | None = None
-    frequency: str | None = None
-    source: str | None = None
-    config: dict[str, Any] | None = None
     enabled: bool | None = None
     sort_order: int | None = None
+    measurements_per_day: int | None = None
+    measurement_labels: list[str] | None = None
+    config: dict[str, Any] | None = None
 
 
-class MetricConfigOut(BaseModel):
-    id: str
+class MetricDefinitionOut(BaseModel):
+    id: int
+    slug: str
     name: str
     category: str
-    type: str
-    frequency: str
-    source: str
-    config: dict[str, Any]
+    type: MetricType
     enabled: bool
     sort_order: int
+    measurements_per_day: int
+    measurement_labels: list[str]
+    config: dict[str, Any]
 
 
 class EntryCreate(BaseModel):
-    metric_id: str
+    metric_id: int
     date: str  # YYYY-MM-DD
-    timestamp: str | None = None  # ISO datetime, auto-filled if None
+    measurement_number: int = 1
     value: dict[str, Any]
 
 
@@ -57,9 +63,10 @@ class EntryUpdate(BaseModel):
 
 class EntryOut(BaseModel):
     id: int
-    metric_id: str
+    metric_id: int
     date: str
-    timestamp: str
+    measurement_number: int
+    recorded_at: str
     value: dict[str, Any]
 
 

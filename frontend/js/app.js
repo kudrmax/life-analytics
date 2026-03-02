@@ -271,7 +271,6 @@ async function renderTodayForm() {
     // Group by category
     const categories = {};
     for (const m of summary.metrics) {
-        if (m.source !== 'manual') continue;
         categories[m.category] = categories[m.category] || [];
         categories[m.category].push(m);
     }
@@ -294,32 +293,30 @@ function renderMetricInput(m) {
     const entryId = entry ? entry.id : null;
 
     // Check if daily metric is filled
-    const isFilled = m.frequency === 'daily' && entry;
+    const isFilled = m.measurements_per_day === 1 && entry;
     const filledClass = isFilled ? 'filled' : '';
 
     let input = '';
 
-    if (m.frequency === 'multiple') {
+    if (m.measurements_per_day > 1) {
         // Show quick buttons + list of entries
         input = renderMultipleInput(m);
     } else if (m.type === 'scale') {
         input = renderScale(m, val);
-    } else if (m.type === 'boolean') {
+    } else if (m.type === 'bool') {
         input = renderBoolean(m, val);
     } else if (m.type === 'number') {
         input = renderNumber(m, val);
     } else if (m.type === 'time') {
         input = renderTime(m, val);
-    } else if (m.type === 'compound') {
-        input = renderCompound(m, val);
     }
 
     // Add clear button for daily metrics with entries
-    const clearBtn = (m.frequency === 'daily' && entry)
+    const clearBtn = (m.measurements_per_day === 1 && entry)
         ? `<button class="metric-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`
         : '';
 
-    return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-entry-id="${entryId || ''}">
+    return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-entry-id="${entryId || ''}" data-metric-type="${m.type}" data-display-mode="${m.config.display_mode || ''}">
         <div class="metric-header">
             <label class="metric-label">${m.name}</label>
             ${clearBtn}
@@ -330,8 +327,8 @@ function renderMetricInput(m) {
 
 function renderScale(m, val) {
     const cfg = m.config;
-    const min = cfg.min || 1;
-    const max = cfg.max || 5;
+    const min = cfg.min_value || 1;
+    const max = cfg.max_value || 5;
     const current = val ? val.value : null;
     let html = '<div class="scale-buttons">';
     for (let i = min; i <= max; i++) {
@@ -351,17 +348,52 @@ function renderBoolean(m, val) {
 }
 
 function renderNumber(m, val) {
-    const current = val ? val.value : 0;
     const cfg = m.config;
+
+    if (cfg.display_mode === 'bool_number') {
+        return renderBoolNumber(m, val);
+    }
+
+    const current = val ? val.number_value : 0;
     const step = cfg.step || 1;
-    const min = cfg.min ?? 0;
-    const max = cfg.max ?? 999;
-    const label = cfg.label || '';
+    const min = cfg.min_value ?? 0;
+    const max = cfg.max_value ?? 999;
+    const label = cfg.unit_label || '';
     return `<div class="number-input">
         <button class="number-btn" data-action="decrement" data-step="${step}" data-min="${min}">−</button>
-        <input type="number" value="${current}" step="${step}" min="${min}" max="${max}" data-field="value">
+        <input type="number" value="${current}" step="${step}" min="${min}" max="${max}" data-field="number_value">
         <span class="unit">${label}</span>
         <button class="number-btn" data-action="increment" data-step="${step}" data-max="${max}">+</button>
+    </div>`;
+}
+
+function renderBoolNumber(m, val) {
+    const cfg = m.config;
+    const boolVal = val ? val.bool_value : null;
+    const numVal = val ? val.number_value : 0;
+    const boolLabel = cfg.bool_label || 'Было';
+    const numberLabel = cfg.number_label || 'Количество';
+    const step = cfg.step || 1;
+    const min = cfg.min_value ?? 0;
+    const max = cfg.max_value ?? 999;
+    const numberHidden = boolVal !== true ? 'hidden' : '';
+
+    return `<div class="bool-number-fields">
+        <div class="bool-number-bool">
+            <label class="field-label">${boolLabel}</label>
+            <div class="bool-buttons">
+                <button class="bool-btn ${boolVal === true ? 'active yes' : ''}" data-value="true" data-bool-number="bool">Да</button>
+                <button class="bool-btn ${boolVal === false ? 'active no' : ''}" data-value="false" data-bool-number="bool">Нет</button>
+            </div>
+        </div>
+        <div class="bool-number-number ${numberHidden}">
+            <label class="field-label">${numberLabel}</label>
+            <div class="number-input">
+                <button class="number-btn" data-action="decrement" data-step="${step}" data-min="${min}">−</button>
+                <input type="number" value="${numVal || 0}" step="${step}" min="${min}" max="${max}" data-field="number_value" data-bool-number="number">
+                <button class="number-btn" data-action="increment" data-step="${step}" data-max="${max}">+</button>
+            </div>
+        </div>
     </div>`;
 }
 
@@ -370,119 +402,52 @@ function renderTime(m, val) {
     return `<input type="time" value="${current}" data-field="value" class="time-input">`;
 }
 
-function renderCompound(m, val) {
-    // BACKWARD COMPATIBILITY: Handle old number-type entries
-    // Old format: {value: 2} → New format: {had_coffee: true, cups: 2}
-    if (val && val.value !== undefined && m.config.fields && m.config.fields[0]) {
-        const boolField = m.config.fields[0].name;
-        if (!val.hasOwnProperty(boolField)) {
-            // Legacy data detected - convert for display only
-            const legacyValue = val.value;
-            if (legacyValue > 0) {
-                val = {
-                    [m.config.fields[0].name]: true,
-                    [m.config.fields[1].name]: legacyValue
-                };
-            } else {
-                val = {
-                    [m.config.fields[0].name]: false
-                };
-            }
-        }
-    }
-
-    const fields = m.config.fields || [];
-    let html = '<div class="compound-fields">';
-    for (const f of fields) {
-        const fval = val ? val[f.name] : null;
-        const conditionMet = !f.condition || evaluateCondition(f.condition, val);
-        const hidden = conditionMet ? '' : 'hidden';
-
-        html += `<div class="compound-field ${hidden}" data-condition="${f.condition || ''}" data-cfield="${f.name}">`;
-        if (f.type === 'boolean') {
-            html += `<div class="bool-buttons">
-                <label class="field-label">${f.label}</label>
-                <button class="bool-btn ${fval === true ? 'active yes' : ''}" data-value="true" data-compound-field="${f.name}">${'Да'}</button>
-                <button class="bool-btn ${fval === false ? 'active no' : ''}" data-value="false" data-compound-field="${f.name}">${'Нет'}</button>
-            </div>`;
-        } else if (f.type === 'number') {
-            html += `<label class="field-label">${f.label}</label>
-                <input type="number" value="${fval ?? ''}" data-compound-field="${f.name}">`;
-        } else if (f.type === 'enum') {
-            html += `<label class="field-label">${f.label}</label><div class="enum-buttons">`;
-            for (const opt of (f.options || [])) {
-                html += `<button class="enum-btn ${fval === opt ? 'active' : ''}" data-value="${opt}" data-compound-field="${f.name}">${opt}</button>`;
-            }
-            html += '</div>';
-        }
-        html += '</div>';
-    }
-    html += '</div>';
-    return html;
-}
 
 function renderMultipleInput(m) {
     const cfg = m.config;
-    const min = cfg.min || 1;
-    const max = cfg.max || 5;
+    const min = cfg.min_value || 1;
+    const max = cfg.max_value || 5;
+    const labels = m.measurement_labels || [];
 
-    // Group entries by period
-    const periods = { morning: null, day: null, evening: null };
+    // Group entries by measurement_number
+    const byMeasurement = {};
     for (const e of m.entries) {
-        const period = e.value.period;
-        if (period && periods.hasOwnProperty(period)) {
-            // Keep the latest entry for each period
-            if (!periods[period] || e.id > periods[period].id) {
-                periods[period] = e;
-            }
+        const mn = e.measurement_number;
+        if (!byMeasurement[mn] || e.id > byMeasurement[mn].id) {
+            byMeasurement[mn] = e;
         }
     }
 
-    const periodLabels = {
-        morning: 'Утро',
-        day: 'День',
-        evening: 'Вечер'
-    };
-
     let html = '<div class="multiple-entry">';
 
-    for (const [period, label] of Object.entries(periodLabels)) {
-        const entry = periods[period];
+    for (let i = 1; i <= m.measurements_per_day; i++) {
+        const label = labels[i - 1] || `Измерение ${i}`;
+        const entry = byMeasurement[i] || null;
         const currentValue = entry ? entry.value.value : null;
         const entryId = entry ? entry.id : '';
         const clearBtn = entry ? `<button class="period-clear-btn" data-clear-period-entry="${entryId}" title="Очистить">&times;</button>` : '';
 
-        html += `<div class="period-section" data-period="${period}" data-period-entry-id="${entryId}">`;
+        html += `<div class="period-section" data-measurement-number="${i}" data-period-entry-id="${entryId}">`;
         html += `<div class="period-header">`;
         html += `<label class="period-label">${label}</label>`;
         html += clearBtn;
         html += `</div>`;
         html += '<div class="scale-buttons">';
-        for (let i = min; i <= max; i++) {
-            const active = currentValue === i ? 'active' : '';
-            html += `<button class="scale-btn ${active}" data-period-value="${i}" data-period="${period}">${i}</button>`;
+        for (let v = min; v <= max; v++) {
+            const active = currentValue === v ? 'active' : '';
+            html += `<button class="scale-btn ${active}" data-period-value="${v}" data-measurement-number="${i}">${v}</button>`;
         }
         html += '</div>';
         html += '</div>';
     }
 
     // Show summary if there are any entries
-    if (m.summary && (periods.morning || periods.day || periods.evening)) {
+    if (m.summary && Object.keys(byMeasurement).length > 0) {
         html += `<div class="summary-line">Среднее: ${m.summary.avg} | Мин: ${m.summary.min} | Макс: ${m.summary.max}</div>`;
     }
 
     html += '</div>';
     return html;
-}
-
-function evaluateCondition(condition, val) {
-    if (!condition || !val) return false;
-    // Simple "field == true/false" parser
-    const match = condition.match(/^(\w+)\s*==\s*(true|false)$/);
-    if (match) {
-        return val[match[1]] === (match[2] === 'true');
-    }
-    return true;
 }
 
 // ─── Event Handlers ───
@@ -550,7 +515,14 @@ async function handleFormClick(e) {
             input.value = newValue;
             console.log('Number button clicked:', { action: btn.dataset.action, currentValue, newValue });
 
-            await saveDaily(metricId, entryId, { value: newValue });
+            const value = { number_value: newValue };
+            // For bool_number, include bool_value from DOM
+            if (card.dataset.displayMode === 'bool_number') {
+                const activeBtn = card.querySelector('.bool-btn.active[data-bool-number="bool"]');
+                value.bool_value = activeBtn ? activeBtn.dataset.value === 'true' : null;
+            }
+
+            await saveDaily(metricId, entryId, value);
             await renderTodayForm();
         } catch (error) {
             console.error('Error in number button handler:', error);
@@ -559,33 +531,33 @@ async function handleFormClick(e) {
         return;
     }
 
-    // Period-based scale buttons (for multiple-frequency metrics)
-    if (btn.dataset.periodValue && btn.dataset.period) {
+    // Measurement-number scale buttons (for multi-measurement metrics)
+    if (btn.dataset.periodValue && btn.dataset.measurementNumber) {
         try {
-            const period = btn.dataset.period;
+            const measurementNumber = parseInt(btn.dataset.measurementNumber);
             const value = parseInt(btn.dataset.periodValue);
             const periodSection = btn.closest('.period-section');
             const periodEntryId = periodSection ? periodSection.dataset.periodEntryId : '';
 
-            console.log('Period button clicked:', { metricId, period, value, periodEntryId });
+            console.log('Measurement button clicked:', { metricId, measurementNumber, value, periodEntryId });
 
             if (periodEntryId) {
                 // Update existing entry
                 await api.updateEntry(parseInt(periodEntryId), {
-                    value: { period, value }
+                    value: { value }
                 });
             } else {
                 // Create new entry
                 await api.createEntry({
-                    metric_id: metricId,
+                    metric_id: parseInt(metricId),
                     date: currentDate,
-                    timestamp: new Date().toISOString(),
-                    value: { period, value },
+                    measurement_number: measurementNumber,
+                    value: { value },
                 });
             }
             await renderTodayForm();
         } catch (error) {
-            console.error('Error in period button handler:', error);
+            console.error('Error in measurement button handler:', error);
             alert('Ошибка: ' + error.message);
         }
         return;
@@ -619,12 +591,19 @@ async function handleFormClick(e) {
             const boolVal = btn.dataset.value === 'true';
             console.log('Boolean button clicked:', { metricId, boolVal });
 
-            if (btn.dataset.compoundField) {
-                // Compound field
-                const currentVal = await getCurrentValue(metricId, entryId);
-                currentVal[btn.dataset.compoundField] = boolVal;
-                // Reset conditional fields if needed
-                await saveDaily(metricId, entryId, currentVal);
+            if (btn.dataset.boolNumber === 'bool') {
+                // bool_number display mode: save both bool_value and number_value
+                const numberInput = card.querySelector('input[data-bool-number="number"]');
+                const numberValue = numberInput ? parseFloat(numberInput.value) || 0 : 0;
+                const value = { bool_value: boolVal, number_value: numberValue };
+
+                // Toggle number section visibility
+                const numberSection = card.querySelector('.bool-number-number');
+                if (numberSection) {
+                    numberSection.classList.toggle('hidden', !boolVal);
+                }
+
+                await saveDaily(metricId, entryId, value);
                 await renderTodayForm();
             } else {
                 await saveDaily(metricId, entryId, { value: boolVal });
@@ -632,21 +611,6 @@ async function handleFormClick(e) {
             }
         } catch (error) {
             console.error('Error in boolean handler:', error);
-            alert('Ошибка: ' + error.message);
-        }
-        return;
-    }
-
-    // Enum buttons
-    if (btn.classList.contains('enum-btn')) {
-        try {
-            console.log('Enum button clicked');
-            const currentVal = await getCurrentValue(metricId, entryId);
-            currentVal[btn.dataset.compoundField] = btn.dataset.value;
-            await saveDaily(metricId, entryId, currentVal);
-            await renderTodayForm();
-        } catch (error) {
-            console.error('Error in enum handler:', error);
             alert('Ошибка: ' + error.message);
         }
         return;
@@ -663,23 +627,19 @@ async function handleFormChange(e) {
     const metricId = card.dataset.metricId;
     const entryId = card.dataset.entryId;
 
-    if (input.dataset.compoundField) {
-        const currentVal = await getCurrentValue(metricId, entryId);
-        currentVal[input.dataset.compoundField] = input.type === 'number' ? parseFloat(input.value) : input.value;
-        await saveDaily(metricId, entryId, currentVal);
+    if (input.dataset.field === 'number_value') {
+        const value = { number_value: parseFloat(input.value) };
+        // For bool_number, include bool_value from DOM
+        if (card.dataset.displayMode === 'bool_number') {
+            const activeBtn = card.querySelector('.bool-btn.active[data-bool-number="bool"]');
+            value.bool_value = activeBtn ? activeBtn.dataset.value === 'true' : null;
+        }
+        await saveDaily(metricId, entryId, value);
     } else if (input.dataset.field === 'value') {
         let v = input.value;
         if (input.type === 'number') v = parseFloat(v);
         await saveDaily(metricId, entryId, { value: v });
     }
-}
-
-async function getCurrentValue(metricId, entryId) {
-    if (entryId) {
-        const entries = await api.getEntries(currentDate, metricId);
-        if (entries.length > 0) return entries[0].value;
-    }
-    return {};
 }
 
 async function saveDaily(metricId, entryId, value) {
@@ -690,8 +650,9 @@ async function saveDaily(metricId, entryId, value) {
             console.log('Update result:', result);
         } else {
             const result = await api.createEntry({
-                metric_id: metricId,
+                metric_id: parseInt(metricId),
                 date: currentDate,
+                measurement_number: 1,
                 value,
             });
             console.log('Create result:', result);
@@ -749,7 +710,7 @@ async function showDayDetail(date) {
     for (const m of summary.metrics) {
         if (m.entries.length === 0) continue;
         let valStr = '';
-        if (m.frequency === 'multiple' && m.summary) {
+        if (m.measurements_per_day > 1 && m.summary) {
             valStr = `среднее: ${m.summary.avg}`;
         } else if (m.entries[0]) {
             valStr = formatValue(m.entries[0].value, m.type);
@@ -817,7 +778,7 @@ async function loadDashboard(start, end) {
 
     // Correlation selector
     const corrEl = document.getElementById('correlation-section');
-    const scaleMetrics = metrics.filter(m => ['scale', 'number', 'boolean'].includes(m.type));
+    const scaleMetrics = metrics.filter(m => ['scale', 'number', 'bool'].includes(m.type));
     let corrHtml = '<h3>Корреляции</h3><div class="corr-controls">';
     corrHtml += `<select id="corr-a">${scaleMetrics.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}</select>`;
     corrHtml += ` vs `;
@@ -894,7 +855,7 @@ async function renderSettings(container) {
         html += `<div class="category"><h3>${cat}</h3>`;
         for (const m of items) {
             const typeLabel = getTypeLabel(m.type);
-            const freqLabel = getFrequencyLabel(m.frequency);
+            const freqLabel = getFrequencyLabel(m.measurements_per_day);
             html += `<div class="setting-row">
                 <div class="setting-info">
                     <span class="setting-name ${m.enabled ? '' : 'disabled'}">${m.name}</span>
@@ -1033,7 +994,7 @@ async function renderSettings(container) {
         btn.addEventListener('click', async (e) => {
             e.stopPropagation();
             const metricId = btn.dataset.metric;
-            const metric = allMetrics.find(m => m.id === metricId);
+            const metric = allMetrics.find(m => m.id === parseInt(metricId));
             if (metric) {
                 showEditMetricModal(metric);
             }
@@ -1104,7 +1065,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     <span class="label-text">Тип значения${isEdit ? ' <span style="color: #666;">(нельзя изменить)</span>' : ''}</span>
                     <div class="radio-group">
                         <label class="radio-option">
-                            <input type="radio" name="type" value="boolean" ${!existingMetric || existingMetric.type === 'boolean' ? 'checked' : ''} ${isEdit ? 'disabled' : ''}>
+                            <input type="radio" name="type" value="bool" ${!existingMetric || existingMetric.type === 'bool' ? 'checked' : ''} ${isEdit ? 'disabled' : ''}>
                             <div class="radio-content">
                                 <strong>Да/Нет</strong>
                                 <span>Простой выбор (например: "Тренировка была?")</span>
@@ -1131,13 +1092,6 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                                 <span>Указать время (например: "Подъем в 07:30")</span>
                             </div>
                         </label>
-                        <label class="radio-option">
-                            <input type="radio" name="type" value="compound" ${existingMetric?.type === 'compound' ? 'checked' : ''} ${isEdit ? 'disabled' : ''}>
-                            <div class="radio-content">
-                                <strong>Составная (условная)</strong>
-                                <span>Несколько полей с условиями (например: "Алкоголь: да/нет + количество порций")</span>
-                            </div>
-                        </label>
                     </div>
                 </div>
 
@@ -1145,14 +1099,14 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     <span class="label-text">Как часто заполнять</span>
                     <div class="radio-group">
                         <label class="radio-option">
-                            <input type="radio" name="frequency" value="daily" ${!existingMetric || existingMetric.frequency === 'daily' ? 'checked' : ''}>
+                            <input type="radio" name="measurements_per_day" value="1" ${!existingMetric || existingMetric.measurements_per_day === 1 ? 'checked' : ''}>
                             <div class="radio-content">
                                 <strong>Один раз в день</strong>
                                 <span>Заполняется вечером при подведении итогов</span>
                             </div>
                         </label>
                         <label class="radio-option">
-                            <input type="radio" name="frequency" value="multiple" ${existingMetric?.frequency === 'multiple' ? 'checked' : ''}>
+                            <input type="radio" name="measurements_per_day" value="3" ${existingMetric?.measurements_per_day === 3 ? 'checked' : ''}>
                             <div class="radio-content">
                                 <strong>Три раза в день (оценка 1-5)</strong>
                                 <span>Заполняется утром, днём и вечером. Автоматически использует шкалу 1-5 (для настроения, энергии, стресса)</span>
@@ -1163,6 +1117,34 @@ function showMetricModal(mode = 'create', existingMetric = null) {
 
                 <div id="number-options" class="form-section" style="display: none;">
                     <span class="label-text">Настройки числа</span>
+
+                    <div class="form-label">
+                        <span class="label-text">Режим отображения</span>
+                        <div class="radio-group-inline">
+                            <label class="radio-inline">
+                                <input type="radio" name="display_mode" value="number_only" checked>
+                                <span>Только число</span>
+                            </label>
+                            <label class="radio-inline">
+                                <input type="radio" name="display_mode" value="bool_number">
+                                <span>Да/Нет + Число</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div id="bool-number-labels" style="display: none;">
+                        <div class="number-options-grid">
+                            <label class="form-label-inline">
+                                <span>Подпись Да/Нет</span>
+                                <input id="nm-bool-label" placeholder="Например: Употреблял алкоголь" class="form-input-small">
+                            </label>
+                            <label class="form-label-inline">
+                                <span>Подпись числа</span>
+                                <input id="nm-number-label" placeholder="Например: Количество порций" class="form-input-small">
+                            </label>
+                        </div>
+                    </div>
+
                     <div class="number-options-grid">
                         <label class="form-label-inline">
                             <span>Единица</span>
@@ -1180,71 +1162,6 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                             <span>Шаг</span>
                             <input id="nm-step" type="number" value="1" step="0.1" class="form-input-small">
                         </label>
-                    </div>
-                </div>
-
-                <div id="compound-options" class="form-section" style="display: none;">
-                    <span class="label-text">Выберите структуру</span>
-                    <div class="compound-examples">
-                        <button type="button" class="compound-example-btn" data-example="bool_number">
-                            Да/Нет + Число
-                        </button>
-                        <button type="button" class="compound-example-btn" data-example="bool_enum">
-                            Да/Нет + Варианты
-                        </button>
-                    </div>
-
-                    <div id="compound-config-number" class="compound-config" style="display: none;">
-                        <label class="form-label">
-                            <span class="label-text">Текст вопроса</span>
-                            <input id="compound-question-num" placeholder="Например: Употреблял алкоголь" class="form-input">
-                        </label>
-                        <div class="form-label">
-                            <span class="label-text">Число появляется при выборе:</span>
-                            <div class="radio-group-inline">
-                                <label class="radio-inline">
-                                    <input type="radio" name="compound-condition-num" value="true" checked>
-                                    <span>Да</span>
-                                </label>
-                                <label class="radio-inline">
-                                    <input type="radio" name="compound-condition-num" value="false">
-                                    <span>Нет</span>
-                                </label>
-                            </div>
-                        </div>
-                        <label class="form-label">
-                            <span class="label-text">Подпись числа</span>
-                            <input id="compound-num-label" placeholder="Например: Количество порций" class="form-input">
-                        </label>
-                    </div>
-
-                    <div id="compound-config-enum" class="compound-config" style="display: none;">
-                        <label class="form-label">
-                            <span class="label-text">Текст вопроса</span>
-                            <input id="compound-question-enum" placeholder="Например: Была тренировка" class="form-input">
-                        </label>
-                        <div class="form-label">
-                            <span class="label-text">Варианты появляются при выборе:</span>
-                            <div class="radio-group-inline">
-                                <label class="radio-inline">
-                                    <input type="radio" name="compound-condition-enum" value="true" checked>
-                                    <span>Да</span>
-                                </label>
-                                <label class="radio-inline">
-                                    <input type="radio" name="compound-condition-enum" value="false">
-                                    <span>Нет</span>
-                                </label>
-                            </div>
-                        </div>
-                        <label class="form-label">
-                            <span class="label-text">Варианты выбора (через запятую)</span>
-                            <input id="compound-enum-options" placeholder="кардио, силовая, растяжка, йога" class="form-input">
-                            <span class="label-hint">Введите варианты через запятую</span>
-                        </label>
-                    </div>
-
-                    <div class="label-hint">
-                        💡 <strong>Совет:</strong> В превью справа можно кликать по кнопкам, чтобы увидеть как работает условная логика
                     </div>
                 </div>
             </div>
@@ -1267,110 +1184,41 @@ function showMetricModal(mode = 'create', existingMetric = null) {
     `;
     document.body.appendChild(overlay);
 
-    // Compound configuration
-    let currentCompoundType = null;
-
-    // Initialize compound fields if editing a compound metric
-    if (isEdit && existingMetric && existingMetric.type === 'compound' && existingMetric.config.fields) {
-        const fields = existingMetric.config.fields;
-        const hasNumberField = fields.some(f => f.type === 'number');
-        const hasEnumField = fields.some(f => f.type === 'enum');
-
-        if (hasNumberField) {
-            currentCompoundType = 'bool_number';
-            const boolField = fields.find(f => f.type === 'boolean');
-            const numField = fields.find(f => f.type === 'number');
-
-            if (boolField && numField) {
-                document.getElementById('compound-question-num').value = boolField.label || '';
-                document.getElementById('compound-num-label').value = numField.label || '';
-
-                // Extract condition value (e.g., "has == true" → "true")
-                const condMatch = numField.condition?.match(/==\s*(true|false)/);
-                if (condMatch) {
-                    const condRadio = document.querySelector(`input[name="compound-condition-num"][value="${condMatch[1]}"]`);
-                    if (condRadio) condRadio.checked = true;
-                }
-            }
-
-            document.getElementById('compound-config-number').style.display = 'block';
-            document.querySelectorAll('.compound-example-btn').forEach(btn => {
-                if (btn.dataset.example === 'bool_number') btn.classList.add('active');
-            });
-        } else if (hasEnumField) {
-            currentCompoundType = 'bool_enum';
-            const boolField = fields.find(f => f.type === 'boolean');
-            const enumField = fields.find(f => f.type === 'enum');
-
-            if (boolField && enumField) {
-                document.getElementById('compound-question-enum').value = boolField.label || '';
-                document.getElementById('compound-enum-options').value = enumField.options?.join(', ') || '';
-
-                // Extract condition value
-                const condMatch = enumField.condition?.match(/==\s*(true|false)/);
-                if (condMatch) {
-                    const condRadio = document.querySelector(`input[name="compound-condition-enum"][value="${condMatch[1]}"]`);
-                    if (condRadio) condRadio.checked = true;
-                }
-            }
-
-            document.getElementById('compound-config-enum').style.display = 'block';
-            document.querySelectorAll('.compound-example-btn').forEach(btn => {
-                if (btn.dataset.example === 'bool_enum') btn.classList.add('active');
-            });
-        }
-    }
-
     // Initialize number fields if editing a number metric
     if (isEdit && existingMetric && existingMetric.type === 'number' && existingMetric.config) {
-        if (existingMetric.config.label) {
-            document.getElementById('nm-unit').value = existingMetric.config.label;
+        if (existingMetric.config.unit_label) {
+            document.getElementById('nm-unit').value = existingMetric.config.unit_label;
         }
-        if (existingMetric.config.min !== undefined) {
-            document.getElementById('nm-min').value = existingMetric.config.min;
+        if (existingMetric.config.min_value !== undefined) {
+            document.getElementById('nm-min').value = existingMetric.config.min_value;
         }
-        if (existingMetric.config.max !== undefined) {
-            document.getElementById('nm-max').value = existingMetric.config.max;
+        if (existingMetric.config.max_value !== undefined) {
+            document.getElementById('nm-max').value = existingMetric.config.max_value;
         }
         if (existingMetric.config.step !== undefined) {
             document.getElementById('nm-step').value = existingMetric.config.step;
         }
-    }
-
-    const buildCompoundConfig = () => {
-        if (currentCompoundType === 'bool_number') {
-            const question = document.getElementById('compound-question-num').value || 'Было';
-            const condition = document.querySelector('input[name="compound-condition-num"]:checked').value;
-            const numLabel = document.getElementById('compound-num-label').value || 'Количество';
-            return {
-                fields: [
-                    { name: 'has', type: 'boolean', label: question },
-                    { name: 'amount', type: 'number', label: numLabel, condition: `has == ${condition}` }
-                ]
-            };
-        } else if (currentCompoundType === 'bool_enum') {
-            const question = document.getElementById('compound-question-enum').value || 'Было';
-            const condition = document.querySelector('input[name="compound-condition-enum"]:checked').value;
-            const optionsStr = document.getElementById('compound-enum-options').value || 'вариант 1, вариант 2, вариант 3';
-            const options = optionsStr.split(',').map(s => s.trim()).filter(Boolean);
-            return {
-                fields: [
-                    { name: 'has', type: 'boolean', label: question },
-                    { name: 'type', type: 'enum', label: 'Тип', options, condition: `has == ${condition}` }
-                ]
-            };
+        if (existingMetric.config.display_mode === 'bool_number') {
+            const dmRadio = document.querySelector('input[name="display_mode"][value="bool_number"]');
+            if (dmRadio) dmRadio.checked = true;
+            document.getElementById('bool-number-labels').style.display = 'block';
+            if (existingMetric.config.bool_label) {
+                document.getElementById('nm-bool-label').value = existingMetric.config.bool_label;
+            }
+            if (existingMetric.config.number_label) {
+                document.getElementById('nm-number-label').value = existingMetric.config.number_label;
+            }
         }
-        return null;
-    };
+    }
 
     // Update preview on any change
     const updatePreview = () => {
         const name = document.getElementById('nm-name').value || 'Название метрики';
-        const frequency = document.querySelector('input[name="frequency"]:checked').value;
+        const measurementsPerDay = parseInt(document.querySelector('input[name="measurements_per_day"]:checked').value);
 
         // Get current type (or default to scale for multiple)
         let type;
-        if (frequency === 'multiple') {
+        if (measurementsPerDay > 1) {
             type = 'scale';
             document.getElementById('type-section').style.display = 'none';
         } else {
@@ -1379,51 +1227,52 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         }
 
         // Show/hide and enable/disable frequency options based on type
-        const frequencySection = document.getElementById('frequency-section');
-        const multipleOption = document.querySelector('input[name="frequency"][value="multiple"]');
+        const multipleOption = document.querySelector('input[name="measurements_per_day"][value="3"]');
         const multipleLabel = multipleOption.closest('.radio-option');
 
-        if (frequency === 'daily') {
-            // When editing type, check if multiple should be available
+        if (measurementsPerDay === 1) {
             if (type === 'scale') {
-                // Scale can use multiple frequency
                 multipleLabel.style.display = 'flex';
             } else {
-                // Other types can only use daily frequency
                 multipleLabel.style.display = 'none';
-                // Make sure daily is selected
-                document.querySelector('input[name="frequency"][value="daily"]').checked = true;
+                document.querySelector('input[name="measurements_per_day"][value="1"]').checked = true;
             }
         }
 
         // Show/hide options based on type
         const numberOpts = document.getElementById('number-options');
-        const compoundOpts = document.getElementById('compound-options');
-        numberOpts.style.display = (type === 'number' && frequency === 'daily') ? 'block' : 'none';
-        compoundOpts.style.display = (type === 'compound' && frequency === 'daily') ? 'block' : 'none';
+        numberOpts.style.display = (type === 'number' && measurementsPerDay === 1) ? 'block' : 'none';
+
+        // Show/hide bool_number labels
+        const displayMode = document.querySelector('input[name="display_mode"]:checked')?.value || 'number_only';
+        const boolNumberLabels = document.getElementById('bool-number-labels');
+        if (boolNumberLabels) {
+            boolNumberLabels.style.display = displayMode === 'bool_number' ? 'block' : 'none';
+        }
 
         // Build mock metric object
         const mockMetric = {
             metric_id: 'preview',
             name: name,
             type: type,
-            frequency: frequency,
+            measurements_per_day: measurementsPerDay,
+            measurement_labels: measurementsPerDay === 3 ? ['Утро', 'День', 'Вечер'] : [],
             config: {},
             entries: []
         };
 
         if (type === 'scale') {
-            mockMetric.config.min = 1;
-            mockMetric.config.max = 5;
+            mockMetric.config.min_value = 1;
+            mockMetric.config.max_value = 5;
         } else if (type === 'number') {
-            mockMetric.config.label = document.getElementById('nm-unit').value;
-            mockMetric.config.min = parseFloat(document.getElementById('nm-min').value) || 0;
-            mockMetric.config.max = parseFloat(document.getElementById('nm-max').value) || 100;
+            mockMetric.config.unit_label = document.getElementById('nm-unit').value;
+            mockMetric.config.min_value = parseFloat(document.getElementById('nm-min').value) || 0;
+            mockMetric.config.max_value = parseFloat(document.getElementById('nm-max').value) || 100;
             mockMetric.config.step = parseFloat(document.getElementById('nm-step').value) || 1;
-        } else if (type === 'compound') {
-            const compoundConfig = buildCompoundConfig();
-            if (compoundConfig) {
-                mockMetric.config.fields = compoundConfig.fields;
+            mockMetric.config.display_mode = displayMode;
+            if (displayMode === 'bool_number') {
+                mockMetric.config.bool_label = document.getElementById('nm-bool-label').value || 'Было';
+                mockMetric.config.number_label = document.getElementById('nm-number-label').value || 'Количество';
             }
         }
 
@@ -1431,21 +1280,16 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         const preview = document.getElementById('metric-preview');
         let previewHTML = '';
 
-        if (frequency === 'multiple') {
+        if (measurementsPerDay > 1) {
             previewHTML = renderMultipleInput(mockMetric);
         } else if (type === 'scale') {
             previewHTML = renderScale(mockMetric, null);
-        } else if (type === 'boolean') {
+        } else if (type === 'bool') {
             previewHTML = renderBoolean(mockMetric, null);
         } else if (type === 'number') {
             previewHTML = renderNumber(mockMetric, null);
         } else if (type === 'time') {
             previewHTML = renderTime(mockMetric, null);
-        } else if (type === 'compound') {
-            const compoundConfig = buildCompoundConfig();
-            previewHTML = compoundConfig
-                ? renderCompound(mockMetric, null)
-                : '<div class="label-hint">Выберите структуру составной метрики</div>';
         }
 
         preview.innerHTML = `
@@ -1457,41 +1301,21 @@ function showMetricModal(mode = 'create', existingMetric = null) {
             </div>
         `;
 
-        // Make preview interactive for compound metrics
-        if (type === 'compound') {
+        // Make preview interactive for bool_number
+        if (type === 'number' && displayMode === 'bool_number') {
             const previewCard = document.getElementById('preview-card');
-            previewCard.querySelectorAll('.bool-btn').forEach(btn => {
+            previewCard.querySelectorAll('.bool-btn[data-bool-number="bool"]').forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     e.preventDefault();
-                    const parent = btn.parentElement;
+                    const parent = btn.closest('.bool-number-bool');
                     parent.querySelectorAll('.bool-btn').forEach(b => b.classList.remove('active', 'yes', 'no'));
 
                     const value = btn.dataset.value === 'true';
-                    if (value) {
-                        btn.classList.add('active', 'yes');
-                    } else {
-                        btn.classList.add('active', 'no');
-                    }
+                    btn.classList.add('active', value ? 'yes' : 'no');
 
-                    // Show/hide conditional fields
-                    const compoundField = btn.closest('.compound-fields');
-                    if (compoundField) {
-                        const condition = btn.dataset.compoundField;
-                        const compoundConfig = buildCompoundConfig();
-                        if (compoundConfig && compoundConfig.fields) {
-                            compoundConfig.fields.forEach(field => {
-                                if (field.condition) {
-                                    const match = field.condition.match(/(\w+)\s*==\s*(true|false)/);
-                                    if (match) {
-                                        const condValue = match[2] === 'true';
-                                        const condField = compoundField.querySelector(`[data-cfield="${field.name}"]`);
-                                        if (condField) {
-                                            condField.classList.toggle('hidden', value !== condValue);
-                                        }
-                                    }
-                                }
-                            });
-                        }
+                    const numberSection = btn.closest('.bool-number-fields').querySelector('.bool-number-number');
+                    if (numberSection) {
+                        numberSection.classList.toggle('hidden', !value);
                     }
                 });
             });
@@ -1502,50 +1326,14 @@ function showMetricModal(mode = 'create', existingMetric = null) {
     document.getElementById('nm-name').addEventListener('input', updatePreview);
     document.getElementById('nm-cat').addEventListener('input', updatePreview);
     document.querySelectorAll('input[name="type"]').forEach(r => r.addEventListener('change', updatePreview));
-    document.querySelectorAll('input[name="frequency"]').forEach(r => r.addEventListener('change', updatePreview));
+    document.querySelectorAll('input[name="measurements_per_day"]').forEach(r => r.addEventListener('change', updatePreview));
     document.getElementById('nm-unit').addEventListener('input', updatePreview);
     document.getElementById('nm-min').addEventListener('input', updatePreview);
     document.getElementById('nm-max').addEventListener('input', updatePreview);
     document.getElementById('nm-step').addEventListener('input', updatePreview);
-
-    // Compound example buttons
-    document.querySelectorAll('.compound-example-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const example = btn.dataset.example;
-            currentCompoundType = example;
-
-            // Show/hide config sections
-            document.getElementById('compound-config-number').style.display = example === 'bool_number' ? 'block' : 'none';
-            document.getElementById('compound-config-enum').style.display = example === 'bool_enum' ? 'block' : 'none';
-
-            // Set active button
-            document.querySelectorAll('.compound-example-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-
-            // Set default values if empty
-            if (example === 'bool_number') {
-                if (!document.getElementById('compound-question-num').value) {
-                    document.getElementById('compound-question-num').value = 'Употреблял алкоголь';
-                    document.getElementById('compound-num-label').value = 'Количество порций';
-                }
-            } else if (example === 'bool_enum') {
-                if (!document.getElementById('compound-question-enum').value) {
-                    document.getElementById('compound-question-enum').value = 'Была тренировка';
-                    document.getElementById('compound-enum-options').value = 'кардио, силовая, растяжка, йога';
-                }
-            }
-
-            updatePreview();
-        });
-    });
-
-    // Compound config inputs
-    document.getElementById('compound-question-num').addEventListener('input', updatePreview);
-    document.getElementById('compound-num-label').addEventListener('input', updatePreview);
-    document.querySelectorAll('input[name="compound-condition-num"]').forEach(r => r.addEventListener('change', updatePreview));
-    document.getElementById('compound-question-enum').addEventListener('input', updatePreview);
-    document.getElementById('compound-enum-options').addEventListener('input', updatePreview);
-    document.querySelectorAll('input[name="compound-condition-enum"]').forEach(r => r.addEventListener('change', updatePreview));
+    document.querySelectorAll('input[name="display_mode"]').forEach(r => r.addEventListener('change', updatePreview));
+    document.getElementById('nm-bool-label').addEventListener('input', updatePreview);
+    document.getElementById('nm-number-label').addEventListener('input', updatePreview);
 
     updatePreview(); // Initial render
 
@@ -1559,30 +1347,35 @@ function showMetricModal(mode = 'create', existingMetric = null) {
             return;
         }
 
-        const frequency = document.querySelector('input[name="frequency"]:checked').value;
+        const measurementsPerDay = parseInt(document.querySelector('input[name="measurements_per_day"]:checked').value);
 
-        // For multiple frequency, always use scale type
+        // For multiple measurements, always use scale type
         // In edit mode, use existing type (it's disabled anyway)
         const type = isEdit
             ? existingMetric.type
-            : (frequency === 'multiple' ? 'scale' : document.querySelector('input[name="type"]:checked').value);
+            : (measurementsPerDay > 1 ? 'scale' : document.querySelector('input[name="type"]:checked').value);
 
         const config = {};
         if (type === 'scale') {
-            config.min = 1;
-            config.max = 5;
+            config.min_value = 1;
+            config.max_value = 5;
         } else if (type === 'number') {
-            config.label = document.getElementById('nm-unit').value;
-            config.min = parseFloat(document.getElementById('nm-min').value) || 0;
-            config.max = parseFloat(document.getElementById('nm-max').value) || 100;
+            config.unit_label = document.getElementById('nm-unit').value;
+            config.min_value = parseFloat(document.getElementById('nm-min').value) || 0;
+            config.max_value = parseFloat(document.getElementById('nm-max').value) || 100;
             config.step = parseFloat(document.getElementById('nm-step').value) || 1;
-        } else if (type === 'compound') {
-            const compoundConfig = buildCompoundConfig();
-            if (!compoundConfig) {
-                alert('Настройте составную метрику');
-                return;
+            const displayMode = document.querySelector('input[name="display_mode"]:checked')?.value || 'number_only';
+            config.display_mode = displayMode;
+            if (displayMode === 'bool_number') {
+                config.bool_label = document.getElementById('nm-bool-label').value || '';
+                config.number_label = document.getElementById('nm-number-label').value || '';
             }
-            config.fields = compoundConfig.fields;
+        }
+
+        // Build measurement_labels for multi-measurement metrics
+        let measurement_labels = [];
+        if (measurementsPerDay === 3) {
+            measurement_labels = ['Утро', 'День', 'Вечер'];
         }
 
         try {
@@ -1591,23 +1384,25 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                 await api.updateMetric(existingMetric.id, {
                     name,
                     category,
-                    frequency,
+                    measurements_per_day: measurementsPerDay,
+                    measurement_labels,
                     config
                 });
             } else {
-                // Generate ID from name (only for new metrics)
-                const id = name.toLowerCase()
+                // Generate slug from name (only for new metrics)
+                const slug = name.toLowerCase()
                     .replace(/\s+/g, '_')
-                    .replace(/[^a-z0-9_]/g, '')
+                    .replace(/[^a-z0-9_а-яё]/gi, '')
                     || 'metric_' + Date.now();
 
                 // Create new metric
                 await api.createMetric({
-                    id,
+                    slug,
                     name,
                     category,
                     type,
-                    frequency,
+                    measurements_per_day: measurementsPerDay,
+                    measurement_labels,
                     config,
                 });
             }
@@ -1638,14 +1433,16 @@ function formatDate(dateStr) {
 
 function formatValue(val, type) {
     if (!val) return '—';
-    if (type === 'boolean') return val.value ? 'Да' : 'Нет';
+    if (type === 'bool') return val.value ? 'Да' : 'Нет';
     if (type === 'time') return val.value || '—';
-    if (type === 'scale' || type === 'number') return val.value ?? '—';
-    // compound
-    return Object.entries(val).map(([k, v]) => {
-        if (typeof v === 'boolean') return v ? k : '';
-        return `${v}`;
-    }).filter(Boolean).join(', ') || '—';
+    if (type === 'scale') return val.value ?? '—';
+    if (type === 'number') {
+        if (val.bool_value !== undefined && val.bool_value !== null) {
+            return val.bool_value ? (val.number_value ?? '—') : 'Нет';
+        }
+        return val.number_value ?? '—';
+    }
+    return '—';
 }
 
 function daysAgo(n) {
@@ -1656,20 +1453,16 @@ function daysAgo(n) {
 
 function getTypeLabel(type) {
     const labels = {
-        'boolean': 'Да/Нет',
+        'bool': 'Да/Нет',
         'number': 'Число',
         'scale': 'Шкала 1-5',
         'time': 'Время',
-        'enum': 'Варианты',
-        'compound': 'Составная'
     };
     return labels[type] || type;
 }
 
-function getFrequencyLabel(frequency) {
-    const labels = {
-        'daily': 'Раз в день',
-        'multiple': '3 раза в день'
-    };
-    return labels[frequency] || frequency;
+function getFrequencyLabel(measurementsPerDay) {
+    if (measurementsPerDay === 1) return 'Раз в день';
+    if (measurementsPerDay === 3) return '3 раза в день';
+    return `${measurementsPerDay} раз(а) в день`;
 }

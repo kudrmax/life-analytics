@@ -319,41 +319,26 @@ input[type="number"]:focus, input[type="time"]:focus {
     font-size: 13px;
 }
 
-/* ─── Compound ─── */
-.compound-fields {
+/* ─── Bool+Number ─── */
+.bool-number-fields {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
 }
 
-.compound-field {
+.bool-number-bool {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-wrap: wrap;
 }
 
-.compound-field.hidden { display: none; }
-
-/* ─── Enum ─── */
-.enum-buttons {
+.bool-number-number {
     display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
 }
 
-.enum-btn {
-    padding: 4px 12px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text);
-    cursor: pointer;
-    font-size: 13px;
-}
-
-.enum-btn:hover { border-color: var(--accent); }
-.enum-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.bool-number-number.hidden { display: none; }
 
 /* ─── Multiple Entry ─── */
 .multiple-entry {
@@ -822,34 +807,6 @@ input[type="month"], input[type="date"] {
     font-size: 14px;
 }
 
-.compound-examples {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-bottom: 8px;
-}
-
-.compound-example-btn {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 8px 16px;
-    border-radius: 6px;
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.15s;
-}
-
-.compound-example-btn:hover {
-    border-color: var(--accent);
-    background: var(--border);
-}
-
-.compound-example-btn.active {
-    border-color: var(--accent);
-    background: var(--accent);
-    color: #fff;
-}
 
 .metric-preview {
     background: var(--bg);
@@ -885,15 +842,6 @@ input[type="month"], input[type="date"] {
     opacity: 0.5;
 }
 
-.compound-config {
-    margin-top: 12px;
-    padding: 12px;
-    background: var(--surface2);
-    border-radius: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
 
 .radio-group-inline {
     display: flex;

@@ -3,27 +3,24 @@ DEFAULT_METRICS = [
     # Утренние рутины
     # ═══════════════════════════════════════════════════════
     {
-        "id": "first_alarm",
+        "slug": "first_alarm",
         "name": "Встал с первого будильника",
         "category": "Утро",
-        "type": "boolean",
-        "frequency": "daily",
+        "type": "bool",
         "config": {},
     },
     {
-        "id": "cold_shower",
+        "slug": "cold_shower",
         "name": "Холодные процедуры",
         "category": "Утро",
-        "type": "boolean",
-        "frequency": "daily",
+        "type": "bool",
         "config": {},
     },
     {
-        "id": "morning_exercise",
+        "slug": "morning_exercise",
         "name": "Зарядка",
         "category": "Утро",
-        "type": "boolean",
-        "frequency": "daily",
+        "type": "bool",
         "config": {},
     },
 
@@ -31,147 +28,133 @@ DEFAULT_METRICS = [
     # Планирование и продуктивность
     # ═══════════════════════════════════════════════════════
     {
-        "id": "top_tasks",
+        "slug": "top_tasks",
         "name": "Топ задачи на день",
         "category": "Планирование",
-        "type": "compound",
-        "frequency": "daily",
+        "type": "number",
         "config": {
-            "fields": [
-                {"name": "planned", "type": "boolean", "label": "Поставил топ задачи"},
-                {
-                    "name": "count",
-                    "type": "number",
-                    "label": "Количество задач",
-                    "condition": "planned == true",
-                },
-            ]
+            "display_mode": "bool_number",
+            "bool_label": "Поставил топ задачи",
+            "number_label": "Количество задач",
+            "min_value": 0,
+            "max_value": 20,
+            "step": 1,
         },
     },
     {
-        "id": "timeblocking_planned",
+        "slug": "timeblocking_planned",
         "name": "Распланировал день",
         "category": "Планирование",
-        "type": "boolean",
-        "frequency": "daily",
+        "type": "bool",
         "config": {},
     },
     {
-        "id": "timeblocking_followed",
+        "slug": "timeblocking_followed",
         "name": "Следовал тайм-блокингу",
         "category": "Планирование",
         "type": "scale",
-        "frequency": "daily",
-        "config": {"min": 1, "max": 5},
+        "config": {"min_value": 1, "max_value": 5},
     },
     {
-        "id": "procrastination",
+        "slug": "procrastination",
         "name": "Уровень прокрастинации",
         "category": "Продуктивность",
         "type": "scale",
-        "frequency": "daily",
-        "config": {"min": 1, "max": 5},
+        "config": {"min_value": 1, "max_value": 5},
     },
     {
-        "id": "entertainment_content",
+        "slug": "entertainment_content",
         "name": "Развлекательный контент",
         "category": "Продуктивность",
         "type": "scale",
-        "frequency": "daily",
-        "config": {"min": 1, "max": 5},
+        "config": {"min_value": 1, "max_value": 5},
     },
 
     # ═══════════════════════════════════════════════════════
     # Сон
     # ═══════════════════════════════════════════════════════
     {
-        "id": "wake_up_time",
+        "slug": "wake_up_time",
         "name": "Время подъёма",
         "category": "Сон",
         "type": "time",
-        "frequency": "daily",
         "config": {},
     },
     {
-        "id": "bedtime",
+        "slug": "bedtime",
         "name": "Время отбоя",
         "category": "Сон",
         "type": "time",
-        "frequency": "daily",
         "config": {},
     },
     {
-        "id": "sleep_quality",
+        "slug": "sleep_quality",
         "name": "Качество сна",
         "category": "Сон",
         "type": "scale",
-        "frequency": "daily",
-        "config": {"min": 1, "max": 5},
+        "config": {"min_value": 1, "max_value": 5},
     },
 
     # ═══════════════════════════════════════════════════════
     # Ментальное состояние (3 раза в день)
     # ═══════════════════════════════════════════════════════
     {
-        "id": "mood",
+        "slug": "mood",
         "name": "Настроение",
         "category": "Состояние",
         "type": "scale",
-        "frequency": "multiple",
-        "config": {"min": 1, "max": 5},
+        "measurements_per_day": 3,
+        "measurement_labels": ["Утро", "День", "Вечер"],
+        "config": {"min_value": 1, "max_value": 5},
     },
     {
-        "id": "energy",
+        "slug": "energy",
         "name": "Уровень энергии",
         "category": "Состояние",
         "type": "scale",
-        "frequency": "multiple",
-        "config": {"min": 1, "max": 5},
+        "measurements_per_day": 3,
+        "measurement_labels": ["Утро", "День", "Вечер"],
+        "config": {"min_value": 1, "max_value": 5},
     },
     {
-        "id": "stress",
+        "slug": "stress",
         "name": "Уровень стресса",
         "category": "Состояние",
         "type": "scale",
-        "frequency": "multiple",
-        "config": {"min": 1, "max": 5},
+        "measurements_per_day": 3,
+        "measurement_labels": ["Утро", "День", "Вечер"],
+        "config": {"min_value": 1, "max_value": 5},
     },
 
     # ═══════════════════════════════════════════════════════
     # Здоровье
     # ═══════════════════════════════════════════════════════
     {
-        "id": "coffee",
+        "slug": "coffee",
         "name": "Кофе",
         "category": "Здоровье",
-        "type": "compound",
-        "frequency": "daily",
+        "type": "number",
         "config": {
-            "fields": [
-                {"name": "had_coffee", "type": "boolean", "label": "Пил кофе"},
-                {
-                    "name": "cups",
-                    "type": "number",
-                    "label": "Количество чашек",
-                    "condition": "had_coffee == true",
-                },
-            ]
+            "display_mode": "bool_number",
+            "bool_label": "Пил кофе",
+            "number_label": "Количество чашек",
+            "min_value": 0,
+            "max_value": 20,
+            "step": 1,
         },
     },
     {
-        "id": "alcohol",
+        "slug": "alcohol",
         "name": "Алкоголь",
         "category": "Здоровье",
-        "type": "boolean",
-        "frequency": "daily",
+        "type": "bool",
         "config": {},
     },
     {
-        "id": "restaurant",
+        "slug": "restaurant",
         "name": "Еда в ресторане",
         "category": "Здоровье",
-        "type": "boolean",
-        "frequency": "daily",
+        "type": "bool",
         "config": {},
     },
 
@@ -179,19 +162,17 @@ DEFAULT_METRICS = [
     # Саморазвитие
     # ═══════════════════════════════════════════════════════
     {
-        "id": "audiobooks",
+        "slug": "audiobooks",
         "name": "Аудиокниги",
         "category": "Саморазвитие",
-        "type": "boolean",
-        "frequency": "daily",
+        "type": "bool",
         "config": {},
     },
     {
-        "id": "books",
+        "slug": "books",
         "name": "Книги",
         "category": "Саморазвитие",
-        "type": "boolean",
-        "frequency": "daily",
+        "type": "bool",
         "config": {},
     },
 
@@ -199,29 +180,24 @@ DEFAULT_METRICS = [
     # Социальное
     # ═══════════════════════════════════════════════════════
     {
-        "id": "friends_offline",
+        "slug": "friends_offline",
         "name": "Виделся с друзьями",
         "category": "Социальное",
-        "type": "boolean",
-        "frequency": "daily",
+        "type": "bool",
         "config": {},
     },
     {
-        "id": "new_people",
+        "slug": "new_people",
         "name": "Новые знакомства",
         "category": "Социальное",
-        "type": "compound",
-        "frequency": "daily",
+        "type": "number",
         "config": {
-            "fields": [
-                {"name": "met_new", "type": "boolean", "label": "Были новые знакомства"},
-                {
-                    "name": "count",
-                    "type": "number",
-                    "label": "Количество человек",
-                    "condition": "met_new == true",
-                },
-            ]
+            "display_mode": "bool_number",
+            "bool_label": "Были новые знакомства",
+            "number_label": "Количество человек",
+            "min_value": 0,
+            "max_value": 50,
+            "step": 1,
         },
     },
 
@@ -229,19 +205,17 @@ DEFAULT_METRICS = [
     # Цели
     # ═══════════════════════════════════════════════════════
     {
-        "id": "blog_work",
+        "slug": "blog_work",
         "name": "Работал над блогом",
         "category": "Цели",
         "type": "scale",
-        "frequency": "daily",
-        "config": {"min": 1, "max": 5},
+        "config": {"min_value": 1, "max_value": 5},
     },
     {
-        "id": "diploma_work",
+        "slug": "diploma_work",
         "name": "Работал над дипломом",
         "category": "Цели",
         "type": "scale",
-        "frequency": "daily",
-        "config": {"min": 1, "max": 5},
+        "config": {"min_value": 1, "max_value": 5},
     },
 ]

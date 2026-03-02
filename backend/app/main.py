@@ -1,14 +1,21 @@
-import json
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
-from app.database import init_db, get_db, DB_PATH
-from app.seed import DEFAULT_METRICS
+from app.database import create_pool, close_pool, init_db
 from app.routers import metrics, entries, daily, analytics, auth, export_import
 
-app = FastAPI(title="Life Analytics API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await create_pool()
+    await init_db()
+    yield
+    await close_pool()
+
+
+app = FastAPI(title="Life Analytics API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,11 +30,6 @@ app.include_router(entries.router)
 app.include_router(daily.router)
 app.include_router(analytics.router)
 app.include_router(export_import.router)
-
-
-@app.on_event("startup")
-async def startup():
-    await init_db()
 
 
 @app.get("/api/health")

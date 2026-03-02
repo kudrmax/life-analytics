@@ -26,7 +26,6 @@ const api = {
             headers: { 'Content-Type': 'application/json' },
         };
 
-        // Add Authorization header if token exists
         const token = getToken();
         if (token) {
             opts.headers['Authorization'] = `Bearer ${token}`;
@@ -35,7 +34,6 @@ const api = {
         if (body) opts.body = JSON.stringify(body);
         const res = await fetch(`${API_BASE}${path}`, opts);
 
-        // Handle 401 - clear token and redirect to login
         if (res.status === 401) {
             clearToken();
             if (window.navigateTo) {
@@ -69,7 +67,7 @@ const api = {
     getToken,
     clearToken,
 
-    // Metrics
+    // Metrics (metric_id is now int)
     getMetrics(enabledOnly = false) {
         const q = enabledOnly ? '?enabled_only=true' : '';
         return this.request('GET', `/api/metrics${q}`);
@@ -87,7 +85,7 @@ const api = {
         return this.request('POST', '/api/metrics/import-defaults');
     },
 
-    // Entries
+    // Entries (metric_id is now int, uses measurement_number)
     getEntries(date, metricId = null) {
         let q = `?date=${date}`;
         if (metricId) q += `&metric_id=${metricId}`;

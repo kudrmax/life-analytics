@@ -1,33 +1,39 @@
 SHELL := /bin/bash
 
-.PHONY: update restart logs status
+.PHONY: up down logs logs-backend migrate restart update status nginx-test nginx-restart
 
-# Обновление проекта (git pull + requirements + restart)
+# ─── Docker ───
+
+up:
+	docker compose up -d --build
+
+down:
+	docker compose down
+
+logs:
+	docker compose logs -f
+
+logs-backend:
+	docker compose logs -f backend
+
+# ─── Production (systemd) ───
+
 update:
 	@echo "Updating Life Analytics..."
 	git pull origin master
-	cd backend && source venv/bin/activate && pip install -r requirements.txt
-	systemctl restart life-analytics
-	@echo "✓ Updated and restarted!"
+	docker compose up -d --build
+	@echo "Updated and restarted!"
 
-# Перезапуск backend
 restart:
-	systemctl restart life-analytics
-	@echo "✓ Backend restarted!"
+	docker compose restart backend
+	@echo "Backend restarted!"
 
-# Просмотр логов
-logs:
-	journalctl -u life-analytics -f
-
-# Статус сервиса
 status:
-	systemctl status life-analytics
+	docker compose ps
 
-# Проверка nginx
 nginx-test:
 	nginx -t
 
-# Перезапуск nginx
 nginx-restart:
 	systemctl restart nginx
-	@echo "✓ Nginx restarted!"
+	@echo "Nginx restarted!"

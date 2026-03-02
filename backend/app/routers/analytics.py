@@ -1,62 +1,72 @@
-import json
-from datetime import datetime, timedelta
-from statistics import mean, stdev
 from collections import defaultdict
+from datetime import date as date_type
+from statistics import mean, stdev
 
 from fastapi import APIRouter, Depends, Query
-import aiosqlite
 
 from app.database import get_db
 from app.auth import get_current_user
+from app.metric_helpers import VALUE_TABLE_MAP, _decimal_to_num
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
-def extract_numeric(value_json: str, metric_type: str) -> float | None:
-    val = json.loads(value_json)
-    if metric_type == "boolean":
-        v = val.get("value")
-        if isinstance(v, bool):
-            return 1.0 if v else 0.0
-    elif metric_type in ("scale", "number", "time"):
-        v = val.get("value")
-        if isinstance(v, (int, float)):
-            return float(v)
-    elif metric_type == "compound":
-        # Try first numeric field
-        for k, v in val.items():
-            if isinstance(v, (int, float)):
-                return float(v)
+def _extract_numeric(metric_type: str, value_row) -> float | None:
+    """Extract a numeric value from a typed value row."""
+    if not value_row:
+        return None
+    if metric_type == "bool":
+        return 1.0 if value_row["value"] else 0.0
+    elif metric_type == "scale":
+        return float(value_row["value"])
+    elif metric_type == "number":
+        nv = value_row.get("number_value")
+        if nv is not None:
+            return float(nv)
+        bv = value_row.get("bool_value")
+        if bv is not None:
+            return 1.0 if bv else 0.0
+        return None
+    elif metric_type == "time":
+        t = value_row.get("value")
+        if t:
+            return t.hour * 60 + t.minute
+        return None
     return None
 
 
 @router.get("/trends")
 async def trends(
-    metric_id: str = Query(...),
+    metric_id: int = Query(...),
     start: str = Query(..., description="YYYY-MM-DD"),
     end: str = Query(..., description="YYYY-MM-DD"),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    metric = await db.execute(
-        "SELECT * FROM metric_configs WHERE id = ? AND user_id = ?", (metric_id, current_user["id"])
+    metric = await db.fetchrow(
+        "SELECT * FROM metric_definitions WHERE id = $1 AND user_id = $2",
+        metric_id, current_user["id"],
     )
-    metric = await metric.fetchone()
     if not metric:
         return {"error": "Metric not found"}
 
-    rows = await db.execute(
-        "SELECT * FROM entries WHERE metric_id = ? AND date >= ? AND date <= ? AND user_id = ? ORDER BY date, timestamp",
-        (metric_id, start, end, current_user["id"]),
-    )
-    entries = await rows.fetchall()
+    metric_type = metric["type"]
+    value_table = VALUE_TABLE_MAP[metric_type]
 
-    # Group by date, aggregate
+    rows = await db.fetch(
+        f"""SELECT e.date, v.*
+            FROM entries e
+            JOIN {value_table} v ON v.entry_id = e.id
+            WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4
+            ORDER BY e.date""",
+        metric_id, date_type.fromisoformat(start), date_type.fromisoformat(end), current_user["id"],
+    )
+
     by_date: dict[str, list[float]] = defaultdict(list)
-    for e in entries:
-        v = extract_numeric(e["value_json"], metric["type"])
+    for r in rows:
+        v = _extract_numeric(metric_type, r)
         if v is not None:
-            by_date[e["date"]].append(v)
+            by_date[str(r["date"])].append(v)
 
     points = []
     for d in sorted(by_date):
@@ -80,43 +90,43 @@ async def trends(
 
 @router.get("/correlations")
 async def correlations(
-    metric_a: str = Query(...),
-    metric_b: str = Query(...),
+    metric_a: int = Query(...),
+    metric_b: int = Query(...),
     start: str = Query(...),
     end: str = Query(...),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    ma = await db.execute("SELECT * FROM metric_configs WHERE id = ? AND user_id = ?", (metric_a, current_user["id"]))
-    ma = await ma.fetchone()
-    mb = await db.execute("SELECT * FROM metric_configs WHERE id = ? AND user_id = ?", (metric_b, current_user["id"]))
-    mb = await mb.fetchone()
+    ma = await db.fetchrow(
+        "SELECT * FROM metric_definitions WHERE id = $1 AND user_id = $2",
+        metric_a, current_user["id"],
+    )
+    mb = await db.fetchrow(
+        "SELECT * FROM metric_definitions WHERE id = $1 AND user_id = $2",
+        metric_b, current_user["id"],
+    )
     if not ma or not mb:
         return {"error": "Metric not found"}
 
-    # Get entries for both
-    rows_a = await db.execute(
-        "SELECT * FROM entries WHERE metric_id = ? AND date >= ? AND date <= ? AND user_id = ?",
-        (metric_a, start, end, current_user["id"]),
-    )
-    rows_b = await db.execute(
-        "SELECT * FROM entries WHERE metric_id = ? AND date >= ? AND date <= ? AND user_id = ?",
-        (metric_b, start, end, current_user["id"]),
-    )
-
-    # Aggregate by date
-    def aggregate_by_date(rows, mtype):
+    async def aggregate_by_date(mid, mtype):
+        vtable = VALUE_TABLE_MAP[mtype]
+        rows = await db.fetch(
+            f"""SELECT e.date, v.*
+                FROM entries e
+                JOIN {vtable} v ON v.entry_id = e.id
+                WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4""",
+            mid, date_type.fromisoformat(start), date_type.fromisoformat(end), current_user["id"],
+        )
         by_date = defaultdict(list)
-        for e in rows:
-            v = extract_numeric(e["value_json"], mtype)
+        for r in rows:
+            v = _extract_numeric(mtype, r)
             if v is not None:
-                by_date[e["date"]].append(v)
+                by_date[str(r["date"])].append(v)
         return {d: mean(vs) for d, vs in by_date.items()}
 
-    a_by_date = aggregate_by_date(await rows_a.fetchall(), ma["type"])
-    b_by_date = aggregate_by_date(await rows_b.fetchall(), mb["type"])
+    a_by_date = await aggregate_by_date(metric_a, ma["type"])
+    b_by_date = await aggregate_by_date(metric_b, mb["type"])
 
-    # Find common dates
     common = sorted(set(a_by_date) & set(b_by_date))
     if len(common) < 3:
         return {
@@ -129,7 +139,6 @@ async def correlations(
     xs = [a_by_date[d] for d in common]
     ys = [b_by_date[d] for d in common]
 
-    # Pearson correlation
     n = len(common)
     mean_x, mean_y = mean(xs), mean(ys)
     try:
@@ -154,38 +163,59 @@ async def correlations(
 
 @router.get("/streaks")
 async def streaks(db=Depends(get_db), current_user: dict = Depends(get_current_user)):
-    # Boolean metrics — consecutive days with value=true
-    metrics = await db.execute(
-        "SELECT * FROM metric_configs WHERE enabled = 1 AND type IN ('boolean', 'compound') AND user_id = ? ORDER BY sort_order",
-        (current_user["id"],)
+    # Bool metrics and number metrics with bool_number display
+    metrics = await db.fetch(
+        """SELECT md.* FROM metric_definitions md
+           WHERE md.enabled = TRUE AND md.user_id = $1
+           AND (
+               md.type = 'bool'
+               OR (md.type = 'number' AND EXISTS (
+                   SELECT 1 FROM config_number cn
+                   WHERE cn.metric_id = md.id AND cn.display_mode = 'bool_number'
+               ))
+           )
+           ORDER BY md.sort_order""",
+        current_user["id"],
     )
-    metrics = await metrics.fetchall()
 
     result = []
     for m in metrics:
-        rows = await db.execute(
-            "SELECT DISTINCT date, value_json FROM entries WHERE metric_id = ? AND user_id = ? ORDER BY date DESC",
-            (m["id"], current_user["id"]),
-        )
-        entries = await rows.fetchall()
+        metric_type = m["type"]
 
-        current_streak = 0
-        for e in entries:
-            val = json.loads(e["value_json"])
-            # Check if "positive" — true for boolean, or first boolean field true for compound
-            positive = False
-            if m["type"] == "boolean":
-                positive = val.get("value") is True
-            elif m["type"] == "compound":
-                for v in val.values():
-                    if isinstance(v, bool):
-                        positive = v
-                        break
+        if metric_type == "bool":
+            rows = await db.fetch(
+                """SELECT DISTINCT e.date, vb.value
+                   FROM entries e
+                   JOIN values_bool vb ON vb.entry_id = e.id
+                   WHERE e.metric_id = $1 AND e.user_id = $2
+                   ORDER BY e.date DESC""",
+                m["id"], current_user["id"],
+            )
+            current_streak = 0
+            for r in rows:
+                if r["value"] is True:
+                    current_streak += 1
+                else:
+                    break
 
-            if positive:
-                current_streak += 1
-            else:
-                break
+        elif metric_type == "number":
+            rows = await db.fetch(
+                """SELECT DISTINCT e.date, vn.bool_value
+                   FROM entries e
+                   JOIN values_number vn ON vn.entry_id = e.id
+                   WHERE e.metric_id = $1 AND e.user_id = $2
+                   ORDER BY e.date DESC""",
+                m["id"], current_user["id"],
+            )
+            current_streak = 0
+            for r in rows:
+                if r["bool_value"] is True:
+                    current_streak += 1
+                else:
+                    break
+
+        else:
+            continue
 
         if current_streak > 0:
             result.append({
