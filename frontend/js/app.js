@@ -295,13 +295,13 @@ function renderMetricInput(m) {
     const isFilled = !!entry;
     const filledClass = isFilled ? 'filled' : '';
 
-    const input = renderBoolean(val);
+    const input = m.type === 'time' ? renderTime(val) : renderBoolean(val);
 
     const clearBtn = entry
         ? `<button class="metric-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`
         : '';
 
-    return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-entry-id="${entryId || ''}">
+    return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}">
         <div class="metric-header">
             <label class="metric-label">${m.name}</label>
             ${clearBtn}
@@ -318,10 +318,15 @@ function renderBoolean(val) {
     </div>`;
 }
 
+function renderTime(val) {
+    return `<input type="time" class="time-input" value="${val || ''}">`;
+}
+
 // ─── Event Handlers ───
 function attachInputHandlers() {
     const form = document.getElementById('metrics-form');
     form.addEventListener('click', handleFormClick);
+    form.addEventListener('change', handleFormChange);
 }
 
 async function handleFormClick(e) {
@@ -354,6 +359,27 @@ async function handleFormClick(e) {
             alert('Ошибка: ' + error.message);
         }
         return;
+    }
+}
+
+async function handleFormChange(e) {
+    const input = e.target;
+    if (!input.classList.contains('time-input')) return;
+
+    const card = input.closest('.metric-card');
+    if (!card) return;
+
+    const metricId = card.dataset.metricId;
+    const entryId = card.dataset.entryId;
+    const value = input.value; // "HH:MM"
+
+    if (!value) return;
+
+    try {
+        await saveDaily(metricId, entryId, value);
+        await renderTodayForm();
+    } catch (error) {
+        alert('Ошибка: ' + error.message);
     }
 }
 
@@ -414,7 +440,12 @@ async function showDayDetail(date) {
 
     for (const m of summary.metrics) {
         if (!m.entry) continue;
-        const valStr = m.entry.value ? 'Да' : 'Нет';
+        let valStr;
+        if (m.type === 'time') {
+            valStr = m.entry.value || '—';
+        } else {
+            valStr = m.entry.value ? 'Да' : 'Нет';
+        }
         html += `<div class="summary-row"><span class="summary-label">${m.name}</span><span class="summary-value">${valStr}</span></div>`;
     }
     html += '</div>';
@@ -553,7 +584,7 @@ async function renderSettings(container) {
             html += `<div class="setting-row">
                 <div class="setting-info">
                     <span class="setting-name ${m.enabled ? '' : 'disabled'}">${m.name}</span>
-                    <span class="setting-type">Да/Нет</span>
+                    <span class="setting-type">${m.type === 'time' ? 'Время' : 'Да/Нет'}</span>
                 </div>
                 <div class="setting-actions">
                     <button class="btn-icon edit-btn" data-metric="${m.id}">✏️</button>
@@ -697,6 +728,26 @@ function showMetricModal(mode = 'create', existingMetric = null) {
     const isEdit = mode === 'edit';
     const title = isEdit ? 'Редактировать метрику' : 'Создать метрику';
     const buttonText = isEdit ? 'Сохранить изменения' : 'Создать метрику';
+    const currentType = existingMetric?.type || 'bool';
+
+    function previewInputHtml(type) {
+        if (type === 'time') {
+            return `<input type="time" class="time-input" value="">`;
+        }
+        return `<div class="bool-buttons">
+            <button class="bool-btn" data-value="true">Да</button>
+            <button class="bool-btn" data-value="false">Нет</button>
+        </div>`;
+    }
+
+    function typeHintHtml(type) {
+        if (type === 'time') {
+            return `<span class="label-text">Тип: Время</span>
+                    <span class="label-hint">Запись времени суток (например, отход ко сну)</span>`;
+        }
+        return `<span class="label-text">Тип: Да/Нет</span>
+                <span class="label-hint">Простой переключатель (было / не было)</span>`;
+    }
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -718,10 +769,25 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     <span class="label-hint">Для группировки метрик</span>
                 </label>
 
-                <div class="form-section">
-                    <span class="label-text">Тип: Да/Нет</span>
-                    <span class="label-hint">Простой переключатель (было / не было)</span>
+                ${isEdit ? `
+                <div class="form-section" id="nm-type-section">
+                    ${typeHintHtml(currentType)}
                 </div>
+                ` : `
+                <div class="form-section" id="nm-type-section">
+                    <span class="label-text">Тип метрики</span>
+                    <div class="radio-group-inline">
+                        <label class="radio-inline">
+                            <input type="radio" name="nm-type" value="bool" ${currentType === 'bool' ? 'checked' : ''}>
+                            <span>Да/Нет</span>
+                        </label>
+                        <label class="radio-inline">
+                            <input type="radio" name="nm-type" value="time" ${currentType === 'time' ? 'checked' : ''}>
+                            <span>Время</span>
+                        </label>
+                    </div>
+                </div>
+                `}
             </div>
 
             <div class="modal-preview-column">
@@ -732,11 +798,8 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                             <div class="metric-header">
                                 <label class="metric-label">${existingMetric?.name || 'Название метрики'}</label>
                             </div>
-                            <div class="metric-input">
-                                <div class="bool-buttons">
-                                    <button class="bool-btn" data-value="true">Да</button>
-                                    <button class="bool-btn" data-value="false">Нет</button>
-                                </div>
+                            <div class="metric-input" id="preview-input">
+                                ${previewInputHtml(currentType)}
                             </div>
                         </div>
                     </div>
@@ -759,16 +822,29 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         if (label) label.textContent = name;
     });
 
-    // Make preview bool buttons interactive
-    document.querySelectorAll('#preview-card .bool-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const buttons = btn.parentElement.querySelectorAll('.bool-btn');
-            buttons.forEach(b => b.classList.remove('active', 'yes', 'no'));
-            const isYes = btn.dataset.value === 'true';
-            btn.classList.add('active', isYes ? 'yes' : 'no');
+    // Type selector change (only in create mode)
+    if (!isEdit) {
+        overlay.querySelectorAll('input[name="nm-type"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+                const selectedType = overlay.querySelector('input[name="nm-type"]:checked').value;
+                document.getElementById('preview-input').innerHTML = previewInputHtml(selectedType);
+                setupPreviewInteractions();
+            });
         });
-    });
+    }
+
+    function setupPreviewInteractions() {
+        document.querySelectorAll('#preview-card .bool-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const buttons = btn.parentElement.querySelectorAll('.bool-btn');
+                buttons.forEach(b => b.classList.remove('active', 'yes', 'no'));
+                const isYes = btn.dataset.value === 'true';
+                btn.classList.add('active', isYes ? 'yes' : 'no');
+            });
+        });
+    }
+    setupPreviewInteractions();
 
     document.getElementById('nm-cancel').onclick = () => overlay.remove();
     document.getElementById('nm-save').onclick = async () => {
@@ -784,6 +860,9 @@ function showMetricModal(mode = 'create', existingMetric = null) {
             if (isEdit) {
                 await api.updateMetric(existingMetric.id, { name, category });
             } else {
+                const typeRadio = overlay.querySelector('input[name="nm-type"]:checked');
+                const selectedType = typeRadio ? typeRadio.value : 'bool';
+
                 const slug = name.toLowerCase()
                     .replace(/\s+/g, '_')
                     .replace(/[^a-z0-9_а-яё]/gi, '')
@@ -793,7 +872,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     slug,
                     name,
                     category,
-                    type: 'bool',
+                    type: selectedType,
                 });
             }
 

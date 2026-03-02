@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from app.database import get_db
 from app.auth import get_current_user
-from app.metric_helpers import get_entry_value, insert_value
+from app.metric_helpers import get_entry_value, insert_value, get_metric_type
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 
@@ -49,6 +49,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         entries_writer.writerow(['date', 'metric_slug', 'value'])
 
         slug_lookup = {m["id"]: m["slug"] for m in metrics}
+        type_lookup = {m["id"]: m["type"] for m in metrics}
 
         entries = await db.fetch(
             "SELECT * FROM entries WHERE user_id = $1 ORDER BY date DESC, metric_id",
@@ -60,7 +61,8 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             if not slug:
                 continue
 
-            value = await get_entry_value(db, e["id"])
+            mt = type_lookup.get(e["metric_id"], "bool")
+            value = await get_entry_value(db, e["id"], mt)
             entries_writer.writerow([
                 str(e["date"]), slug,
                 json.dumps(value),
@@ -125,6 +127,10 @@ async def import_data(
                         slug, current_user["id"],
                     )
 
+                    metric_type = row.get('type', 'bool')
+                    if metric_type not in ('bool', 'time'):
+                        metric_type = 'bool'
+
                     if existing:
                         await db.execute(
                             """UPDATE metric_definitions
@@ -138,21 +144,22 @@ async def import_data(
                         await db.fetchval(
                             """INSERT INTO metric_definitions
                                (user_id, slug, name, category, type, enabled, sort_order)
-                               VALUES ($1, $2, $3, $4, 'bool', $5, $6) RETURNING id""",
+                               VALUES ($1, $2, $3, $4, $5::metric_type, $6, $7) RETURNING id""",
                             current_user["id"], slug, name, category,
-                            enabled, sort_order,
+                            metric_type, enabled, sort_order,
                         )
                         metrics_imported += 1
 
                 except Exception as e:
                     metrics_errors.append(f"Row {row_num}: {str(e)}")
 
-            # Build slug→id lookup after metric import
+            # Build slug→id and slug→type lookups after metric import
             metric_rows = await db.fetch(
-                "SELECT id, slug FROM metric_definitions WHERE user_id = $1",
+                "SELECT id, slug, type FROM metric_definitions WHERE user_id = $1",
                 current_user["id"],
             )
             slug_to_id = {r["slug"]: r["id"] for r in metric_rows}
+            slug_to_type = {r["slug"]: r["type"] for r in metric_rows}
 
             # Import entries
             entries_csv_text = zip_file.read('entries.csv').decode('utf-8')
@@ -177,19 +184,27 @@ async def import_data(
                         entries_skipped += 1
                         continue
 
+                    mt = slug_to_type.get(slug, "bool")
                     value_raw = row.get('value', 'false')
                     value = json.loads(value_raw)
-                    if isinstance(value, dict):
-                        value = bool(value.get('value', False))
+
+                    if mt == "time":
+                        # value should be "HH:MM" string
+                        if not isinstance(value, str):
+                            entries_skipped += 1
+                            continue
                     else:
-                        value = bool(value)
+                        if isinstance(value, dict):
+                            value = bool(value.get('value', False))
+                        else:
+                            value = bool(value)
 
                     async with db.transaction():
                         entry_id = await db.fetchval(
                             "INSERT INTO entries (metric_id, user_id, date) VALUES ($1, $2, $3) RETURNING id",
                             metric_id, current_user["id"], d,
                         )
-                        await insert_value(db, entry_id, value)
+                        await insert_value(db, entry_id, value, mt, entry_date=d)
 
                     entries_imported += 1
 

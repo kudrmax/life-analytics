@@ -10,11 +10,19 @@ from app.auth import get_current_user
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
-def _extract_numeric(value_row) -> float | None:
-    """Extract a numeric value from a bool value row (True=1, False=0)."""
+def _extract_numeric(value_row, metric_type: str = "bool") -> float | None:
+    """Extract a numeric value from a value row.
+
+    For bool: True=1, False=0.
+    For time: minutes from midnight (e.g. 23:30 → 1410).
+    """
     if not value_row:
         return None
-    return 1.0 if value_row["value"] else 0.0
+    v = value_row["value"]
+    if metric_type == "time":
+        # v is a datetime (TIMESTAMPTZ)
+        return v.hour * 60 + v.minute
+    return 1.0 if v else 0.0
 
 
 @router.get("/trends")
@@ -32,10 +40,12 @@ async def trends(
     if not metric:
         return {"error": "Metric not found"}
 
+    mt = metric["type"]
+    value_table = "values_time" if mt == "time" else "values_bool"
     rows = await db.fetch(
-        """SELECT e.date, v.value
+        f"""SELECT e.date, v.value
             FROM entries e
-            JOIN values_bool v ON v.entry_id = e.id
+            JOIN {value_table} v ON v.entry_id = e.id
             WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4
             ORDER BY e.date""",
         metric_id, date_type.fromisoformat(start), date_type.fromisoformat(end), current_user["id"],
@@ -43,7 +53,7 @@ async def trends(
 
     points = []
     for r in rows:
-        v = _extract_numeric(r)
+        v = _extract_numeric(r, mt)
         if v is not None:
             points.append({
                 "date": str(r["date"]),
@@ -79,18 +89,24 @@ async def correlations(
     if not ma or not mb:
         return {"error": "Metric not found"}
 
-    async def values_by_date(mid):
+    async def values_by_date(mid, mt):
+        value_table = "values_time" if mt == "time" else "values_bool"
         rows = await db.fetch(
-            """SELECT e.date, v.value
+            f"""SELECT e.date, v.value
                 FROM entries e
-                JOIN values_bool v ON v.entry_id = e.id
+                JOIN {value_table} v ON v.entry_id = e.id
                 WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4""",
             mid, date_type.fromisoformat(start), date_type.fromisoformat(end), current_user["id"],
         )
-        return {str(r["date"]): (1.0 if r["value"] else 0.0) for r in rows}
+        result = {}
+        for r in rows:
+            v = _extract_numeric(r, mt)
+            if v is not None:
+                result[str(r["date"])] = v
+        return result
 
-    a_by_date = await values_by_date(metric_a)
-    b_by_date = await values_by_date(metric_b)
+    a_by_date = await values_by_date(metric_a, ma["type"])
+    b_by_date = await values_by_date(metric_b, mb["type"])
 
     common = sorted(set(a_by_date) & set(b_by_date))
     if len(common) < 3:

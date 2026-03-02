@@ -32,9 +32,13 @@ async def init_db():
         # Create ENUM types
         await conn.execute("""
             DO $$ BEGIN
-                CREATE TYPE metric_type AS ENUM ('bool');
+                CREATE TYPE metric_type AS ENUM ('bool', 'time');
             EXCEPTION WHEN duplicate_object THEN NULL;
             END $$;
+        """)
+        # Add 'time' to existing enum if missing (safe for existing DBs)
+        await conn.execute("""
+            ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'time'
         """)
 
         # Users
@@ -80,6 +84,14 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS values_bool (
                 entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
                 value BOOLEAN NOT NULL
+            )
+        """)
+
+        # Value table for time metrics
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS values_time (
+                entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+                value TIMESTAMPTZ NOT NULL
             )
         """)
 

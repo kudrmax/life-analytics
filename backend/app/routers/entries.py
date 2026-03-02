@@ -5,19 +5,20 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import get_db
 from app.schemas import EntryCreate, EntryUpdate, EntryOut
 from app.auth import get_current_user
-from app.metric_helpers import get_entry_value, insert_value, update_value
+from app.metric_helpers import get_entry_value, insert_value, update_value, get_metric_type
 
 router = APIRouter(prefix="/api/entries", tags=["entries"])
 
 
-async def _entry_to_out(conn, entry_row) -> EntryOut:
-    value = await get_entry_value(conn, entry_row["id"])
+async def _entry_to_out(conn, entry_row, metric_type: str = "bool") -> EntryOut:
+    value = await get_entry_value(conn, entry_row["id"], metric_type)
+    default = False if metric_type == "bool" else None
     return EntryOut(
         id=entry_row["id"],
         metric_id=entry_row["metric_id"],
         date=str(entry_row["date"]),
         recorded_at=str(entry_row["recorded_at"]),
-        value=value if value is not None else False,
+        value=value if value is not None else default,
     )
 
 
@@ -40,7 +41,17 @@ async def list_entries(
             d, current_user["id"],
         )
 
-    return [await _entry_to_out(db, r) for r in rows]
+    # Build metric_id → type lookup
+    metric_ids = list({r["metric_id"] for r in rows})
+    type_lookup = {}
+    if metric_ids:
+        type_rows = await db.fetch(
+            "SELECT id, type FROM metric_definitions WHERE id = ANY($1) AND user_id = $2",
+            metric_ids, current_user["id"],
+        )
+        type_lookup = {r["id"]: r["type"] for r in type_rows}
+
+    return [await _entry_to_out(db, r, type_lookup.get(r["metric_id"], "bool")) for r in rows]
 
 
 @router.post("", response_model=EntryOut, status_code=201)
@@ -64,15 +75,16 @@ async def create_entry(
     if existing:
         raise HTTPException(409, "Entry already exists for this metric/date. Use PUT to update.")
 
+    mt = metric["type"]
     async with db.transaction():
         entry_id = await db.fetchval(
             "INSERT INTO entries (metric_id, user_id, date) VALUES ($1, $2, $3) RETURNING id",
             data.metric_id, current_user["id"], d,
         )
-        await insert_value(db, entry_id, data.value)
+        await insert_value(db, entry_id, data.value, mt, entry_date=d)
 
     row = await db.fetchrow("SELECT * FROM entries WHERE id = $1", entry_id)
-    return await _entry_to_out(db, row)
+    return await _entry_to_out(db, row, mt)
 
 
 @router.put("/{entry_id}", response_model=EntryOut)
@@ -89,9 +101,10 @@ async def update_entry(
     if not row:
         raise HTTPException(404, "Entry not found")
 
-    await update_value(db, entry_id, data.value)
+    mt = await get_metric_type(db, row["metric_id"], current_user["id"]) or "bool"
+    await update_value(db, entry_id, data.value, mt, entry_date=row["date"])
 
-    return await _entry_to_out(db, row)
+    return await _entry_to_out(db, row, mt)
 
 
 @router.delete("/{entry_id}", status_code=204)

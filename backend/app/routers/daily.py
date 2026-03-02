@@ -41,7 +41,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
         }
 
         if entry:
-            value = await get_entry_value(db, entry["id"])
+            value = await get_entry_value(db, entry["id"], m["type"])
             item["entry"] = {
                 "id": entry["id"],
                 "recorded_at": str(entry["recorded_at"]),
