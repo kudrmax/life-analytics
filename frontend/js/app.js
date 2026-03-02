@@ -319,14 +319,20 @@ function renderBoolean(val) {
 }
 
 function renderTime(val) {
-    return `<input type="time" class="time-input" value="${val || ''}">`;
+    if (val) {
+        return `<div class="time-picker-display" data-action="pick-time">
+            <span class="time-value">${val}</span>
+        </div>`;
+    }
+    return `<div class="time-picker-display" data-action="pick-time">
+        <span class="time-placeholder">Указать время</span>
+    </div>`;
 }
 
 // ─── Event Handlers ───
 function attachInputHandlers() {
     const form = document.getElementById('metrics-form');
     form.addEventListener('click', handleFormClick);
-    form.addEventListener('change', handleFormChange);
 }
 
 async function handleFormClick(e) {
@@ -360,26 +366,21 @@ async function handleFormClick(e) {
         }
         return;
     }
-}
 
-async function handleFormChange(e) {
-    const input = e.target;
-    if (!input.classList.contains('time-input')) return;
-
-    const card = input.closest('.metric-card');
-    if (!card) return;
-
-    const metricId = card.dataset.metricId;
-    const entryId = card.dataset.entryId;
-    const value = input.value; // "HH:MM"
-
-    if (!value) return;
-
-    try {
-        await saveDaily(metricId, entryId, value);
-        await renderTodayForm();
-    } catch (error) {
-        alert('Ошибка: ' + error.message);
+    // Time picker
+    const timeTrigger = btn.closest('[data-action="pick-time"]');
+    if (timeTrigger) {
+        const timeVal = card.querySelector('.time-value');
+        const currentVal = timeVal ? timeVal.textContent : '';
+        showClockPicker(currentVal, async (newVal) => {
+            try {
+                await saveDaily(metricId, entryId, newVal);
+                await renderTodayForm();
+            } catch (error) {
+                alert('Ошибка: ' + error.message);
+            }
+        });
+        return;
     }
 }
 
@@ -732,7 +733,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
 
     function previewInputHtml(type) {
         if (type === 'time') {
-            return `<input type="time" class="time-input" value="">`;
+            return `<div class="time-picker-display"><span class="time-placeholder">Указать время</span></div>`;
         }
         return `<div class="bool-buttons">
             <button class="bool-btn" data-value="true">Да</button>
@@ -891,6 +892,158 @@ function showAddMetricModal() {
 
 function showEditMetricModal(metric) {
     showMetricModal('edit', metric);
+}
+
+// ─── Clock Picker ───
+function showClockPicker(initialValue, callback) {
+    let hour = null;
+    let minute = null;
+
+    if (initialValue && initialValue.includes(':')) {
+        const parts = initialValue.split(':').map(Number);
+        hour = parts[0];
+        minute = Math.round(parts[1] / 5) * 5;
+        if (minute === 60) minute = 55;
+    }
+
+    let phase = 'hour';
+
+    const SIZE = 260;
+    const CENTER = SIZE / 2;
+    const OUTER_R = 100;
+    const INNER_R = 66;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'cp-overlay';
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+    });
+
+    render();
+
+    function numStyle(x, y, selected, inner) {
+        const bg = selected ? 'var(--accent)' : 'transparent';
+        const color = selected ? '#fff' : inner ? 'var(--text-dim)' : 'var(--text)';
+        const fs = inner ? '12px' : '14px';
+        return `position:absolute;left:${x.toFixed(1)}px;top:${y.toFixed(1)}px;width:36px;height:36px;`
+            + `display:flex;align-items:center;justify-content:center;border-radius:50%;`
+            + `font-size:${fs};font-weight:500;color:${color};background:${bg};`
+            + `cursor:pointer;user-select:none;z-index:2`;
+    }
+
+    function renderNums() {
+        let html = '';
+
+        if (phase === 'hour') {
+            const outer = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+            const inner = [0, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
+
+            outer.forEach((h, i) => {
+                const a = (i / 12) * 2 * Math.PI;
+                const x = CENTER + OUTER_R * Math.sin(a) - 18;
+                const y = CENTER - OUTER_R * Math.cos(a) - 18;
+                html += `<div data-val="${h}" ${hour === h ? 'data-selected' : ''} style="${numStyle(x, y, hour === h, false)}">${h}</div>`;
+            });
+
+            inner.forEach((h, i) => {
+                const a = (i / 12) * 2 * Math.PI;
+                const x = CENTER + INNER_R * Math.sin(a) - 18;
+                const y = CENTER - INNER_R * Math.cos(a) - 18;
+                html += `<div data-val="${h}" ${hour === h ? 'data-selected' : ''} style="${numStyle(x, y, hour === h, true)}">${String(h).padStart(2, '0')}</div>`;
+            });
+        } else {
+            const mins = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+            mins.forEach((m, i) => {
+                const a = (i / 12) * 2 * Math.PI;
+                const x = CENTER + OUTER_R * Math.sin(a) - 18;
+                const y = CENTER - OUTER_R * Math.cos(a) - 18;
+                html += `<div data-val="${m}" ${minute === m ? 'data-selected' : ''} style="${numStyle(x, y, minute === m, false)}">${String(m).padStart(2, '0')}</div>`;
+            });
+        }
+
+        return html;
+    }
+
+    function renderHand() {
+        const val = phase === 'hour' ? hour : minute;
+        if (val === null) return '';
+
+        let angleDeg, len;
+        if (phase === 'hour') {
+            angleDeg = (val % 12) * 30;
+            len = (val >= 1 && val <= 12) ? OUTER_R - 6 : INNER_R - 6;
+        } else {
+            angleDeg = (val / 5) * 30;
+            len = OUTER_R - 6;
+        }
+
+        // Hand line
+        let html = `<div class="cp-hand" style="transform:rotate(${angleDeg}deg);height:${len}px"></div>`;
+
+        // Small circle at the tip of the hand
+        const aRad = angleDeg * Math.PI / 180;
+        const tipX = CENTER + len * Math.sin(aRad);
+        const tipY = CENTER - len * Math.cos(aRad);
+        html += `<div class="cp-hand-circle" style="left:${tipX.toFixed(1)}px;top:${tipY.toFixed(1)}px"></div>`;
+
+        return html;
+    }
+
+    function render() {
+        const hh = hour !== null ? String(hour).padStart(2, '0') : '--';
+        const mm = minute !== null ? String(minute).padStart(2, '0') : '--';
+        const phaseLabel = phase === 'hour' ? 'Выберите час' : 'Выберите минуты';
+
+        overlay.innerHTML = `
+            <div class="cp-dialog">
+                <div class="cp-header">
+                    <span class="cp-hh ${phase === 'hour' ? 'active' : ''}" id="cp-h">${hh}</span>
+                    <span class="cp-colon">:</span>
+                    <span class="cp-mm ${phase === 'minute' ? 'active' : ''}" id="cp-m">${mm}</span>
+                </div>
+                <div class="cp-label">${phaseLabel}</div>
+                <div class="cp-face" style="position:relative;width:${SIZE}px;height:${SIZE}px">
+                    ${renderNums()}
+                    <div class="cp-hand-dot"></div>
+                    ${renderHand()}
+                </div>
+                <div class="cp-actions">
+                    <button class="btn-small" id="cp-cancel">Отмена</button>
+                    <button class="btn-primary" id="cp-ok" ${hour === null || minute === null ? 'disabled' : ''}>OK</button>
+                </div>
+            </div>
+        `;
+
+        // Events
+        overlay.querySelector('#cp-cancel').onclick = () => overlay.remove();
+        overlay.querySelector('#cp-ok').onclick = () => {
+            if (hour !== null && minute !== null) {
+                const v = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+                overlay.remove();
+                callback(v);
+            }
+        };
+
+        overlay.querySelector('#cp-h').onclick = () => { phase = 'hour'; render(); };
+        overlay.querySelector('#cp-m').onclick = () => { phase = 'minute'; render(); };
+
+        overlay.querySelectorAll('[data-val]').forEach(el => {
+            el.onmouseenter = () => { if (!el.hasAttribute('data-selected')) el.style.background = 'rgba(108,140,255,0.15)'; };
+            el.onmouseleave = () => { if (!el.hasAttribute('data-selected')) el.style.background = 'transparent'; };
+            el.onclick = () => {
+                const v = parseInt(el.dataset.val);
+                if (phase === 'hour') {
+                    hour = v;
+                    phase = 'minute';
+                } else {
+                    minute = v;
+                }
+                render();
+            };
+        });
+    }
 }
 
 // ─── Helpers ───
