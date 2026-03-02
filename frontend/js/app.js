@@ -241,23 +241,30 @@ function renderRegister(container) {
 // ─── Today Page ───
 async function renderToday(container) {
     container.innerHTML = `
-        <div class="page-header">
-            <button class="btn-icon" id="prev-day">&larr;</button>
-            <h2 id="current-date-label"></h2>
-            <button class="btn-icon" id="next-day">&rarr;</button>
-            <button class="btn-small" id="go-today">Сегодня</button>
+        <div class="day-header">
+            <div class="day-progress">
+                <div class="progress-track">
+                    <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                </div>
+                <span class="progress-count" id="progress-count">0%</span>
+            </div>
+            <div class="day-nav">
+                <button class="day-nav-arrow" id="prev-day">
+                    <i data-lucide="chevron-left"></i>
+                </button>
+                <span class="day-nav-date" id="current-date-label"></span>
+                <button class="day-nav-arrow" id="next-day">
+                    <i data-lucide="chevron-right"></i>
+                </button>
+            </div>
         </div>
-        <div class="progress-bar-container">
-            <div class="progress-bar-header">
-                <span class="progress-label">Заполнено</span>
-                <span class="progress-count" id="progress-count">0 / 0</span>
-            </div>
-            <div class="progress-track">
-                <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
-            </div>
+        <div class="day-nav-today-wrap" id="go-today-wrap" style="display:none">
+            <button class="btn-small" id="go-today">Вернуться к сегодня</button>
         </div>
         <div id="metrics-form"></div>
     `;
+
+    if (window.lucide) lucide.createIcons();
 
     document.getElementById('prev-day').onclick = () => { changeDay(-1); };
     document.getElementById('next-day').onclick = () => { changeDay(1); };
@@ -275,6 +282,10 @@ function changeDay(delta) {
 
 async function renderTodayForm() {
     document.getElementById('current-date-label').textContent = formatDate(currentDate);
+    const goTodayWrap = document.getElementById('go-today-wrap');
+    if (goTodayWrap) {
+        goTodayWrap.style.display = (currentDate === todayStr()) ? 'none' : '';
+    }
     const summary = await api.getDailySummary(currentDate);
     const form = document.getElementById('metrics-form');
 

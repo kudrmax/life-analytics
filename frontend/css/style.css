@@ -82,50 +82,88 @@ nav button svg { width: 20px; height: 20px; }
 nav button.active { color: var(--accent); }
 nav button:hover { color: var(--text); }
 
-/* ─── Page Header ─── */
-.page-header {
+/* ─── Day Header (nav + progress) ─── */
+.day-header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 20px 0 16px;
-    justify-content: center;
-}
-
-.page-header h2 {
-    font-size: 18px;
-    font-weight: 500;
-    min-width: 180px;
-    text-align: center;
-}
-
-/* ─── Progress Bar ─── */
-.progress-bar-container {
-    margin-bottom: 16px;
-    padding: 12px 16px;
+    gap: 16px;
+    margin: 20px 0 8px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 12px;
+    padding: 6px 8px;
 }
-.progress-bar-header {
+
+.day-nav {
     display: flex;
-    justify-content: space-between;
-    margin-bottom: 8px;
+    align-items: center;
+    gap: 0;
+    flex-shrink: 0;
 }
-.progress-label { font-size: 13px; color: var(--text-dim); }
-.progress-count { font-size: 13px; font-weight: 500; }
-.progress-track {
+
+.day-nav-arrow {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+}
+
+.day-nav-arrow:hover {
+    background: var(--surface2);
+    color: var(--text);
+}
+
+.day-nav-arrow svg { width: 20px; height: 20px; }
+
+.day-nav-date {
+    font-size: 15px;
+    font-weight: 500;
+    padding: 0 4px;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.day-progress {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.day-progress .progress-track {
+    flex: 1;
     height: 6px;
     background: var(--surface2);
     border-radius: 3px;
     overflow: hidden;
 }
-.progress-fill {
+
+.day-progress .progress-fill {
     height: 100%;
     background: var(--accent);
     border-radius: 3px;
     transition: width 0.3s ease;
 }
-.progress-fill.complete { background: var(--green); }
+
+.day-progress .progress-fill.complete { background: var(--green); }
+
+.day-progress .progress-count {
+    font-size: 13px;
+    font-weight: 500;
+    flex-shrink: 0;
+}
+
+.day-nav-today-wrap {
+    text-align: center;
+    margin-bottom: 8px;
+}
 
 h2 {
     padding: 20px 0 16px;
@@ -827,12 +865,12 @@ input[type="month"], input[type="date"] {
     nav button {
         flex-direction: row;
         gap: 6px;
-        font-size: 13px;
-        padding: 12px 16px;
+        font-size: 14px;
+        padding: 16px 20px;
     }
     nav button svg { width: 18px; height: 18px; }
-    body { padding-top: 60px; padding-bottom: 16px; }
-    .theme-toggle { top: 60px; }
+    body { padding-top: 68px; padding-bottom: 16px; }
+    .theme-toggle { top: 68px; }
 }
 
 @media (max-width: 768px) {
