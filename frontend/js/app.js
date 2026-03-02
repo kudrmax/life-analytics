@@ -701,9 +701,10 @@ function showMetricModal(mode = 'create', existingMetric = null) {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
-        <div class="modal">
+        <div class="modal modal-large">
             <h3>${title}</h3>
 
+            <div class="modal-content-split">
             <div class="modal-form">
                 <label class="form-label">
                     <span class="label-text">Название</span>
@@ -721,20 +722,26 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     <span class="label-text">Тип: Да/Нет</span>
                     <span class="label-hint">Простой переключатель (было / не было)</span>
                 </div>
+            </div>
 
-                <div id="metric-preview" class="metric-preview">
-                    <div class="metric-card" id="preview-card">
-                        <div class="metric-header">
-                            <label class="metric-label">${existingMetric?.name || 'Название метрики'}</label>
-                        </div>
-                        <div class="metric-input">
-                            <div class="bool-buttons">
-                                <button class="bool-btn" data-value="true">Да</button>
-                                <button class="bool-btn" data-value="false">Нет</button>
+            <div class="modal-preview-column">
+                <div class="preview-sticky">
+                    <span class="label-text">Превью</span>
+                    <div id="metric-preview" class="metric-preview">
+                        <div class="metric-card" id="preview-card">
+                            <div class="metric-header">
+                                <label class="metric-label">${existingMetric?.name || 'Название метрики'}</label>
+                            </div>
+                            <div class="metric-input">
+                                <div class="bool-buttons">
+                                    <button class="bool-btn" data-value="true">Да</button>
+                                    <button class="bool-btn" data-value="false">Нет</button>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
+            </div>
             </div>
 
             <div class="modal-actions">
@@ -750,6 +757,17 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         const name = document.getElementById('nm-name').value || 'Название метрики';
         const label = document.querySelector('#preview-card .metric-label');
         if (label) label.textContent = name;
+    });
+
+    // Make preview bool buttons interactive
+    document.querySelectorAll('#preview-card .bool-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const buttons = btn.parentElement.querySelectorAll('.bool-btn');
+            buttons.forEach(b => b.classList.remove('active', 'yes', 'no'));
+            const isYes = btn.dataset.value === 'true';
+            btn.classList.add('active', isYes ? 'yes' : 'no');
+        });
     });
 
     document.getElementById('nm-cancel').onclick = () => overlay.remove();
