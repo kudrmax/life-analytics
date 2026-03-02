@@ -348,6 +348,7 @@ input[type="number"]:focus {
     padding: 24px;
     width: 320px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
 
 .cp-header {
@@ -399,7 +400,6 @@ input[type="number"]:focus {
     background: var(--surface2);
     margin: 0 auto 24px;
     position: relative;
-    overflow: hidden;
 }
 
 .cp-hand {
@@ -425,15 +425,6 @@ input[type="number"]:focus {
     z-index: 3;
 }
 
-.cp-hand-circle {
-    position: absolute;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background: var(--accent);
-    transform: translate(-50%, -50%);
-    z-index: 1;
-}
 
 .cp-actions {
     display: flex;

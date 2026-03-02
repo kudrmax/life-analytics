@@ -921,11 +921,14 @@ function showClockPicker(initialValue, callback) {
 
     render();
 
-    function numStyle(x, y, selected, inner) {
+    function numStyle(cx, cy, selected, inner) {
+        const s = selected ? 40 : 36;
+        const half = s / 2;
         const bg = selected ? 'var(--accent)' : 'transparent';
         const color = selected ? '#fff' : inner ? 'var(--text-dim)' : 'var(--text)';
         const fs = inner ? '12px' : '14px';
-        return `position:absolute;left:${x.toFixed(1)}px;top:${y.toFixed(1)}px;width:36px;height:36px;`
+        return `position:absolute;left:${(cx - half).toFixed(1)}px;top:${(cy - half).toFixed(1)}px;`
+            + `width:${s}px;height:${s}px;`
             + `display:flex;align-items:center;justify-content:center;border-radius:50%;`
             + `font-size:${fs};font-weight:500;color:${color};background:${bg};`
             + `cursor:pointer;user-select:none;z-index:2`;
@@ -940,24 +943,24 @@ function showClockPicker(initialValue, callback) {
 
             outer.forEach((h, i) => {
                 const a = (i / 12) * 2 * Math.PI;
-                const x = CENTER + OUTER_R * Math.sin(a) - 18;
-                const y = CENTER - OUTER_R * Math.cos(a) - 18;
-                html += `<div data-val="${h}" ${hour === h ? 'data-selected' : ''} style="${numStyle(x, y, hour === h, false)}">${h}</div>`;
+                const cx = CENTER + OUTER_R * Math.sin(a);
+                const cy = CENTER - OUTER_R * Math.cos(a);
+                html += `<div data-val="${h}" ${hour === h ? 'data-selected' : ''} style="${numStyle(cx, cy, hour === h, false)}">${h}</div>`;
             });
 
             inner.forEach((h, i) => {
                 const a = (i / 12) * 2 * Math.PI;
-                const x = CENTER + INNER_R * Math.sin(a) - 18;
-                const y = CENTER - INNER_R * Math.cos(a) - 18;
-                html += `<div data-val="${h}" ${hour === h ? 'data-selected' : ''} style="${numStyle(x, y, hour === h, true)}">${String(h).padStart(2, '0')}</div>`;
+                const cx = CENTER + INNER_R * Math.sin(a);
+                const cy = CENTER - INNER_R * Math.cos(a);
+                html += `<div data-val="${h}" ${hour === h ? 'data-selected' : ''} style="${numStyle(cx, cy, hour === h, true)}">${String(h).padStart(2, '0')}</div>`;
             });
         } else {
             const mins = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
             mins.forEach((m, i) => {
                 const a = (i / 12) * 2 * Math.PI;
-                const x = CENTER + OUTER_R * Math.sin(a) - 18;
-                const y = CENTER - OUTER_R * Math.cos(a) - 18;
-                html += `<div data-val="${m}" ${minute === m ? 'data-selected' : ''} style="${numStyle(x, y, minute === m, false)}">${String(m).padStart(2, '0')}</div>`;
+                const cx = CENTER + OUTER_R * Math.sin(a);
+                const cy = CENTER - OUTER_R * Math.cos(a);
+                html += `<div data-val="${m}" ${minute === m ? 'data-selected' : ''} style="${numStyle(cx, cy, minute === m, false)}">${String(m).padStart(2, '0')}</div>`;
             });
         }
 
@@ -971,22 +974,13 @@ function showClockPicker(initialValue, callback) {
         let angleDeg, len;
         if (phase === 'hour') {
             angleDeg = (val % 12) * 30;
-            len = (val >= 1 && val <= 12) ? OUTER_R - 6 : INNER_R - 6;
+            len = (val >= 1 && val <= 12) ? OUTER_R : INNER_R;
         } else {
             angleDeg = (val / 5) * 30;
-            len = OUTER_R - 6;
+            len = OUTER_R;
         }
 
-        // Hand line
-        let html = `<div class="cp-hand" style="transform:rotate(${angleDeg}deg);height:${len}px"></div>`;
-
-        // Small circle at the tip of the hand
-        const aRad = angleDeg * Math.PI / 180;
-        const tipX = CENTER + len * Math.sin(aRad);
-        const tipY = CENTER - len * Math.cos(aRad);
-        html += `<div class="cp-hand-circle" style="left:${tipX.toFixed(1)}px;top:${tipY.toFixed(1)}px"></div>`;
-
-        return html;
+        return `<div class="cp-hand" style="transform:rotate(${angleDeg}deg);height:${len}px"></div>`;
     }
 
     function render() {
