@@ -53,6 +53,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initTheme();
     setupThemeToggle();
     setupNav();
+    if (window.lucide) lucide.createIcons();
     await checkAuth();
 
     if (isAuthenticated) {
@@ -95,7 +96,7 @@ function navigateTo(page) {
     // Hide nav for auth pages
     const nav = document.querySelector('nav');
     if (nav) {
-        nav.style.display = (page === 'login' || page === 'register') ? 'none' : 'flex';
+        nav.style.display = (page === 'login' || page === 'register') ? 'none' : '';
     }
 
     document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === page));
@@ -246,6 +247,15 @@ async function renderToday(container) {
             <button class="btn-icon" id="next-day">&rarr;</button>
             <button class="btn-small" id="go-today">Сегодня</button>
         </div>
+        <div class="progress-bar-container">
+            <div class="progress-bar-header">
+                <span class="progress-label">Заполнено</span>
+                <span class="progress-count" id="progress-count">0 / 0</span>
+            </div>
+            <div class="progress-track">
+                <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+            </div>
+        </div>
         <div id="metrics-form"></div>
     `;
 
@@ -285,6 +295,15 @@ async function renderTodayForm() {
     }
     form.innerHTML = html;
     attachInputHandlers();
+
+    // Update progress bar
+    const total = summary.metrics.length;
+    const filled = summary.metrics.filter(m => m.entry !== null).length;
+    const pct = total > 0 ? Math.round((filled / total) * 100) : 0;
+    document.getElementById('progress-count').textContent = `${pct}%`;
+    const progressFill = document.getElementById('progress-fill');
+    progressFill.style.width = `${pct}%`;
+    progressFill.classList.toggle('complete', filled === total && total > 0);
 }
 
 function renderMetricInput(m) {

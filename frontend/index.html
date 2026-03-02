@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Life Analytics</title>
     <link rel="stylesheet" href="css/style.css">
+    <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
 </head>
 <body>
     <button class="theme-toggle" id="theme-toggle" title="Переключить тему">
@@ -14,10 +15,24 @@
     <div id="main"></div>
 
     <nav>
-        <button data-page="today">Сегодня</button>
-        <button data-page="history">История</button>
-        <button data-page="dashboard">Дашборд</button>
-        <button data-page="settings">Настройки</button>
+        <div class="nav-inner">
+            <button data-page="today">
+                <i data-lucide="calendar-check"></i>
+                <span>Сегодня</span>
+            </button>
+            <button data-page="history">
+                <i data-lucide="history"></i>
+                <span>История</span>
+            </button>
+            <button data-page="dashboard">
+                <i data-lucide="bar-chart-3"></i>
+                <span>Дашборд</span>
+            </button>
+            <button data-page="settings">
+                <i data-lucide="settings"></i>
+                <span>Настройки</span>
+            </button>
+        </div>
     </nav>
 
     <script src="config.js"></script>
