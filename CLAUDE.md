@@ -51,7 +51,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 
 ### Database Schema (PostgreSQL)
 
-**Enum:** `metric_type` = 'bool' | 'time' | 'number'
+**Enum:** `metric_type` = 'bool' | 'time' | 'number' | 'scale'
 
 **Tables:**
 - `users` — id, username (unique), password_hash, created_at
@@ -60,15 +60,19 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `values_bool` — entry_id (PK/FK), value BOOLEAN
 - `values_time` — entry_id (PK/FK), value TIMESTAMPTZ
 - `values_number` — entry_id (PK/FK), value INTEGER
+- `values_scale` — entry_id (PK/FK), value INTEGER, scale_min, scale_max, scale_step (stores context at time of entry)
+- `scale_config` — metric_id (PK/FK), scale_min, scale_max, scale_step (current config for rendering)
 
 **Value storage pattern:** Separate typed table per metric type (not JSON). Entry creation: INSERT into `entries` → INSERT into `values_{type}`, all within a transaction.
+
+**Scale context pattern:** `scale_config` stores the current min/max/step for rendering buttons. `values_scale` stores the min/max/step that were active when each entry was created. When displaying a filled entry, use context from `values_scale` (not current config) so old entries render correctly even after config changes. Analytics normalizes scale values to percentages using the per-entry context.
 
 ### Frontend (Vanilla JS SPA)
 
 - `index.html` — single entry point with nav
 - `config.js` — `window.API_BASE` (set by run.sh for local dev, empty for Docker/nginx proxy)
 - `js/api.js` — API client, token in localStorage (`la_auth_token`), auto-redirect on 401
-- `js/app.js` — all page logic: routing, rendering, event handling (~1600 lines)
+- `js/app.js` — all page logic: routing, rendering, event handling
 - `css/style.css` — dark/light theme
 
 **Event delegation pattern:** `#metrics-form` element persists across re-renders (innerHTML replaced). Event listeners (click, change) are attached once via `data-handlersAttached` guard in `attachInputHandlers()` to prevent duplicate async handlers.
@@ -91,17 +95,21 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 
 ## Key Implementation Details
 
-**Adding a new metric type** requires changes in 6 places:
-1. `database.py` — `ALTER TYPE metric_type ADD VALUE`, create `values_{type}` table
-2. `schemas.py` — add to `MetricType` enum, update `value` union in EntryCreate/Update/Out (keep `bool` before `int` — bool is subclass of int in Python)
-3. `metric_helpers.py` — add branch in `get_entry_value`, `insert_value`, `update_value`
-4. `routers/analytics.py` — `_extract_numeric` + value_table selection in `trends` and `values_by_date`
-5. `routers/export_import.py` — type validation on import + value parsing
-6. `frontend/js/app.js` — render function, input handlers, history display, settings type label, modal (preview + radio + type hint)
+**Adding a new metric type** requires changes in 7 places:
+1. `database.py` — `ALTER TYPE metric_type ADD VALUE`, create `values_{type}` table (+ config table if type has settings)
+2. `schemas.py` — add to `MetricType` enum, add config fields to Create/Update/Out if needed (keep `bool` before `int` in value unions — bool is subclass of int in Python)
+3. `metric_helpers.py` — add branch in `get_entry_value`, `insert_value`, `update_value`; pass `metric_id` for types that need config lookup
+4. `routers/metrics.py` — LEFT JOIN config table in list/get queries, handle config creation/update in create/update endpoints
+5. `routers/daily.py` — LEFT JOIN config table, include config fields in response; for filled entries, override with stored context from value table
+6. `routers/analytics.py` — `_extract_numeric` + value_table selection in `trends` and `values_by_date`; include extra columns (e.g. scale context) in SELECT
+7. `routers/export_import.py` — type validation on import + value parsing + config export/import
+8. `frontend/js/app.js` — render function, input handlers, history display, settings type label, modal (preview + radio + type hint + config fields)
 
 **Data isolation:** All queries filter by `current_user["id"]`. Return 404 (not 403) on unauthorized access.
 
 **Schema changes:** Update DDL in `database.py` `init_db()`. For new enum values, use `ALTER TYPE ... ADD VALUE IF NOT EXISTS` (safe for existing DBs). For new tables, use `CREATE TABLE IF NOT EXISTS`. Destructive changes require dropping and recreating the database.
+
+**Metric queries with config:** Routers that list/return metrics use LEFT JOIN to include type-specific config (e.g. `LEFT JOIN scale_config sc ON sc.metric_id = md.id`). The `build_metric_out` helper uses `.get()` for config fields since they may be NULL for non-matching types.
 
 ## Common Workflows
 
@@ -111,5 +119,5 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 3. Include in `main.py`: `app.include_router(new_router.router)`
 
 **Export/Import format:**
-- ZIP with `metrics.csv` (id, slug, name, category, type, enabled, sort_order) + `entries.csv` (date, metric_slug, value as JSON)
+- ZIP with `metrics.csv` (id, slug, name, category, type, enabled, sort_order, scale_min, scale_max, scale_step) + `entries.csv` (date, metric_slug, value as JSON)
 - Import: creates/updates metrics by slug, skips duplicate entries by (metric_id, user_id, date)
