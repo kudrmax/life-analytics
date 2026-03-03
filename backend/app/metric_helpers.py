@@ -15,6 +15,7 @@ async def build_metric_out(row: asyncpg.Record, slots: list | None = None) -> Me
         slug=row["slug"],
         name=row["name"],
         category=row["category"],
+        icon=row.get("icon", ""),
         type=row["type"],
         enabled=row["enabled"],
         sort_order=row["sort_order"],

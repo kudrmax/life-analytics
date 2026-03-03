@@ -172,6 +172,11 @@ async def init_db():
             ON entries(metric_id, user_id, date, slot_id) WHERE slot_id IS NOT NULL
         """)
 
+        # Add icon column to metric_definitions
+        await conn.execute("""
+            ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS icon VARCHAR(10) NOT NULL DEFAULT ''
+        """)
+
         # Indexes
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_metric_definitions_user

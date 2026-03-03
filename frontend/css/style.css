@@ -1232,6 +1232,14 @@ input[type="month"], input[type="date"] {
     border-top: 1px solid var(--border);
 }
 
+.modal-actions .btn-primary,
+.modal-actions .btn-small {
+    padding: 10px 20px;
+    font-size: 14px;
+    border-radius: 8px;
+    margin-bottom: 0;
+}
+
 /* ─── Auth Pages ─── */
 .auth-container {
     display: flex;
@@ -1466,4 +1474,102 @@ input[type="month"], input[type="date"] {
     border-radius: 4px;
     margin-left: 6px;
     vertical-align: middle;
+}
+
+/* ─── Emoji Picker ─── */
+.emoji-picker-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.emoji-trigger-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 22px;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+
+.emoji-trigger-btn:hover {
+    border-color: var(--accent);
+    background: var(--border);
+}
+
+.emoji-trigger-btn.has-icon {
+    font-size: 26px;
+}
+
+.emoji-clear-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 18px;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.15s;
+}
+
+.emoji-clear-btn:hover {
+    color: var(--red);
+}
+
+.emoji-popup {
+    position: fixed;
+    z-index: 300;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+emoji-picker {
+    --num-columns: 8;
+    --emoji-size: 1.3rem;
+    --category-emoji-size: 1.1rem;
+    height: 320px;
+}
+
+[data-theme="light"] emoji-picker {
+    --background: var(--surface);
+    --border-color: var(--border);
+    --input-border-color: var(--border);
+    --button-hover-background: var(--surface2);
+    color-scheme: light;
+}
+
+emoji-picker {
+    --background: var(--surface);
+    --border-color: var(--border);
+    --input-border-color: var(--border);
+    --button-hover-background: var(--surface2);
+    color-scheme: dark;
+}
+
+.metric-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    font-size: 18px;
+    background: var(--surface2);
+    border-radius: 8px;
+    margin-right: 6px;
+    vertical-align: middle;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.emoji-trigger-btn svg {
+    width: 22px;
+    height: 22px;
+    color: var(--text-dim);
 }

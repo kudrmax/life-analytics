@@ -365,7 +365,7 @@ function renderMetricInput(m) {
 
         return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="">
             <div class="metric-header">
-                <label class="metric-label">${m.name}</label>
+                <label class="metric-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</label>
             </div>
             ${slotsHtml}
         </div>`;
@@ -391,7 +391,7 @@ function renderMetricInput(m) {
 
     return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}">
         <div class="metric-header">
-            <label class="metric-label">${m.name}</label>
+            <label class="metric-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</label>
             ${clearBtn}
         </div>
         <div class="metric-input">${input}</div>
@@ -700,13 +700,13 @@ async function showDayDetail(date) {
             hasAny = true;
             for (const s of filledSlots) {
                 const valStr = _formatEntryValue(s.entry, m.type);
-                html += `<div class="summary-row"><span class="summary-label">${m.name} — ${s.label}</span><span class="summary-value">${valStr}</span></div>`;
+                html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name} — ${s.label}</span><span class="summary-value">${valStr}</span></div>`;
             }
         } else {
             if (!m.entry) continue;
             hasAny = true;
             const valStr = _formatEntryValue(m.entry, m.type);
-            html += `<div class="summary-row"><span class="summary-label">${m.name}</span><span class="summary-value">${valStr}</span></div>`;
+            html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span><span class="summary-value">${valStr}</span></div>`;
         }
     }
 
@@ -761,7 +761,9 @@ async function loadDashboard(start, end) {
     if (streaks.streaks.length > 0) {
         let html = '<h3>Стрики</h3><div class="streaks">';
         for (const s of streaks.streaks) {
-            html += `<div class="streak-card"><span class="streak-count">${s.current_streak}</span><span class="streak-label">${s.metric_name}</span><span class="streak-unit">дней подряд</span></div>`;
+            const streakMetric = metrics.find(mt => mt.id === s.metric_id);
+            const streakIcon = streakMetric?.icon ? streakMetric.icon + ' ' : '';
+            html += `<div class="streak-card"><span class="streak-count">${s.current_streak}</span><span class="streak-label">${streakIcon}${s.metric_name}</span><span class="streak-unit">дней подряд</span></div>`;
         }
         html += '</div>';
         streaksEl.innerHTML = html;
@@ -775,7 +777,7 @@ async function loadDashboard(start, end) {
     for (const m of metrics) {
         const trend = await api.getTrends(m.id, start, end);
         if (trend.points && trend.points.length > 0) {
-            trendsHtml += `<div class="trend-card"><h4>${m.name}</h4><div class="mini-chart" data-points='${JSON.stringify(trend.points)}'></div></div>`;
+            trendsHtml += `<div class="trend-card"><h4>${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</h4><div class="mini-chart" data-points='${JSON.stringify(trend.points)}'></div></div>`;
         }
     }
     trendsHtml += '</div>';
@@ -785,9 +787,9 @@ async function loadDashboard(start, end) {
     // Correlation selector
     const corrEl = document.getElementById('correlation-section');
     let corrHtml = '<h3>Корреляции</h3><div class="corr-controls">';
-    corrHtml += `<select id="corr-a">${metrics.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}</select>`;
+    corrHtml += `<select id="corr-a">${metrics.map(m => `<option value="${m.id}">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</option>`).join('')}</select>`;
     corrHtml += ` vs `;
-    corrHtml += `<select id="corr-b">${metrics.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}</select>`;
+    corrHtml += `<select id="corr-b">${metrics.map(m => `<option value="${m.id}">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</option>`).join('')}</select>`;
     corrHtml += ` <button class="btn-small" id="corr-calc">Вычислить</button>`;
     corrHtml += '</div><div id="corr-result"></div>';
     corrEl.innerHTML = corrHtml;
@@ -868,7 +870,7 @@ async function renderSettings(container, { archiveOpen = false } = {}) {
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
             html += `<div class="setting-row">
                 <div class="setting-info">
-                    <span class="setting-name">${m.name}</span>
+                    <span class="setting-name">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span>
                     <span class="setting-type">${typeIcon}</span>
                 </div>
                 <div class="setting-actions">
@@ -897,7 +899,7 @@ async function renderSettings(container, { archiveOpen = false } = {}) {
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
             html += `<div class="setting-row archived-row">
                 <div class="setting-info">
-                    <span class="setting-name archived">${m.name}</span>
+                    <span class="setting-name archived">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span>
                     <span class="setting-type">${typeIcon}</span>
                 </div>
                 <div class="setting-actions">
@@ -1136,13 +1138,20 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                 <label class="form-label">
                     <span class="label-text">Название</span>
                     <input id="nm-name" placeholder="Например: Зарядка" class="form-input" value="${existingMetric?.name || ''}">
-                    <span class="label-hint">Как метрика будет отображаться</span>
                 </label>
+
+                <div class="form-label">
+                    <span class="label-text">Иконка</span>
+                    <div class="emoji-picker-wrapper">
+                        <button type="button" class="emoji-trigger-btn ${existingMetric?.icon ? 'has-icon' : ''}" id="nm-icon-btn">${existingMetric?.icon || '<i data-lucide="smile-plus"></i>'}</button>
+                        <button type="button" class="emoji-clear-btn" id="nm-icon-clear" style="display:${existingMetric?.icon ? 'inline' : 'none'}">&times;</button>
+                        <input type="hidden" id="nm-icon" value="${existingMetric?.icon || ''}">
+                    </div>
+                </div>
 
                 <label class="form-label">
                     <span class="label-text">Категория</span>
                     <input id="nm-cat" placeholder="Например: Утро" class="form-input" value="${existingMetric?.category || ''}">
-                    <span class="label-hint">Для группировки метрик</span>
                 </label>
 
                 ${isEdit ? `
@@ -1173,7 +1182,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     <span class="label-text">Замеры в день</span>
                     <div class="slot-labels-list" id="nm-slot-labels"></div>
                     <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить замер</button>
-                    <span class="label-hint">Оставьте пустым для одного замера в день. Добавьте 2+ замера (Утро, День, Вечер) для нескольких записей.</span>
+                    <span class="label-hint">Оставьте пустым для одного замера в день. Добавьте 2+ замера (например Утро, День, Вечер) для нескольких записей.</span>
                 </div>
                 ` : `
                 <div class="form-section" id="nm-type-section">
@@ -1219,7 +1228,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     <span class="label-text">Замеры в день</span>
                     <div class="slot-labels-list" id="nm-slot-labels"></div>
                     <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить замер</button>
-                    <span class="label-hint">Оставьте пустым для одного замера в день. Добавьте 2+ замера (Утро, День, Вечер) для нескольких записей.</span>
+                    <span class="label-hint">Оставьте пустым для одного замера в день. Добавьте 2+ замера (например Утро, День, Вечер) для нескольких записей.</span>
                 </div>
                 `}
             </div>
@@ -1230,7 +1239,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     <div id="metric-preview" class="metric-preview">
                         <div class="metric-card" id="preview-card">
                             <div class="metric-header">
-                                <label class="metric-label">${existingMetric?.name || 'Название метрики'}</label>
+                                <label class="metric-label">${existingMetric?.icon ? '<span class="metric-icon">' + existingMetric.icon + '</span>' : ''}${existingMetric?.name || 'Название метрики'}</label>
                             </div>
                             <div class="metric-input" id="preview-input">
                                 ${previewInputHtml(currentType)}
@@ -1249,6 +1258,69 @@ function showMetricModal(mode = 'create', existingMetric = null) {
     `;
     document.body.appendChild(overlay);
     if (window.lucide) lucide.createIcons();
+
+    // ─── Emoji picker setup ───
+    const iconBtn = document.getElementById('nm-icon-btn');
+    const iconInput = document.getElementById('nm-icon');
+    const iconClear = document.getElementById('nm-icon-clear');
+
+    iconBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        // Remove existing popup if any
+        const existing = document.querySelector('.emoji-popup');
+        if (existing) { existing.remove(); return; }
+
+        const popup = document.createElement('div');
+        popup.className = 'emoji-popup';
+        const picker = document.createElement('emoji-picker');
+        popup.appendChild(picker);
+        document.body.appendChild(popup);
+
+        // Position near button
+        const rect = iconBtn.getBoundingClientRect();
+        popup.style.left = rect.left + 'px';
+        popup.style.top = (rect.bottom + 4) + 'px';
+
+        // Ensure popup stays within viewport
+        requestAnimationFrame(() => {
+            const popupRect = popup.getBoundingClientRect();
+            if (popupRect.right > window.innerWidth) {
+                popup.style.left = (window.innerWidth - popupRect.width - 8) + 'px';
+            }
+            if (popupRect.bottom > window.innerHeight) {
+                popup.style.top = (rect.top - popupRect.height - 4) + 'px';
+            }
+        });
+
+        picker.addEventListener('emoji-click', (ev) => {
+            iconInput.value = ev.detail.unicode;
+            iconBtn.textContent = ev.detail.unicode;
+            iconBtn.classList.add('has-icon');
+            iconClear.style.display = 'inline';
+            popup.remove();
+            updatePreview();
+        });
+
+        // Close on outside click
+        setTimeout(() => {
+            document.addEventListener('click', function closePopup(ev) {
+                if (!popup.contains(ev.target) && ev.target !== iconBtn) {
+                    popup.remove();
+                    document.removeEventListener('click', closePopup);
+                }
+            });
+        }, 0);
+    });
+
+    iconClear.addEventListener('click', (e) => {
+        e.preventDefault();
+        iconInput.value = '';
+        iconBtn.innerHTML = '<i data-lucide="smile-plus"></i>';
+        if (window.lucide) lucide.createIcons();
+        iconBtn.classList.remove('has-icon');
+        iconClear.style.display = 'none';
+        updatePreview();
+    });
 
     // Update preview on name change
     document.getElementById('nm-name').addEventListener('input', () => updatePreview());
@@ -1308,7 +1380,9 @@ function showMetricModal(mode = 'create', existingMetric = null) {
 
     function updatePreview() {
         const type = getCurrentType();
-        const name = document.getElementById('nm-name').value || 'Название метрики';
+        const rawName = document.getElementById('nm-name').value || 'Название метрики';
+        const icon = document.getElementById('nm-icon').value;
+        const name = (icon ? '<span class="metric-icon">' + icon + '</span>' : '') + rawName;
         const slotInputs = slotList ? slotList.querySelectorAll('.slot-label-input') : [];
         const labels = Array.from(slotInputs).map(i => i.value.trim()).filter(v => v !== '');
         const previewCard = document.getElementById('preview-card');
@@ -1387,7 +1461,8 @@ function showMetricModal(mode = 'create', existingMetric = null) {
             const slotLabels = getSlotLabels();
 
             if (isEdit) {
-                const updateData = { name, category };
+                const icon = document.getElementById('nm-icon').value;
+                const updateData = { name, category, icon };
                 if (existingMetric.type === 'scale') {
                     const sp = getScaleParams();
                     updateData.scale_min = sp.min;
@@ -1413,7 +1488,8 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     .replace(/[^a-z0-9_а-яё]/gi, '')
                     || 'metric_' + Date.now();
 
-                const createData = { slug, name, category, type: selectedType };
+                const icon = document.getElementById('nm-icon').value;
+                const createData = { slug, name, category, icon, type: selectedType };
 
                 if (selectedType === 'scale') {
                     const sp = getScaleParams();

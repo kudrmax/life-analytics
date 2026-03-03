@@ -27,7 +27,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         metrics_csv = StringIO()
         metrics_writer = csv.writer(metrics_csv)
         metrics_writer.writerow([
-            'id', 'slug', 'name', 'category', 'type',
+            'id', 'slug', 'name', 'category', 'icon', 'type',
             'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step',
             'slot_labels',
         ])
@@ -56,7 +56,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         for m in metrics:
             slot_labels = slots_by_metric.get(m["id"], [])
             metrics_writer.writerow([
-                m["id"], m["slug"], m["name"], m["category"], m["type"],
+                m["id"], m["slug"], m["name"], m["category"], m.get("icon", ""), m["type"],
                 1 if m["enabled"] else 0, m["sort_order"],
                 m["scale_min"] if m["scale_min"] is not None else '',
                 m["scale_max"] if m["scale_max"] is not None else '',
@@ -147,6 +147,7 @@ async def import_data(
 
                     name = row.get('name', slug)
                     category = row.get('category', '')
+                    icon = row.get('icon', '')
                     enabled = row.get('enabled', '1') in ('1', 'True', 'true', True)
                     sort_order = int(row.get('sort_order', 0))
 
@@ -176,9 +177,9 @@ async def import_data(
                     if existing:
                         await db.execute(
                             """UPDATE metric_definitions
-                               SET name = $1, category = $2, enabled = $3, sort_order = $4
-                               WHERE id = $5 AND user_id = $6""",
-                            name, category, enabled, sort_order,
+                               SET name = $1, category = $2, enabled = $3, sort_order = $4, icon = $5
+                               WHERE id = $6 AND user_id = $7""",
+                            name, category, enabled, sort_order, icon,
                             existing["id"], current_user["id"],
                         )
                         # Update scale_config if needed
@@ -205,9 +206,9 @@ async def import_data(
                     else:
                         new_id = await db.fetchval(
                             """INSERT INTO metric_definitions
-                               (user_id, slug, name, category, type, enabled, sort_order)
-                               VALUES ($1, $2, $3, $4, $5::metric_type, $6, $7) RETURNING id""",
-                            current_user["id"], slug, name, category,
+                               (user_id, slug, name, category, icon, type, enabled, sort_order)
+                               VALUES ($1, $2, $3, $4, $5, $6::metric_type, $7, $8) RETURNING id""",
+                            current_user["id"], slug, name, category, icon,
                             metric_type, enabled, sort_order,
                         )
                         # Create scale_config for new scale metrics

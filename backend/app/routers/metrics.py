@@ -74,13 +74,14 @@ async def create_metric(
 
     metric_id = await db.fetchval(
         """INSERT INTO metric_definitions
-           (user_id, slug, name, category, type, enabled, sort_order)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           (user_id, slug, name, category, icon, type, enabled, sort_order)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            RETURNING id""",
         current_user["id"],
         data.slug,
         data.name,
         data.category,
+        data.icon,
         data.type.value,
         data.enabled,
         data.sort_order,
@@ -123,6 +124,8 @@ async def update_metric(
         updates["name"] = data.name
     if data.category is not None:
         updates["category"] = data.category
+    if data.icon is not None:
+        updates["icon"] = data.icon
     if data.enabled is not None:
         updates["enabled"] = data.enabled
     if data.sort_order is not None:

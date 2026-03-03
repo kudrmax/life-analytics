@@ -74,6 +74,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "metric_id": mid,
             "slug": m["slug"],
             "name": m["name"],
+            "icon": m.get("icon", ""),
             "category": m["category"],
             "type": m["type"],
             "scale_min": m["scale_min"],

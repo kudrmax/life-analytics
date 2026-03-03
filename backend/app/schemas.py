@@ -19,6 +19,7 @@ class MetricDefinitionCreate(BaseModel):
     slug: str
     name: str
     category: str = ""
+    icon: str = ""
     type: MetricType
     enabled: bool = True
     sort_order: int = 0
@@ -31,6 +32,7 @@ class MetricDefinitionCreate(BaseModel):
 class MetricDefinitionUpdate(BaseModel):
     name: str | None = None
     category: str | None = None
+    icon: str | None = None
     enabled: bool | None = None
     sort_order: int | None = None
     scale_min: int | None = None
@@ -44,6 +46,7 @@ class MetricDefinitionOut(BaseModel):
     slug: str
     name: str
     category: str
+    icon: str = ""
     type: MetricType
     enabled: bool
     sort_order: int
