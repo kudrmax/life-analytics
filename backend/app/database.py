@@ -40,6 +40,9 @@ async def init_db():
         await conn.execute("""
             ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'time'
         """)
+        await conn.execute("""
+            ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'number'
+        """)
 
         # Users
         await conn.execute("""
@@ -92,6 +95,14 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS values_time (
                 entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
                 value TIMESTAMPTZ NOT NULL
+            )
+        """)
+
+        # Value table for number metrics
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS values_number (
+                entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+                value INTEGER NOT NULL
             )
         """)
 

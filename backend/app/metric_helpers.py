@@ -22,7 +22,7 @@ async def build_metric_out(row: asyncpg.Record) -> MetricDefinitionOut:
 
 async def get_entry_value(
     conn: asyncpg.Connection, entry_id: int, metric_type: str
-) -> bool | str | None:
+) -> bool | str | int | None:
     if metric_type == "time":
         row = await conn.fetchrow(
             "SELECT value FROM values_time WHERE entry_id = $1", entry_id
@@ -31,6 +31,13 @@ async def get_entry_value(
             return None
         ts = row["value"]
         return f"{ts.hour:02d}:{ts.minute:02d}"
+    elif metric_type == "number":
+        row = await conn.fetchrow(
+            "SELECT value FROM values_number WHERE entry_id = $1", entry_id
+        )
+        if not row:
+            return None
+        return row["value"]
     else:
         row = await conn.fetchrow(
             "SELECT value FROM values_bool WHERE entry_id = $1", entry_id
@@ -41,7 +48,7 @@ async def get_entry_value(
 async def insert_value(
     conn: asyncpg.Connection,
     entry_id: int,
-    value: bool | str,
+    value: bool | str | int,
     metric_type: str,
     entry_date: date_type | None = None,
 ):
@@ -50,6 +57,11 @@ async def insert_value(
         await conn.execute(
             "INSERT INTO values_time (entry_id, value) VALUES ($1, $2)",
             entry_id, ts,
+        )
+    elif metric_type == "number":
+        await conn.execute(
+            "INSERT INTO values_number (entry_id, value) VALUES ($1, $2)",
+            entry_id, int(value),
         )
     else:
         await conn.execute(
@@ -61,7 +73,7 @@ async def insert_value(
 async def update_value(
     conn: asyncpg.Connection,
     entry_id: int,
-    value: bool | str,
+    value: bool | str | int,
     metric_type: str,
     entry_date: date_type | None = None,
 ):
@@ -70,6 +82,11 @@ async def update_value(
         await conn.execute(
             "UPDATE values_time SET value = $1 WHERE entry_id = $2",
             ts, entry_id,
+        )
+    elif metric_type == "number":
+        await conn.execute(
+            "UPDATE values_number SET value = $1 WHERE entry_id = $2",
+            int(value), entry_id,
         )
     else:
         await conn.execute(

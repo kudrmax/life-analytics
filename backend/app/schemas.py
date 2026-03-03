@@ -5,6 +5,7 @@ from enum import Enum
 class MetricType(str, Enum):
     bool = "bool"
     time = "time"
+    number = "number"
 
 
 class MetricDefinitionCreate(BaseModel):
@@ -36,11 +37,11 @@ class MetricDefinitionOut(BaseModel):
 class EntryCreate(BaseModel):
     metric_id: int
     date: str  # YYYY-MM-DD
-    value: bool | str  # bool for bool metrics, "HH:MM" for time metrics
+    value: bool | str | int  # bool for bool, "HH:MM" for time, int for number
 
 
 class EntryUpdate(BaseModel):
-    value: bool | str
+    value: bool | str | int
 
 
 class EntryOut(BaseModel):
@@ -48,7 +49,7 @@ class EntryOut(BaseModel):
     metric_id: int
     date: str
     recorded_at: str
-    value: bool | str | None
+    value: bool | str | int | None
 
 
 # Auth schemas

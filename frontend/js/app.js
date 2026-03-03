@@ -325,7 +325,10 @@ function renderMetricInput(m) {
     const isFilled = !!entry;
     const filledClass = isFilled ? 'filled' : '';
 
-    const input = m.type === 'time' ? renderTime(val) : renderBoolean(val);
+    let input;
+    if (m.type === 'time') input = renderTime(val);
+    else if (m.type === 'number') input = renderNumber(val);
+    else input = renderBoolean(val);
 
     const clearBtn = entry
         ? `<button class="metric-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`
@@ -348,6 +351,19 @@ function renderBoolean(val) {
     </div>`;
 }
 
+function renderNumber(val) {
+    const hasFilled = val !== null && val !== undefined;
+    const displayVal = hasFilled ? val : '';
+    const zeroBtn = hasFilled ? '' : '<button class="number-zero-btn" data-action="set-zero">Установить 0</button>';
+    return `<div class="number-input">
+        <button class="number-btn" data-action="decrement">&minus;</button>
+        <input type="number" class="number-value-input" value="${displayVal}"
+               placeholder="—" inputmode="numeric" step="1">
+        <button class="number-btn" data-action="increment">&plus;</button>
+        ${zeroBtn}
+    </div>`;
+}
+
 function renderTime(val) {
     if (val) {
         return `<button type="button" class="time-picker-btn has-value" data-action="pick-time">${val}</button>`;
@@ -356,9 +372,46 @@ function renderTime(val) {
 }
 
 // ─── Event Handlers ───
+async function handleNumberChange(e) {
+    const input = e.target;
+    if (!input.classList.contains('number-value-input')) return;
+
+    const card = input.closest('.metric-card');
+    if (!card) return;
+
+    const metricId = card.dataset.metricId;
+    const entryId = card.dataset.entryId;
+
+    const raw = input.value.trim();
+    if (raw === '') {
+        // Empty input — delete entry to return to null
+        if (entryId) {
+            try {
+                await api.deleteEntry(parseInt(entryId));
+                await renderTodayForm();
+            } catch (error) { alert('Ошибка: ' + error.message); }
+        }
+        return;
+    }
+
+    const parsed = parseInt(raw);
+    if (isNaN(parsed)) {
+        input.value = '';
+        return;
+    }
+
+    try {
+        await saveDaily(metricId, entryId, parsed);
+        await renderTodayForm();
+    } catch (error) { alert('Ошибка: ' + error.message); }
+}
+
 function attachInputHandlers() {
     const form = document.getElementById('metrics-form');
+    if (form.dataset.handlersAttached) return;
+    form.dataset.handlersAttached = 'true';
     form.addEventListener('click', handleFormClick);
+    form.addEventListener('change', handleNumberChange);
 }
 
 async function handleFormClick(e) {
@@ -390,6 +443,28 @@ async function handleFormClick(e) {
         } catch (error) {
             alert('Ошибка: ' + error.message);
         }
+        return;
+    }
+
+    // Number "=0" button
+    if (btn.dataset.action === 'set-zero') {
+        try {
+            await saveDaily(metricId, entryId, 0);
+            await renderTodayForm();
+        } catch (error) { alert('Ошибка: ' + error.message); }
+        return;
+    }
+
+    // Number +/- buttons
+    if (btn.classList.contains('number-btn')) {
+        const input = card.querySelector('.number-value-input');
+        let currentVal = input.value !== '' ? parseInt(input.value) : 0;
+        if (isNaN(currentVal)) currentVal = 0;
+        const newVal = currentVal + (btn.dataset.action === 'increment' ? 1 : -1);
+        try {
+            await saveDaily(metricId, entryId, newVal);
+            await renderTodayForm();
+        } catch (error) { alert('Ошибка: ' + error.message); }
         return;
     }
 
@@ -470,6 +545,8 @@ async function showDayDetail(date) {
         let valStr;
         if (m.type === 'time') {
             valStr = m.entry.value || '—';
+        } else if (m.type === 'number') {
+            valStr = m.entry.value !== null && m.entry.value !== undefined ? String(m.entry.value) : '—';
         } else {
             valStr = m.entry.value ? 'Да' : 'Нет';
         }
@@ -611,7 +688,7 @@ async function renderSettings(container) {
             html += `<div class="setting-row">
                 <div class="setting-info">
                     <span class="setting-name ${m.enabled ? '' : 'disabled'}">${m.name}</span>
-                    <span class="setting-type">${m.type === 'time' ? 'Время' : 'Да/Нет'}</span>
+                    <span class="setting-type">${m.type === 'time' ? 'Время' : m.type === 'number' ? 'Число' : 'Да/Нет'}</span>
                 </div>
                 <div class="setting-actions">
                     <button class="btn-icon edit-btn" data-metric="${m.id}">✏️</button>
@@ -761,6 +838,14 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         if (type === 'time') {
             return `<button type="button" class="time-picker-btn">Указать время</button>`;
         }
+        if (type === 'number') {
+            return `<div class="number-input">
+                <button class="number-btn" data-action="decrement">&minus;</button>
+                <input type="number" class="number-value-input" value="" placeholder="—" inputmode="numeric" step="1">
+                <button class="number-btn" data-action="increment">&plus;</button>
+                <button class="number-zero-btn" data-action="set-zero">Установить 0</button>
+            </div>`;
+        }
         return `<div class="bool-buttons">
             <button class="bool-btn" data-value="true">Да</button>
             <button class="bool-btn" data-value="false">Нет</button>
@@ -771,6 +856,10 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         if (type === 'time') {
             return `<span class="label-text">Тип: Время</span>
                     <span class="label-hint">Запись времени суток (например, отход ко сну)</span>`;
+        }
+        if (type === 'number') {
+            return `<span class="label-text">Тип: Число</span>
+                    <span class="label-hint">Целое число с кнопками +/−</span>`;
         }
         return `<span class="label-text">Тип: Да/Нет</span>
                 <span class="label-hint">Простой переключатель (было / не было)</span>`;
@@ -811,6 +900,10 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                         <label class="radio-inline">
                             <input type="radio" name="nm-type" value="time" ${currentType === 'time' ? 'checked' : ''}>
                             <span>Время</span>
+                        </label>
+                        <label class="radio-inline">
+                            <input type="radio" name="nm-type" value="number" ${currentType === 'number' ? 'checked' : ''}>
+                            <span>Число</span>
                         </label>
                     </div>
                 </div>

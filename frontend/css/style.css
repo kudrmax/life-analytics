@@ -394,6 +394,31 @@ input[type="number"] {
     font-size: 15px;
     width: 80px;
     text-align: center;
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.number-zero-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap;
+    transition: all 0.15s;
+}
+
+.number-zero-btn:hover {
+    border-color: var(--accent);
+    color: var(--text);
 }
 
 input[type="number"]:focus {

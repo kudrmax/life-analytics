@@ -22,6 +22,8 @@ def _extract_numeric(value_row, metric_type: str = "bool") -> float | None:
     if metric_type == "time":
         # v is a datetime (TIMESTAMPTZ)
         return v.hour * 60 + v.minute
+    elif metric_type == "number":
+        return float(v)
     return 1.0 if v else 0.0
 
 
@@ -41,7 +43,12 @@ async def trends(
         return {"error": "Metric not found"}
 
     mt = metric["type"]
-    value_table = "values_time" if mt == "time" else "values_bool"
+    if mt == "time":
+        value_table = "values_time"
+    elif mt == "number":
+        value_table = "values_number"
+    else:
+        value_table = "values_bool"
     rows = await db.fetch(
         f"""SELECT e.date, v.value
             FROM entries e
@@ -90,7 +97,12 @@ async def correlations(
         return {"error": "Metric not found"}
 
     async def values_by_date(mid, mt):
-        value_table = "values_time" if mt == "time" else "values_bool"
+        if mt == "time":
+            value_table = "values_time"
+        elif mt == "number":
+            value_table = "values_number"
+        else:
+            value_table = "values_bool"
         rows = await db.fetch(
             f"""SELECT e.date, v.value
                 FROM entries e

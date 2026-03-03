@@ -128,7 +128,7 @@ async def import_data(
                     )
 
                     metric_type = row.get('type', 'bool')
-                    if metric_type not in ('bool', 'time'):
+                    if metric_type not in ('bool', 'time', 'number'):
                         metric_type = 'bool'
 
                     if existing:
@@ -191,6 +191,12 @@ async def import_data(
                     if mt == "time":
                         # value should be "HH:MM" string
                         if not isinstance(value, str):
+                            entries_skipped += 1
+                            continue
+                    elif mt == "number":
+                        try:
+                            value = int(value)
+                        except (ValueError, TypeError):
                             entries_skipped += 1
                             continue
                     else:
