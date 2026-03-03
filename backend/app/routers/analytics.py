@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 from collections import defaultdict
 from datetime import date as date_type
 from statistics import mean, median, stdev
@@ -118,6 +119,67 @@ def _compute_pearson(
     cov = sum((xs[i] - mean_x) * (ys[i] - mean_y) for i in range(n)) / (n - 1)
     r = cov / (std_x * std_y)
     return round(r, 3), n
+
+
+def _betacf(a: float, b: float, x: float) -> float:
+    """Continued fraction for regularized incomplete beta function."""
+    qab = a + b
+    qap = a + 1.0
+    qam = a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < 1e-30:
+        d = 1e-30
+    d = 1.0 / d
+    h = d
+    for m in range(1, 201):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < 1e-30:
+            d = 1e-30
+        c = 1.0 + aa / c
+        if abs(c) < 1e-30:
+            c = 1e-30
+        d = 1.0 / d
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < 1e-30:
+            d = 1e-30
+        c = 1.0 + aa / c
+        if abs(c) < 1e-30:
+            c = 1e-30
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < 3e-12:
+            break
+    return h
+
+
+def _betai(a: float, b: float, x: float) -> float:
+    """Regularized incomplete beta function I_x(a, b)."""
+    if x <= 0:
+        return 0.0
+    if x >= 1:
+        return 1.0
+    ln_beta = math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b)
+    front = math.exp(math.log(x) * a + math.log(1.0 - x) * b - ln_beta)
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * _betacf(a, b, x) / a
+    return 1.0 - front * _betacf(b, a, 1.0 - x) / b
+
+
+def _p_value(r: float, n: int) -> float:
+    """Two-tailed p-value for Pearson correlation coefficient."""
+    if n <= 2:
+        return 1.0
+    if abs(r) >= 1.0:
+        return 0.0
+    df = n - 2
+    t_sq = r * r * df / (1.0 - r * r)
+    return _betai(df / 2.0, 0.5, df / (df + t_sq))
 
 
 @router.get("/trends")
@@ -420,6 +482,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             sources[i][0], sources[j][0],
                             sources[i][1], sources[j][1],
                             sources[i][2], sources[j][2],
+                            sources[i][3], sources[j][3],
                             r, n,
                         ))
 
@@ -428,8 +491,8 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 await conn.executemany(
                     """INSERT INTO correlation_pairs
                        (report_id, metric_a_id, metric_b_id, slot_a_id, slot_b_id,
-                        label_a, label_b, correlation, data_points)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
+                        label_a, label_b, type_a, type_b, correlation, data_points)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)""",
                     pairs_to_insert,
                 )
 
@@ -490,7 +553,7 @@ async def get_correlation_report(
         return {"error": "Report not found"}
 
     pairs = await db.fetch(
-        """SELECT label_a, label_b, correlation, data_points
+        """SELECT label_a, label_b, type_a, type_b, correlation, data_points
            FROM correlation_pairs
            WHERE report_id = $1
            ORDER BY abs(correlation) DESC""",
@@ -507,8 +570,11 @@ async def get_correlation_report(
             {
                 "label_a": p["label_a"],
                 "label_b": p["label_b"],
+                "type_a": p["type_a"],
+                "type_b": p["type_b"],
                 "correlation": p["correlation"],
                 "data_points": p["data_points"],
+                "p_value": round(_p_value(p["correlation"], p["data_points"]), 4) if p["correlation"] is not None else None,
             }
             for p in pairs
         ],

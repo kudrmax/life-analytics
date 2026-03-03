@@ -886,23 +886,81 @@ async function loadCorrelationReports(start, end) {
     await loadReport(doneReports[0].id);
 }
 
+function corrTypeWords(type) {
+    switch (type) {
+        case 'bool': return ['Да', 'Нет'];
+        case 'time': return ['позже', 'раньше'];
+        case 'scale': return ['выше', 'ниже'];
+        default: return ['больше', 'меньше'];
+    }
+}
+
+function corrInterpretation(labelA, typeA, labelB, typeB, r) {
+    if (!typeA || !typeB) return '';
+    const [posA] = corrTypeWords(typeA);
+    const [posB, negB] = corrTypeWords(typeB);
+    const wordA = typeA === 'bool' ? `= ${posA}` : posA;
+    const wordB = r > 0 ? (typeB === 'bool' ? `= ${posB}` : posB) : (typeB === 'bool' ? `= ${negB}` : negB);
+    return `${labelA} ${wordA} — ${labelB} ${wordB}`;
+}
+
+function renderCorrPair(p) {
+    const r = p.correlation;
+    const absR = Math.abs(r);
+    const cls = absR > 0.7 ? 'strong' : absR > 0.3 ? 'medium' : 'weak';
+    const hint = corrInterpretation(p.label_a, p.type_a, p.label_b, p.type_b, r);
+    return `<div class="corr-pair-row">
+        <div>
+            <div class="corr-pair-metrics">${p.label_a} ↔ ${p.label_b}</div>
+            ${hint ? `<div class="corr-pair-hint">${hint}</div>` : ''}
+        </div>
+        <div style="text-align:right">
+            <div class="corr-pair-value ${cls}">${absR.toFixed(3)}</div>
+            <div style="font-size:12px;margin-top:2px;color:var(--text-dim)">${p.data_points} дн.</div>
+        </div>
+    </div>`;
+}
+
 function renderCorrelationReport(report, container) {
     if (!report.pairs || report.pairs.length === 0) {
         container.innerHTML = '<p style="color:var(--text-dim);font-size:13px;">Нет данных для корреляций.</p>';
         return;
     }
 
+    const sig = report.pairs.filter(p => p.data_points >= 10 && p.p_value !== null && p.p_value < 0.05);
+    const insig = report.pairs.filter(p => p.data_points < 10 || p.p_value === null || p.p_value >= 0.05);
+
+    const strong = sig.filter(p => Math.abs(p.correlation) > 0.7);
+    const medium = sig.filter(p => { const a = Math.abs(p.correlation); return a > 0.3 && a <= 0.7; });
+    const weak = sig.filter(p => Math.abs(p.correlation) <= 0.3);
+
     let html = '';
-    for (const p of report.pairs) {
-        const r = p.correlation;
-        const absR = Math.abs(r);
-        const cls = absR > 0.3 ? (r > 0 ? 'positive' : 'negative') : 'weak';
-        const strength = absR > 0.7 ? 'сильная' : absR > 0.3 ? 'средняя' : 'слабая';
-        html += `<div class="corr-pair-row">
-            <span class="corr-pair-metrics">${p.label_a} ↔ ${p.label_b}</span>
-            <span class="corr-pair-value ${cls}">${r > 0 ? '+' : ''}${r.toFixed(3)} <span style="font-weight:400;font-size:12px;color:var(--text-dim)">(${strength}, ${p.data_points} дн.)</span></span>
-        </div>`;
+
+    if (sig.length > 0) {
+        html += '<div class="corr-section">';
+        html += '<div class="corr-section-header">Статистически значимо <span class="corr-sig corr-sig-yes">p&lt;0.05</span></div>';
+        if (strong.length > 0) {
+            html += '<div class="corr-subsection-header">Сильная корреляция</div>';
+            for (const p of strong) html += renderCorrPair(p);
+        }
+        if (medium.length > 0) {
+            html += '<div class="corr-subsection-header">Средняя корреляция</div>';
+            for (const p of medium) html += renderCorrPair(p);
+        }
+        if (weak.length > 0) {
+            html += '<div class="corr-subsection-header">Слабая корреляция</div>';
+            for (const p of weak) html += renderCorrPair(p);
+        }
+        html += '</div>';
     }
+
+    if (insig.length > 0) {
+        html += '<div class="corr-section corr-section-low">';
+        html += '<div class="corr-section-header">Незначимо или мало данных</div>';
+        for (const p of insig) html += renderCorrPair(p);
+        html += '</div>';
+    }
+
     container.innerHTML = html;
 }
 
