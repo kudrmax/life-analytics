@@ -114,7 +114,7 @@ function navigateTo(page, params = {}) {
         case 'history': renderHistory(main); break;
         case 'dashboard': renderDashboard(main); break;
         case 'metric-detail': renderMetricDetail(main, params.metricId); break;
-        case 'settings': renderSettings(main); break;
+        case 'settings': renderSettings(main, params); break;
     }
 }
 
@@ -268,6 +268,14 @@ async function renderToday(container) {
             </div>
         </div>
         <div id="metrics-form"></div>
+        <div class="today-actions">
+            <button class="btn-primary" id="today-add-metric">
+                <i data-lucide="plus"></i> Добавить метрику
+            </button>
+            <button class="btn-small" id="today-edit-metrics">
+                <i data-lucide="settings"></i> Редактировать метрики
+            </button>
+        </div>
     `;
 
     if (window.lucide) lucide.createIcons();
@@ -275,6 +283,8 @@ async function renderToday(container) {
     document.getElementById('prev-day').onclick = () => { changeDay(-1); };
     document.getElementById('next-day').onclick = () => { changeDay(1); };
     document.getElementById('go-today').onclick = () => { currentDate = todayStr(); renderTodayForm(); };
+    document.getElementById('today-add-metric').onclick = () => { navigateTo('settings', { openAddModal: true }); };
+    document.getElementById('today-edit-metrics').onclick = () => { navigateTo('settings'); };
 
     await renderTodayForm();
 }
@@ -740,14 +750,22 @@ async function renderDashboard(container) {
     const start = daysAgo(30);
 
     container.innerHTML = `
-        <h2>Дашборд</h2>
-        <div class="dashboard-controls">
-            <label>Период: <input type="date" id="dash-start" value="${start}"> — <input type="date" id="dash-end" value="${end}"></label>
-            <button class="btn-small" id="dash-refresh">Обновить</button>
+        <div class="stats-header">
+            <h2 class="stats-title">Статистика</h2>
+            <div class="stats-controls">
+                <input type="date" id="dash-start" value="${start}">
+                <span class="stats-dash">—</span>
+                <input type="date" id="dash-end" value="${end}">
+                <button class="btn-icon" id="dash-refresh" title="Обновить">
+                    <i data-lucide="refresh-cw"></i>
+                </button>
+            </div>
         </div>
         <div id="trends-section"></div>
         <div id="correlation-section"></div>
     `;
+
+    if (window.lucide) lucide.createIcons();
 
     document.getElementById('dash-refresh').addEventListener('click', () => {
         loadDashboard(
@@ -786,30 +804,15 @@ async function loadDashboard(start, end) {
         });
     });
 
-    // Correlation selector
+    // Correlation section
     const corrEl = document.getElementById('correlation-section');
-    let corrHtml = '<h3>Корреляции</h3><div class="corr-controls">';
-    corrHtml += `<select id="corr-a">${metrics.map(m => `<option value="${m.id}">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</option>`).join('')}</select>`;
-    corrHtml += ` vs `;
-    corrHtml += `<select id="corr-b">${metrics.map(m => `<option value="${m.id}">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</option>`).join('')}</select>`;
-    corrHtml += ` <button class="btn-small" id="corr-calc">Вычислить</button>`;
-    corrHtml += '</div><div id="corr-result"></div>';
-    corrHtml += '<div class="corr-report-controls"><button class="btn-primary" id="corr-calc-all">Рассчитать все корреляции</button></div>';
-    corrHtml += '<div id="corr-reports"></div>';
-    corrEl.innerHTML = corrHtml;
-
-    document.getElementById('corr-calc').addEventListener('click', async () => {
-        const a = document.getElementById('corr-a').value;
-        const b = document.getElementById('corr-b').value;
-        const result = await api.getCorrelations(a, b, start, end);
-        const el = document.getElementById('corr-result');
-        if (result.correlation !== null && result.correlation !== undefined) {
-            const strength = Math.abs(result.correlation) > 0.7 ? 'сильная' : Math.abs(result.correlation) > 0.3 ? 'средняя' : 'слабая';
-            el.innerHTML = `<div class="corr-value">r = ${result.correlation} (${strength}, ${result.data_points} дней)</div>`;
-        } else {
-            el.innerHTML = `<div class="corr-value">${result.message || 'Недостаточно данных'}</div>`;
-        }
-    });
+    corrEl.innerHTML = `
+        <h3>Корреляции</h3>
+        <div class="corr-report-controls">
+            <button class="btn-primary" id="corr-calc-all">Рассчитать все корреляции</button>
+        </div>
+        <div id="corr-reports"></div>
+    `;
 
     document.getElementById('corr-calc-all').addEventListener('click', async () => {
         await api.createCorrelationReport(start, end);
@@ -864,7 +867,7 @@ async function loadCorrelationReports(start, end) {
     }
 
     let html = '<div class="corr-report-controls">';
-    html += '<select id="corr-report-select">';
+    html += '<select id="corr-report-select" class="styled-select">';
     for (const r of doneReports) {
         const d = new Date(r.created_at);
         const label = d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
@@ -1174,7 +1177,7 @@ function renderDetailStats(stats, metricType) {
 }
 
 // ─── Settings Page ───
-async function renderSettings(container, { archiveOpen = false } = {}) {
+async function renderSettings(container, { archiveOpen = false, openAddModal = false } = {}) {
     const allMetrics = await api.getMetrics(false);
     let html = '<div class="settings-header">';
     html += `<div class="user-info"><i data-lucide="user"></i><span>${localStorage.getItem('la_username') || 'Unknown'}</span></div>`;
@@ -1259,6 +1262,8 @@ async function renderSettings(container, { archiveOpen = false } = {}) {
     });
 
     document.getElementById('add-metric').addEventListener('click', showAddMetricModal);
+
+    if (openAddModal) showAddMetricModal();
 
     // Export button
     document.getElementById('export-btn').addEventListener('click', async () => {
