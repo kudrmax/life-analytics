@@ -429,7 +429,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
 
             # Load enabled metrics
             metrics_rows = await conn.fetch(
-                """SELECT id, name, icon, type FROM metric_definitions
+                """SELECT id, name, type FROM metric_definitions
                    WHERE user_id = $1 AND enabled = TRUE ORDER BY sort_order""",
                 user_id,
             )
@@ -447,24 +447,22 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             for s in slots_rows:
                 slots_by_metric[s["metric_id"]].append(s)
 
-            # Build data sources: (metric_id, slot_id, name, type, icon, slot_label)
+            # Build data sources: (metric_id, slot_id, type)
             sources = []
             for m in metrics_rows:
                 mid = m["id"]
-                name = m["name"]
                 mt = m["type"]
-                icon = m["icon"] or ""
                 metric_slots = slots_by_metric.get(mid, [])
                 if metric_slots:
-                    sources.append((mid, None, name, mt, icon, ""))
+                    sources.append((mid, None, mt))
                     for s in metric_slots:
-                        sources.append((mid, s["id"], name, mt, icon, s["label"]))
+                        sources.append((mid, s["id"], mt))
                 else:
-                    sources.append((mid, None, name, mt, icon, ""))
+                    sources.append((mid, None, mt))
 
             # Fetch data for each source
             source_data = {}
-            for i, (mid, sid, name, mt, icon, sl) in enumerate(sources):
+            for i, (mid, sid, mt) in enumerate(sources):
                 source_data[i] = await _values_by_date_for_slot(
                     conn, mid, mt, start_date, end_date, user_id, slot_id=sid,
                 )
@@ -482,10 +480,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             report_id,
                             si[0], sj[0],       # metric_a_id, metric_b_id
                             si[1], sj[1],       # slot_a_id, slot_b_id
-                            si[2], sj[2],       # label_a, label_b (metric name)
-                            si[3], sj[3],       # type_a, type_b
-                            si[4], sj[4],       # icon_a, icon_b
-                            si[5], sj[5],       # slot_label_a, slot_label_b
+                            si[2], sj[2],       # type_a, type_b
                             r, n,
                         ))
 
@@ -494,9 +489,8 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 await conn.executemany(
                     """INSERT INTO correlation_pairs
                        (report_id, metric_a_id, metric_b_id, slot_a_id, slot_b_id,
-                        label_a, label_b, type_a, type_b, icon_a, icon_b,
-                        slot_label_a, slot_label_b, correlation, data_points)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)""",
+                        type_a, type_b, correlation, data_points)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)""",
                     pairs_to_insert,
                 )
 
@@ -557,12 +551,19 @@ async def get_correlation_report(
         return {"error": "Report not found"}
 
     pairs = await db.fetch(
-        """SELECT label_a, label_b, type_a, type_b,
-                  icon_a, icon_b, slot_label_a, slot_label_b,
-                  correlation, data_points
-           FROM correlation_pairs
-           WHERE report_id = $1
-           ORDER BY abs(correlation) DESC""",
+        """SELECT cp.type_a, cp.type_b, cp.correlation, cp.data_points,
+                  cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
+                  ma.name AS name_a, ma.icon AS icon_a,
+                  mb.name AS name_b, mb.icon AS icon_b,
+                  sa.label AS slot_label_a,
+                  sb.label AS slot_label_b
+           FROM correlation_pairs cp
+           LEFT JOIN metric_definitions ma ON ma.id = cp.metric_a_id
+           LEFT JOIN metric_definitions mb ON mb.id = cp.metric_b_id
+           LEFT JOIN measurement_slots sa ON sa.id = cp.slot_a_id
+           LEFT JOIN measurement_slots sb ON sb.id = cp.slot_b_id
+           WHERE cp.report_id = $1
+           ORDER BY abs(cp.correlation) DESC""",
         report_id,
     )
 
@@ -574,14 +575,14 @@ async def get_correlation_report(
         "created_at": report["created_at"].isoformat(),
         "pairs": [
             {
-                "label_a": p["label_a"],
-                "label_b": p["label_b"],
+                "label_a": p["name_a"] or "Удалённая метрика",
+                "label_b": p["name_b"] or "Удалённая метрика",
                 "type_a": p["type_a"],
                 "type_b": p["type_b"],
-                "icon_a": p["icon_a"],
-                "icon_b": p["icon_b"],
-                "slot_label_a": p["slot_label_a"],
-                "slot_label_b": p["slot_label_b"],
+                "icon_a": p["icon_a"] or "",
+                "icon_b": p["icon_b"] or "",
+                "slot_label_a": p["slot_label_a"] or "",
+                "slot_label_b": p["slot_label_b"] or "",
                 "correlation": p["correlation"],
                 "data_points": p["data_points"],
                 "p_value": round(_p_value(p["correlation"], p["data_points"]), 4) if p["correlation"] is not None else None,

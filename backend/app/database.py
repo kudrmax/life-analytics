@@ -214,18 +214,6 @@ async def init_db():
         await conn.execute("""
             ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS type_b VARCHAR(20) NOT NULL DEFAULT ''
         """)
-        await conn.execute("""
-            ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS icon_a VARCHAR(10) NOT NULL DEFAULT ''
-        """)
-        await conn.execute("""
-            ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS icon_b VARCHAR(10) NOT NULL DEFAULT ''
-        """)
-        await conn.execute("""
-            ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS slot_label_a VARCHAR(100) NOT NULL DEFAULT ''
-        """)
-        await conn.execute("""
-            ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS slot_label_b VARCHAR(100) NOT NULL DEFAULT ''
-        """)
 
         # Indexes
         await conn.execute("""
