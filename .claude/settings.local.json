@@ -21,7 +21,8 @@
       "Bash(fi)",
       "Bash(pkill:*)",
       "Bash(./run.sh:*)",
-      "Bash(docker compose exec:*)"
+      "Bash(docker compose exec:*)",
+      "Bash(node -c:*)"
     ]
   }
 }

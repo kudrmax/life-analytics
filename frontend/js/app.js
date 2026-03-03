@@ -1116,11 +1116,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
     if (window.lucide) lucide.createIcons();
 
     // Update preview on name change
-    document.getElementById('nm-name').addEventListener('input', () => {
-        const name = document.getElementById('nm-name').value || 'Название метрики';
-        const label = document.querySelector('#preview-card .metric-label');
-        if (label) label.textContent = name;
-    });
+    document.getElementById('nm-name').addEventListener('input', () => updatePreview());
 
     // Type selector change (only in create mode)
     if (!isEdit) {
@@ -1129,8 +1125,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                 const selectedType = overlay.querySelector('input[name="nm-type"]:checked').value;
                 const scaleConfig = document.getElementById('nm-scale-config');
                 if (scaleConfig) scaleConfig.style.display = selectedType === 'scale' ? 'flex' : 'none';
-                document.getElementById('preview-input').innerHTML = previewInputHtml(selectedType);
-                setupPreviewInteractions();
+                updatePreview();
             });
         });
 
@@ -1138,13 +1133,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         ['nm-scale-min', 'nm-scale-max', 'nm-scale-step'].forEach(id => {
             const el = overlay.querySelector(`#${id}`);
             if (el) {
-                el.addEventListener('input', () => {
-                    const selectedType = overlay.querySelector('input[name="nm-type"]:checked')?.value;
-                    if (selectedType === 'scale') {
-                        document.getElementById('preview-input').innerHTML = previewInputHtml('scale');
-                        setupPreviewInteractions();
-                    }
-                });
+                el.addEventListener('input', () => updatePreview());
             }
         });
     } else if (currentType === 'scale') {
@@ -1152,10 +1141,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         ['nm-scale-min', 'nm-scale-max', 'nm-scale-step'].forEach(id => {
             const el = overlay.querySelector(`#${id}`);
             if (el) {
-                el.addEventListener('input', () => {
-                    document.getElementById('preview-input').innerHTML = previewInputHtml('scale');
-                    setupPreviewInteractions();
-                });
+                el.addEventListener('input', () => updatePreview());
             }
         });
     }
@@ -1179,11 +1165,52 @@ function showMetricModal(mode = 'create', existingMetric = null) {
             });
         });
     }
-    setupPreviewInteractions();
+
+    function getCurrentType() {
+        if (isEdit) return currentType;
+        return overlay.querySelector('input[name="nm-type"]:checked')?.value || 'bool';
+    }
+
+    function updatePreview() {
+        const type = getCurrentType();
+        const name = document.getElementById('nm-name').value || 'Название метрики';
+        const slotInputs = slotList ? slotList.querySelectorAll('.slot-label-input') : [];
+        const labels = Array.from(slotInputs).map(i => i.value.trim()).filter(v => v !== '');
+        const previewCard = document.getElementById('preview-card');
+
+        if (labels.length >= 2) {
+            // Multi-slot preview
+            let slotsHtml = '<div class="multiple-entry">';
+            for (const label of labels) {
+                slotsHtml += `<div class="metric-slot">
+                    <div class="period-header">
+                        <span class="period-label">${label}</span>
+                    </div>
+                    <div class="metric-input">${previewInputHtml(type)}</div>
+                </div>`;
+            }
+            slotsHtml += '</div>';
+            previewCard.innerHTML = `
+                <div class="metric-header">
+                    <label class="metric-label">${name}</label>
+                </div>
+                ${slotsHtml}`;
+        } else {
+            // Single preview
+            previewCard.innerHTML = `
+                <div class="metric-header">
+                    <label class="metric-label">${name}</label>
+                </div>
+                <div class="metric-input" id="preview-input">${previewInputHtml(type)}</div>`;
+        }
+        setupPreviewInteractions();
+    }
 
     // ─── Slot management ───
     const slotList = document.getElementById('nm-slot-labels');
     const addSlotBtn = document.getElementById('nm-add-slot');
+
+    setupPreviewInteractions();
 
     function addSlotField(label = '') {
         const row = document.createElement('div');
@@ -1191,16 +1218,18 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         row.innerHTML = `<input type="text" class="form-input slot-label-input" placeholder="Например: Утро" value="${label}">
             <button type="button" class="btn-remove-slot">&times;</button>`;
         slotList.appendChild(row);
-        row.querySelector('.btn-remove-slot').onclick = () => { row.remove(); };
+        row.querySelector('.btn-remove-slot').onclick = () => { row.remove(); updatePreview(); };
+        row.querySelector('.slot-label-input').addEventListener('input', updatePreview);
     }
 
     if (addSlotBtn) {
-        addSlotBtn.onclick = () => addSlotField('');
+        addSlotBtn.onclick = () => { addSlotField(''); updatePreview(); };
         // Pre-fill slots in edit mode
         if (isEdit && existingMetric?.slots) {
             for (const s of existingMetric.slots) {
                 addSlotField(s.label);
             }
+            updatePreview();
         }
     }
 
