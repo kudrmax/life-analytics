@@ -177,7 +177,43 @@ async def init_db():
             ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS icon VARCHAR(10) NOT NULL DEFAULT ''
         """)
 
+        # Correlation reports
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS correlation_reports (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                status VARCHAR(20) NOT NULL DEFAULT 'running',
+                period_start DATE NOT NULL,
+                period_end DATE NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                finished_at TIMESTAMPTZ
+            )
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS correlation_pairs (
+                id SERIAL PRIMARY KEY,
+                report_id INTEGER NOT NULL REFERENCES correlation_reports(id) ON DELETE CASCADE,
+                metric_a_id INTEGER NOT NULL,
+                metric_b_id INTEGER NOT NULL,
+                slot_a_id INTEGER,
+                slot_b_id INTEGER,
+                label_a VARCHAR(200) NOT NULL,
+                label_b VARCHAR(200) NOT NULL,
+                correlation FLOAT,
+                data_points INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
         # Indexes
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_correlation_reports_user
+            ON correlation_reports(user_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_correlation_pairs_report
+            ON correlation_pairs(report_id)
+        """)
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_metric_definitions_user
             ON metric_definitions(user_id)

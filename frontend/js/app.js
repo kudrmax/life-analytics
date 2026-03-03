@@ -4,6 +4,7 @@ let metrics = [];
 let currentPage = 'today';
 let currentUser = null;
 let isAuthenticated = false;
+let corrPollInterval = null;
 
 function todayStr() {
     return new Date().toISOString().slice(0, 10);
@@ -90,8 +91,11 @@ async function loadMetrics() {
     metrics = await api.getMetrics(true);
 }
 
-function navigateTo(page) {
+function navigateTo(page, params = {}) {
     currentPage = page;
+
+    // Cleanup polling
+    if (corrPollInterval) { clearInterval(corrPollInterval); corrPollInterval = null; }
 
     // Hide nav for auth pages
     const nav = document.querySelector('nav');
@@ -99,7 +103,8 @@ function navigateTo(page) {
         nav.style.display = (page === 'login' || page === 'register') ? 'none' : '';
     }
 
-    document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+    const activePage = page === 'metric-detail' ? 'dashboard' : page;
+    document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === activePage));
     const main = document.getElementById('main');
 
     switch (page) {
@@ -108,6 +113,7 @@ function navigateTo(page) {
         case 'today': renderToday(main); break;
         case 'history': renderHistory(main); break;
         case 'dashboard': renderDashboard(main); break;
+        case 'metric-detail': renderMetricDetail(main, params.metricId); break;
         case 'settings': renderSettings(main); break;
     }
 }
@@ -739,7 +745,6 @@ async function renderDashboard(container) {
             <label>Период: <input type="date" id="dash-start" value="${start}"> — <input type="date" id="dash-end" value="${end}"></label>
             <button class="btn-small" id="dash-refresh">Обновить</button>
         </div>
-        <div id="streaks-section"></div>
         <div id="trends-section"></div>
         <div id="correlation-section"></div>
     `;
@@ -755,34 +760,31 @@ async function renderDashboard(container) {
 }
 
 async function loadDashboard(start, end) {
-    // Streaks
-    const streaks = await api.getStreaks();
-    const streaksEl = document.getElementById('streaks-section');
-    if (streaks.streaks.length > 0) {
-        let html = '<h3>Стрики</h3><div class="streaks">';
-        for (const s of streaks.streaks) {
-            const streakMetric = metrics.find(mt => mt.id === s.metric_id);
-            const streakIcon = streakMetric?.icon ? streakMetric.icon + ' ' : '';
-            html += `<div class="streak-card"><span class="streak-count">${s.current_streak}</span><span class="streak-label">${streakIcon}${s.metric_name}</span><span class="streak-unit">дней подряд</span></div>`;
-        }
-        html += '</div>';
-        streaksEl.innerHTML = html;
-    } else {
-        streaksEl.innerHTML = '';
-    }
-
-    // Trends — show for all bool metrics (True=1, False=0)
+    // Trends — vertical list with "Подробнее" buttons
     const trendsEl = document.getElementById('trends-section');
-    let trendsHtml = '<h3>Тренды</h3><div class="trends">';
+    let trendsHtml = '<h3>Тренды</h3><div class="trends-list">';
     for (const m of metrics) {
         const trend = await api.getTrends(m.id, start, end);
         if (trend.points && trend.points.length > 0) {
-            trendsHtml += `<div class="trend-card"><h4>${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</h4><div class="mini-chart" data-points='${JSON.stringify(trend.points)}'></div></div>`;
+            trendsHtml += `<div class="trend-card-row">
+                <div class="trend-card-header">
+                    <h4>${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</h4>
+                    <button class="btn-small detail-btn" data-metric-id="${m.id}">Подробнее</button>
+                </div>
+                <div class="mini-chart" data-points='${JSON.stringify(trend.points)}'></div>
+            </div>`;
         }
     }
     trendsHtml += '</div>';
     trendsEl.innerHTML = trendsHtml;
     renderMiniCharts();
+
+    // Attach detail buttons
+    trendsEl.querySelectorAll('.detail-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            navigateTo('metric-detail', { metricId: parseInt(btn.dataset.metricId) });
+        });
+    });
 
     // Correlation selector
     const corrEl = document.getElementById('correlation-section');
@@ -792,6 +794,8 @@ async function loadDashboard(start, end) {
     corrHtml += `<select id="corr-b">${metrics.map(m => `<option value="${m.id}">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</option>`).join('')}</select>`;
     corrHtml += ` <button class="btn-small" id="corr-calc">Вычислить</button>`;
     corrHtml += '</div><div id="corr-result"></div>';
+    corrHtml += '<div class="corr-report-controls"><button class="btn-primary" id="corr-calc-all">Рассчитать все корреляции</button></div>';
+    corrHtml += '<div id="corr-reports"></div>';
     corrEl.innerHTML = corrHtml;
 
     document.getElementById('corr-calc').addEventListener('click', async () => {
@@ -806,6 +810,100 @@ async function loadDashboard(start, end) {
             el.innerHTML = `<div class="corr-value">${result.message || 'Недостаточно данных'}</div>`;
         }
     });
+
+    document.getElementById('corr-calc-all').addEventListener('click', async () => {
+        await api.createCorrelationReport(start, end);
+        loadCorrelationReports(start, end);
+    });
+
+    loadCorrelationReports(start, end);
+}
+
+async function loadCorrelationReports(start, end) {
+    const container = document.getElementById('corr-reports');
+    if (!container) return;
+
+    const data = await api.getCorrelationReports();
+    const reports = data.reports || [];
+
+    if (reports.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-dim);font-size:13px;">Нет отчётов. Нажмите «Рассчитать все корреляции».</p>';
+        return;
+    }
+
+    // Check if any report is running
+    const running = reports.find(r => r.status === 'running');
+    if (running) {
+        container.innerHTML = '<div class="corr-running">В процессе...</div>';
+        if (!corrPollInterval) {
+            corrPollInterval = setInterval(async () => {
+                if (currentPage !== 'dashboard') {
+                    clearInterval(corrPollInterval);
+                    corrPollInterval = null;
+                    return;
+                }
+                const check = await api.getCorrelationReports();
+                const still = (check.reports || []).find(r => r.status === 'running');
+                if (!still) {
+                    clearInterval(corrPollInterval);
+                    corrPollInterval = null;
+                    loadCorrelationReports(start, end);
+                }
+            }, 3000);
+        }
+        return;
+    }
+
+    // Stop polling if was running
+    if (corrPollInterval) { clearInterval(corrPollInterval); corrPollInterval = null; }
+
+    const doneReports = reports.filter(r => r.status === 'done');
+    if (doneReports.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-dim);font-size:13px;">Нет готовых отчётов.</p>';
+        return;
+    }
+
+    let html = '<div class="corr-report-controls">';
+    html += '<select id="corr-report-select">';
+    for (const r of doneReports) {
+        const d = new Date(r.created_at);
+        const label = d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
+        html += `<option value="${r.id}">${label} (${r.period_start} — ${r.period_end})</option>`;
+    }
+    html += '</select></div>';
+    html += '<div id="corr-report-detail"></div>';
+    container.innerHTML = html;
+
+    const select = document.getElementById('corr-report-select');
+    const loadReport = async (reportId) => {
+        const detail = document.getElementById('corr-report-detail');
+        if (!detail) return;
+        const report = await api.getCorrelationReport(reportId);
+        renderCorrelationReport(report, detail);
+    };
+
+    select.addEventListener('change', () => loadReport(select.value));
+    await loadReport(doneReports[0].id);
+}
+
+function renderCorrelationReport(report, container) {
+    if (!report.pairs || report.pairs.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-dim);font-size:13px;">Нет данных для корреляций.</p>';
+        return;
+    }
+
+    let html = '';
+    for (const p of report.pairs) {
+        const r = p.correlation;
+        const absR = Math.abs(r);
+        const cls = absR > 0.3 ? (r > 0 ? 'positive' : 'negative') : 'weak';
+        const strength = absR > 0.7 ? 'сильная' : absR > 0.3 ? 'средняя' : 'слабая';
+        html += `<div class="corr-pair-row">
+            <span class="corr-pair-metrics">${p.label_a} ↔ ${p.label_b}</span>
+            <span class="corr-pair-value ${cls}">${r > 0 ? '+' : ''}${r.toFixed(3)} <span style="font-weight:400;font-size:12px;color:var(--text-dim)">(${strength}, ${p.data_points} дн.)</span></span>
+        </div>`;
+    }
+    container.innerHTML = html;
 }
 
 function renderMiniCharts() {
@@ -833,6 +931,180 @@ function renderMiniCharts() {
         svg += '</svg>';
         el.innerHTML = svg;
     });
+}
+
+// ─── Metric Detail Page ───
+let detailChartInstance = null;
+
+function minutesToHHMM(m) {
+    const h = Math.floor(m / 60);
+    const min = Math.floor(m % 60);
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+async function renderMetricDetail(container, metricId) {
+    const metric = metrics.find(m => m.id === metricId);
+    if (!metric) { navigateTo('dashboard'); return; }
+
+    const end = todayStr();
+    const start = daysAgo(90);
+
+    container.innerHTML = `
+        <div class="detail-header">
+            <button class="btn-small" id="detail-back"><i data-lucide="arrow-left"></i> Дашборд</button>
+            <h2>${metric.icon ? '<span class="metric-icon">' + metric.icon + '</span>' : ''}${metric.name}</h2>
+        </div>
+        <div class="detail-controls">
+            <input type="date" id="detail-start" value="${start}">
+            <span>—</span>
+            <input type="date" id="detail-end" value="${end}">
+            <button class="btn-small" id="detail-refresh">Обновить</button>
+        </div>
+        <div class="detail-chart-container"><canvas id="detail-chart"></canvas></div>
+        <div id="detail-stats"></div>
+    `;
+
+    if (window.lucide) lucide.createIcons();
+
+    document.getElementById('detail-back').addEventListener('click', () => navigateTo('dashboard'));
+    document.getElementById('detail-refresh').addEventListener('click', () => {
+        loadMetricDetail(
+            metricId, metric,
+            document.getElementById('detail-start').value,
+            document.getElementById('detail-end').value
+        );
+    });
+
+    await loadMetricDetail(metricId, metric, start, end);
+}
+
+async function loadMetricDetail(metricId, metric, start, end) {
+    const [trend, stats] = await Promise.all([
+        api.getTrends(metricId, start, end),
+        api.getMetricStats(metricId, start, end),
+    ]);
+
+    // Destroy previous chart
+    if (detailChartInstance) {
+        detailChartInstance.destroy();
+        detailChartInstance = null;
+    }
+
+    const canvas = document.getElementById('detail-chart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    const green = getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
+    const red = getComputedStyle(document.documentElement).getPropertyValue('--red').trim();
+
+    const points = trend.points || [];
+    const labels = points.map(p => p.date);
+    const values = points.map(p => p.value);
+    const mt = metric.type;
+    const showPoints = points.length <= 30;
+
+    let chartConfig;
+    if (mt === 'bool') {
+        chartConfig = {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    data: values,
+                    backgroundColor: values.map(v => v === 1 ? green : red),
+                    borderRadius: 3,
+                }],
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { min: 0, max: 1, ticks: { callback: v => v === 1 ? 'Да' : 'Нет', stepSize: 1 }, grid: { color: 'rgba(128,128,128,0.1)' } },
+                    x: { ticks: { maxTicksLimit: 10 }, grid: { display: false } },
+                },
+            },
+        };
+    } else {
+        const yConfig = {};
+        if (mt === 'time') {
+            yConfig.ticks = { callback: v => minutesToHHMM(v) };
+        } else if (mt === 'scale') {
+            yConfig.min = 0; yConfig.max = 100;
+            yConfig.ticks = { callback: v => v + '%' };
+        }
+        yConfig.grid = { color: 'rgba(128,128,128,0.1)' };
+        chartConfig = {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    data: values,
+                    borderColor: accent,
+                    backgroundColor: accent + '22',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: showPoints ? 3 : 0,
+                }],
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: yConfig,
+                    x: { ticks: { maxTicksLimit: 10 }, grid: { display: false } },
+                },
+            },
+        };
+        if (mt === 'time') {
+            chartConfig.options.plugins.tooltip = {
+                callbacks: { label: ctx => minutesToHHMM(ctx.parsed.y) }
+            };
+        }
+    }
+
+    detailChartInstance = new Chart(ctx, chartConfig);
+
+    // Render stats
+    renderDetailStats(stats, mt);
+}
+
+function renderDetailStats(stats, metricType) {
+    const el = document.getElementById('detail-stats');
+    if (!el) return;
+
+    let cards = `
+        <div class="stat-card"><div class="stat-value">${stats.total_entries}</div><div class="stat-label">Записей</div></div>
+        <div class="stat-card"><div class="stat-value">${stats.fill_rate}%</div><div class="stat-label">Заполненность</div></div>
+    `;
+
+    if (metricType === 'bool') {
+        cards += `
+            <div class="stat-card"><div class="stat-value">${stats.yes_percent}%</div><div class="stat-label">Да</div></div>
+            <div class="stat-card"><div class="stat-value">${stats.current_streak} дн.</div><div class="stat-label">Текущий стрик</div></div>
+            <div class="stat-card"><div class="stat-value">${stats.longest_streak} дн.</div><div class="stat-label">Лучший стрик</div></div>
+        `;
+    } else if (metricType === 'time') {
+        cards += `
+            <div class="stat-card"><div class="stat-value">${stats.average}</div><div class="stat-label">Среднее</div></div>
+            <div class="stat-card"><div class="stat-value">${stats.earliest}</div><div class="stat-label">Раньше всего</div></div>
+            <div class="stat-card"><div class="stat-value">${stats.latest}</div><div class="stat-label">Позже всего</div></div>
+        `;
+    } else if (metricType === 'number') {
+        cards += `
+            <div class="stat-card"><div class="stat-value">${stats.average}</div><div class="stat-label">Среднее</div></div>
+            <div class="stat-card"><div class="stat-value">${stats.min}</div><div class="stat-label">Мин</div></div>
+            <div class="stat-card"><div class="stat-value">${stats.max}</div><div class="stat-label">Макс</div></div>
+            <div class="stat-card"><div class="stat-value">${stats.median}</div><div class="stat-label">Медиана</div></div>
+        `;
+    } else if (metricType === 'scale') {
+        cards += `
+            <div class="stat-card"><div class="stat-value">${stats.average}%</div><div class="stat-label">Среднее</div></div>
+            <div class="stat-card"><div class="stat-value">${stats.min}%</div><div class="stat-label">Мин</div></div>
+            <div class="stat-card"><div class="stat-value">${stats.max}%</div><div class="stat-label">Макс</div></div>
+        `;
+    }
+
+    el.innerHTML = `<h3>Статистика</h3><div class="detail-stats-grid">${cards}</div>`;
 }
 
 // ─── Settings Page ───

@@ -113,4 +113,18 @@ const api = {
     getStreaks() {
         return this.request('GET', '/api/analytics/streaks');
     },
+    getMetricStats(metricId, start, end) {
+        return this.request('GET', `/api/analytics/metric-stats?metric_id=${metricId}&start=${start}&end=${end}`);
+    },
+
+    // Correlation reports
+    createCorrelationReport(start, end) {
+        return this.request('POST', '/api/analytics/correlation-report', { start, end });
+    },
+    getCorrelationReports() {
+        return this.request('GET', '/api/analytics/correlation-reports');
+    },
+    getCorrelationReport(reportId) {
+        return this.request('GET', `/api/analytics/correlation-report/${reportId}`);
+    },
 };
