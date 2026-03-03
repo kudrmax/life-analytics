@@ -870,9 +870,8 @@ input[type="month"], input[type="date"] {
     font-weight: 500;
 }
 
-.setting-name.disabled {
+.setting-name.archived {
     color: var(--text-dim);
-    text-decoration: line-through;
 }
 
 .setting-type {
@@ -892,6 +891,53 @@ input[type="month"], input[type="date"] {
     display: flex;
     gap: 4px;
     flex-shrink: 0;
+}
+
+/* ─── Archive Section ─── */
+.archive-section {
+    margin-top: 24px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+}
+
+.archive-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    padding: 8px 0;
+}
+
+.archive-header:hover {
+    color: var(--text);
+}
+
+.archive-header-text {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.archive-header-text svg,
+.archive-chevron {
+    width: 18px;
+    height: 18px;
+}
+
+.archive-content {
+    padding-top: 8px;
+}
+
+.archived-row {
+    opacity: 0.6;
 }
 
 /* ─── Modal ─── */

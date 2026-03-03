@@ -834,7 +834,7 @@ function renderMiniCharts() {
 }
 
 // ─── Settings Page ───
-async function renderSettings(container) {
+async function renderSettings(container, { archiveOpen = false } = {}) {
     const allMetrics = await api.getMetrics(false);
     let html = '<div class="settings-header">';
     html += `<div class="user-info"><i data-lucide="user"></i><span>${localStorage.getItem('la_username') || 'Unknown'}</span></div>`;
@@ -848,8 +848,11 @@ async function renderSettings(container) {
     html += '</div>';
     html += '<input type="file" id="import-file" accept=".zip" style="display:none">';
 
+    const activeMetrics = allMetrics.filter(m => m.enabled);
+    const archivedMetrics = allMetrics.filter(m => !m.enabled);
+
     const categories = {};
-    for (const m of allMetrics) {
+    for (const m of activeMetrics) {
         categories[m.category] = categories[m.category] || [];
         categories[m.category].push(m);
     }
@@ -863,20 +866,47 @@ async function renderSettings(container) {
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                 : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
-            const toggleIcon = m.enabled ? '<i data-lucide="eye"></i>' : '<i data-lucide="eye-off"></i>';
             html += `<div class="setting-row">
                 <div class="setting-info">
-                    <span class="setting-name ${m.enabled ? '' : 'disabled'}">${m.name}</span>
+                    <span class="setting-name">${m.name}</span>
                     <span class="setting-type">${typeIcon}</span>
                 </div>
                 <div class="setting-actions">
                     <button class="btn-icon edit-btn" data-metric="${m.id}"><i data-lucide="pencil"></i></button>
-                    <button class="btn-icon toggle-btn" data-metric="${m.id}" data-enabled="${m.enabled}">${toggleIcon}</button>
+                    <button class="btn-icon archive-btn" data-metric="${m.id}"><i data-lucide="archive"></i></button>
                     <button class="btn-icon delete-btn btn-icon-danger" data-metric="${m.id}"><i data-lucide="trash-2"></i></button>
                 </div>
             </div>`;
         }
         html += '</div>';
+    }
+
+    if (archivedMetrics.length > 0) {
+        html += `<div class="archive-section">
+            <button class="archive-header" id="archive-toggle">
+                <span class="archive-header-text"><i data-lucide="archive"></i> Архив (${archivedMetrics.length})</span>
+                <i data-lucide="${archiveOpen ? 'chevron-up' : 'chevron-down'}" class="archive-chevron"></i>
+            </button>
+            <div class="archive-content" id="archive-content" style="display:${archiveOpen ? 'block' : 'none'}">`;
+        for (const m of archivedMetrics) {
+            const slotsBadge = m.slots && m.slots.length > 0
+                ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
+            const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
+                : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
+                : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
+                : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
+            html += `<div class="setting-row archived-row">
+                <div class="setting-info">
+                    <span class="setting-name archived">${m.name}</span>
+                    <span class="setting-type">${typeIcon}</span>
+                </div>
+                <div class="setting-actions">
+                    <button class="btn-icon unarchive-btn" data-metric="${m.id}"><i data-lucide="archive-restore"></i></button>
+                    <button class="btn-icon delete-btn btn-icon-danger" data-metric="${m.id}"><i data-lucide="trash-2"></i></button>
+                </div>
+            </div>`;
+        }
+        html += '</div></div>';
     }
     container.innerHTML = html;
     if (window.lucide) lucide.createIcons();
@@ -977,20 +1007,47 @@ async function renderSettings(container) {
         });
     });
 
-    container.querySelectorAll('.toggle-btn').forEach(btn => {
+    container.querySelectorAll('.archive-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
             e.stopPropagation();
             const metricId = btn.dataset.metric;
-            const currentEnabled = btn.dataset.enabled === 'true';
-            const newEnabled = !currentEnabled;
             try {
-                await api.updateMetric(metricId, { enabled: newEnabled });
+                await api.updateMetric(metricId, { enabled: false });
                 await renderSettings(container);
             } catch (error) {
                 alert('Ошибка: ' + error.message);
             }
         });
     });
+
+    container.querySelectorAll('.unarchive-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const metricId = btn.dataset.metric;
+            try {
+                await api.updateMetric(metricId, { enabled: true });
+                await renderSettings(container, { archiveOpen: true });
+            } catch (error) {
+                alert('Ошибка: ' + error.message);
+            }
+        });
+    });
+
+    const archiveToggle = document.getElementById('archive-toggle');
+    if (archiveToggle) {
+        archiveToggle.addEventListener('click', () => {
+            const content = document.getElementById('archive-content');
+            const chevron = archiveToggle.querySelector('.archive-chevron');
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                chevron.setAttribute('data-lucide', 'chevron-up');
+            } else {
+                content.style.display = 'none';
+                chevron.setAttribute('data-lucide', 'chevron-down');
+            }
+            if (window.lucide) lucide.createIcons();
+        });
+    }
 
     container.querySelectorAll('.delete-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
