@@ -12,7 +12,11 @@ router = APIRouter(prefix="/api/daily", tags=["daily"])
 @router.get("/{date}")
 async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     metrics = await db.fetch(
-        "SELECT * FROM metric_definitions WHERE enabled = TRUE AND user_id = $1 ORDER BY sort_order, id",
+        """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step
+           FROM metric_definitions md
+           LEFT JOIN scale_config sc ON sc.metric_id = md.id
+           WHERE md.enabled = TRUE AND md.user_id = $1
+           ORDER BY md.sort_order, md.id""",
         current_user["id"],
     )
 
@@ -37,6 +41,9 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "name": m["name"],
             "category": m["category"],
             "type": m["type"],
+            "scale_min": m["scale_min"],
+            "scale_max": m["scale_max"],
+            "scale_step": m["scale_step"],
             "entry": None,
         }
 

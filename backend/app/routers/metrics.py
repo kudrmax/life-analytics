@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.database import get_db
-from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut
+from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut, MetricType
 from app.auth import get_current_user
 from app.metric_helpers import build_metric_out
 
@@ -14,11 +14,14 @@ async def list_metrics(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    query = "SELECT * FROM metric_definitions WHERE user_id = $1"
+    query = """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step
+               FROM metric_definitions md
+               LEFT JOIN scale_config sc ON sc.metric_id = md.id
+               WHERE md.user_id = $1"""
     params = [current_user["id"]]
     if enabled_only:
-        query += " AND enabled = TRUE"
-    query += " ORDER BY sort_order, id"
+        query += " AND md.enabled = TRUE"
+    query += " ORDER BY md.sort_order, md.id"
     rows = await db.fetch(query, *params)
     return [await build_metric_out(r) for r in rows]
 
@@ -30,7 +33,10 @@ async def get_metric(
     current_user: dict = Depends(get_current_user),
 ):
     row = await db.fetchrow(
-        "SELECT * FROM metric_definitions WHERE id = $1 AND user_id = $2",
+        """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step
+           FROM metric_definitions md
+           LEFT JOIN scale_config sc ON sc.metric_id = md.id
+           WHERE md.id = $1 AND md.user_id = $2""",
         metric_id, current_user["id"],
     )
     if not row:
@@ -51,6 +57,15 @@ async def create_metric(
     if existing:
         raise HTTPException(409, "Metric with this slug already exists")
 
+    if data.type == MetricType.scale:
+        s_min = data.scale_min if data.scale_min is not None else 1
+        s_max = data.scale_max if data.scale_max is not None else 5
+        s_step = data.scale_step if data.scale_step is not None else 1
+        if s_min >= s_max:
+            raise HTTPException(400, "scale_min must be less than scale_max")
+        if s_step < 1 or s_step > (s_max - s_min):
+            raise HTTPException(400, "scale_step must be >= 1 and <= (max - min)")
+
     metric_id = await db.fetchval(
         """INSERT INTO metric_definitions
            (user_id, slug, name, category, type, enabled, sort_order)
@@ -64,6 +79,12 @@ async def create_metric(
         data.enabled,
         data.sort_order,
     )
+
+    if data.type == MetricType.scale:
+        await db.execute(
+            "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
+            metric_id, s_min, s_max, s_step,
+        )
 
     return await get_metric(metric_id, db, current_user)
 
@@ -105,6 +126,32 @@ async def update_metric(
             f"UPDATE metric_definitions SET {set_clause} WHERE id = ${len(values) - 1} AND user_id = ${len(values)}",
             *values,
         )
+
+    # Update scale_config if this is a scale metric
+    if row["type"] == "scale" and any(
+        getattr(data, f) is not None for f in ("scale_min", "scale_max", "scale_step")
+    ):
+        cfg = await db.fetchrow(
+            "SELECT scale_min, scale_max, scale_step FROM scale_config WHERE metric_id = $1",
+            metric_id,
+        )
+        s_min = data.scale_min if data.scale_min is not None else (cfg["scale_min"] if cfg else 1)
+        s_max = data.scale_max if data.scale_max is not None else (cfg["scale_max"] if cfg else 5)
+        s_step = data.scale_step if data.scale_step is not None else (cfg["scale_step"] if cfg else 1)
+        if s_min >= s_max:
+            raise HTTPException(400, "scale_min must be less than scale_max")
+        if s_step < 1 or s_step > (s_max - s_min):
+            raise HTTPException(400, "scale_step must be >= 1 and <= (max - min)")
+        if cfg:
+            await db.execute(
+                "UPDATE scale_config SET scale_min = $1, scale_max = $2, scale_step = $3 WHERE metric_id = $4",
+                s_min, s_max, s_step, metric_id,
+            )
+        else:
+            await db.execute(
+                "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
+                metric_id, s_min, s_max, s_step,
+            )
 
     return await get_metric(metric_id, db, current_user)
 

@@ -214,6 +214,17 @@ h3 {
     justify-content: center;
 }
 
+.btn-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.btn-icon-danger:hover {
+    border-color: var(--red);
+    color: var(--red);
+    background: rgba(239, 83, 80, 0.1);
+}
+
 .btn-small {
     background: var(--surface2);
     border: 1px solid var(--border);
@@ -222,6 +233,14 @@ h3 {
     border-radius: 6px;
     cursor: pointer;
     font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.btn-small svg {
+    width: 16px;
+    height: 16px;
 }
 
 .btn-primary {
@@ -234,6 +253,14 @@ h3 {
     font-size: 14px;
     font-weight: 500;
     margin-bottom: 16px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.btn-primary svg {
+    width: 16px;
+    height: 16px;
 }
 
 .btn-primary:hover { background: var(--accent-hover); }
@@ -850,6 +877,14 @@ input[type="month"], input[type="date"] {
 .setting-type {
     font-size: 12px;
     color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.setting-type svg {
+    width: 12px;
+    height: 12px;
 }
 
 .setting-actions {
@@ -1234,8 +1269,36 @@ input[type="month"], input[type="date"] {
 }
 
 .user-info {
-    color: var(--text-dim);
-    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 500;
+}
+
+.user-info svg {
+    width: 18px;
+    height: 18px;
+    color: var(--accent);
+}
+
+.btn-logout {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--red);
+    border-color: var(--red);
+}
+
+.btn-logout:hover {
+    background: var(--red);
+    color: #fff;
+}
+
+.btn-logout svg {
+    width: 14px;
+    height: 14px;
 }
 
 .settings-actions {
@@ -1243,6 +1306,17 @@ input[type="month"], input[type="date"] {
     gap: 8px;
     margin-bottom: 20px;
     flex-wrap: wrap;
+}
+
+.settings-actions .btn-primary,
+.settings-actions .btn-small {
+    padding: 8px 16px;
+    font-size: 14px;
+    border-radius: 8px;
+}
+
+.settings-actions .btn-primary {
+    margin-bottom: 0;
 }
 
 /* ─── Theme Toggle ─── */

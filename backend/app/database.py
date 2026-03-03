@@ -43,6 +43,9 @@ async def init_db():
         await conn.execute("""
             ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'number'
         """)
+        await conn.execute("""
+            ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'scale'
+        """)
 
         # Users
         await conn.execute("""
@@ -103,6 +106,27 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS values_number (
                 entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
                 value INTEGER NOT NULL
+            )
+        """)
+
+        # Scale config (current settings for scale metrics)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS scale_config (
+                metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
+                scale_min INTEGER NOT NULL DEFAULT 1,
+                scale_max INTEGER NOT NULL DEFAULT 5,
+                scale_step INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+
+        # Value table for scale metrics
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS values_scale (
+                entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+                value INTEGER NOT NULL,
+                scale_min INTEGER NOT NULL,
+                scale_max INTEGER NOT NULL,
+                scale_step INTEGER NOT NULL
             )
         """)
 

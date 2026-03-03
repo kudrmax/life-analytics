@@ -6,6 +6,7 @@ class MetricType(str, Enum):
     bool = "bool"
     time = "time"
     number = "number"
+    scale = "scale"
 
 
 class MetricDefinitionCreate(BaseModel):
@@ -15,6 +16,9 @@ class MetricDefinitionCreate(BaseModel):
     type: MetricType
     enabled: bool = True
     sort_order: int = 0
+    scale_min: int | None = None
+    scale_max: int | None = None
+    scale_step: int | None = None
 
 
 class MetricDefinitionUpdate(BaseModel):
@@ -22,6 +26,9 @@ class MetricDefinitionUpdate(BaseModel):
     category: str | None = None
     enabled: bool | None = None
     sort_order: int | None = None
+    scale_min: int | None = None
+    scale_max: int | None = None
+    scale_step: int | None = None
 
 
 class MetricDefinitionOut(BaseModel):
@@ -32,6 +39,9 @@ class MetricDefinitionOut(BaseModel):
     type: MetricType
     enabled: bool
     sort_order: int
+    scale_min: int | None = None
+    scale_max: int | None = None
+    scale_step: int | None = None
 
 
 class EntryCreate(BaseModel):

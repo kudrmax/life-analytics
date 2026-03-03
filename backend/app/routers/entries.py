@@ -81,7 +81,7 @@ async def create_entry(
             "INSERT INTO entries (metric_id, user_id, date) VALUES ($1, $2, $3) RETURNING id",
             data.metric_id, current_user["id"], d,
         )
-        await insert_value(db, entry_id, data.value, mt, entry_date=d)
+        await insert_value(db, entry_id, data.value, mt, entry_date=d, metric_id=data.metric_id)
 
     row = await db.fetchrow("SELECT * FROM entries WHERE id = $1", entry_id)
     return await _entry_to_out(db, row, mt)
@@ -102,7 +102,7 @@ async def update_entry(
         raise HTTPException(404, "Entry not found")
 
     mt = await get_metric_type(db, row["metric_id"], current_user["id"]) or "bool"
-    await update_value(db, entry_id, data.value, mt, entry_date=row["date"])
+    await update_value(db, entry_id, data.value, mt, entry_date=row["date"], metric_id=row["metric_id"])
 
     return await _entry_to_out(db, row, mt)
 

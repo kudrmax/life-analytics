@@ -17,6 +17,9 @@ async def build_metric_out(row: asyncpg.Record) -> MetricDefinitionOut:
         type=row["type"],
         enabled=row["enabled"],
         sort_order=row["sort_order"],
+        scale_min=row.get("scale_min"),
+        scale_max=row.get("scale_max"),
+        scale_step=row.get("scale_step"),
     )
 
 
@@ -38,6 +41,13 @@ async def get_entry_value(
         if not row:
             return None
         return row["value"]
+    elif metric_type == "scale":
+        row = await conn.fetchrow(
+            "SELECT value FROM values_scale WHERE entry_id = $1", entry_id
+        )
+        if not row:
+            return None
+        return row["value"]
     else:
         row = await conn.fetchrow(
             "SELECT value FROM values_bool WHERE entry_id = $1", entry_id
@@ -51,6 +61,7 @@ async def insert_value(
     value: bool | str | int,
     metric_type: str,
     entry_date: date_type | None = None,
+    metric_id: int | None = None,
 ):
     if metric_type == "time":
         ts = _parse_time(value, entry_date)
@@ -62,6 +73,18 @@ async def insert_value(
         await conn.execute(
             "INSERT INTO values_number (entry_id, value) VALUES ($1, $2)",
             entry_id, int(value),
+        )
+    elif metric_type == "scale":
+        cfg = await conn.fetchrow(
+            "SELECT scale_min, scale_max, scale_step FROM scale_config WHERE metric_id = $1",
+            metric_id,
+        )
+        s_min = cfg["scale_min"] if cfg else 1
+        s_max = cfg["scale_max"] if cfg else 5
+        s_step = cfg["scale_step"] if cfg else 1
+        await conn.execute(
+            "INSERT INTO values_scale (entry_id, value, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4, $5)",
+            entry_id, int(value), s_min, s_max, s_step,
         )
     else:
         await conn.execute(
@@ -76,6 +99,7 @@ async def update_value(
     value: bool | str | int,
     metric_type: str,
     entry_date: date_type | None = None,
+    metric_id: int | None = None,
 ):
     if metric_type == "time":
         ts = _parse_time(value, entry_date)
@@ -86,6 +110,11 @@ async def update_value(
     elif metric_type == "number":
         await conn.execute(
             "UPDATE values_number SET value = $1 WHERE entry_id = $2",
+            int(value), entry_id,
+        )
+    elif metric_type == "scale":
+        await conn.execute(
+            "UPDATE values_scale SET value = $1 WHERE entry_id = $2",
             int(value), entry_id,
         )
     else:

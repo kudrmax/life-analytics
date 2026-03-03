@@ -24,6 +24,12 @@ def _extract_numeric(value_row, metric_type: str = "bool") -> float | None:
         return v.hour * 60 + v.minute
     elif metric_type == "number":
         return float(v)
+    elif metric_type == "scale":
+        v_min = value_row["scale_min"]
+        v_max = value_row["scale_max"]
+        if v_max == v_min:
+            return 0.0
+        return (float(v) - v_min) / (v_max - v_min) * 100
     return 1.0 if v else 0.0
 
 
@@ -47,10 +53,14 @@ async def trends(
         value_table = "values_time"
     elif mt == "number":
         value_table = "values_number"
+    elif mt == "scale":
+        value_table = "values_scale"
     else:
         value_table = "values_bool"
+
+    extra_cols = ", v.scale_min, v.scale_max, v.scale_step" if mt == "scale" else ""
     rows = await db.fetch(
-        f"""SELECT e.date, v.value
+        f"""SELECT e.date, v.value{extra_cols}
             FROM entries e
             JOIN {value_table} v ON v.entry_id = e.id
             WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4
@@ -101,10 +111,13 @@ async def correlations(
             value_table = "values_time"
         elif mt == "number":
             value_table = "values_number"
+        elif mt == "scale":
+            value_table = "values_scale"
         else:
             value_table = "values_bool"
+        extra_cols = ", v.scale_min, v.scale_max, v.scale_step" if mt == "scale" else ""
         rows = await db.fetch(
-            f"""SELECT e.date, v.value
+            f"""SELECT e.date, v.value{extra_cols}
                 FROM entries e
                 JOIN {value_table} v ON v.entry_id = e.id
                 WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4""",

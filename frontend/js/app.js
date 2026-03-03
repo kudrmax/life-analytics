@@ -328,6 +328,7 @@ function renderMetricInput(m) {
     let input;
     if (m.type === 'time') input = renderTime(val);
     else if (m.type === 'number') input = renderNumber(val);
+    else if (m.type === 'scale') input = renderScale(val, m.scale_min, m.scale_max, m.scale_step);
     else input = renderBoolean(val);
 
     const clearBtn = entry
@@ -369,6 +370,14 @@ function renderTime(val) {
         return `<button type="button" class="time-picker-btn has-value" data-action="pick-time">${val}</button>`;
     }
     return `<button type="button" class="time-picker-btn" data-action="pick-time">Указать время</button>`;
+}
+
+function renderScale(val, min, max, step) {
+    let buttons = '';
+    for (let v = min; v <= max; v += step) {
+        buttons += `<button class="scale-btn ${val === v ? 'active' : ''}" data-value="${v}">${v}</button>`;
+    }
+    return `<div class="scale-buttons">${buttons}</div>`;
 }
 
 // ─── Event Handlers ───
@@ -439,6 +448,17 @@ async function handleFormClick(e) {
         try {
             const boolVal = btn.dataset.value === 'true';
             await saveDaily(metricId, entryId, boolVal);
+            await renderTodayForm();
+        } catch (error) {
+            alert('Ошибка: ' + error.message);
+        }
+        return;
+    }
+
+    // Scale buttons
+    if (btn.classList.contains('scale-btn')) {
+        try {
+            await saveDaily(metricId, entryId, parseInt(btn.dataset.value));
             await renderTodayForm();
         } catch (error) {
             alert('Ошибка: ' + error.message);
@@ -546,6 +566,8 @@ async function showDayDetail(date) {
         if (m.type === 'time') {
             valStr = m.entry.value || '—';
         } else if (m.type === 'number') {
+            valStr = m.entry.value !== null && m.entry.value !== undefined ? String(m.entry.value) : '—';
+        } else if (m.type === 'scale') {
             valStr = m.entry.value !== null && m.entry.value !== undefined ? String(m.entry.value) : '—';
         } else {
             valStr = m.entry.value ? 'Да' : 'Нет';
@@ -665,14 +687,14 @@ function renderMiniCharts() {
 async function renderSettings(container) {
     const allMetrics = await api.getMetrics(false);
     let html = '<div class="settings-header">';
-    html += `<div class="user-info">Пользователь: ${localStorage.getItem('la_username') || 'Unknown'}</div>`;
-    html += '<button class="btn-small" id="logout-btn">Выйти</button>';
+    html += `<div class="user-info"><i data-lucide="user"></i><span>${localStorage.getItem('la_username') || 'Unknown'}</span></div>`;
+    html += '<button class="btn-small btn-logout" id="logout-btn"><i data-lucide="log-out"></i><span>Выйти</span></button>';
     html += '</div>';
     html += '<h2>Настройки метрик</h2>';
     html += '<div class="settings-actions">';
-    html += '<button class="btn-primary" id="add-metric">+ Новая метрика</button>';
-    html += '<button class="btn-small" id="export-btn">📥 Экспорт ZIP</button>';
-    html += '<button class="btn-small" id="import-btn">📤 Импорт ZIP</button>';
+    html += '<button class="btn-primary" id="add-metric"><i data-lucide="plus"></i> Новая метрика</button>';
+    html += '<button class="btn-small" id="export-btn"><i data-lucide="download"></i> Экспорт</button>';
+    html += '<button class="btn-small" id="import-btn"><i data-lucide="upload"></i> Импорт</button>';
     html += '</div>';
     html += '<input type="file" id="import-file" accept=".zip" style="display:none">';
 
@@ -685,21 +707,27 @@ async function renderSettings(container) {
     for (const [cat, items] of Object.entries(categories)) {
         html += `<div class="category"><h3>${cat}</h3>`;
         for (const m of items) {
+            const typeIcon = m.type === 'time' ? '<i data-lucide="clock"></i> Время'
+                : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
+                : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
+                : '<i data-lucide="toggle-left"></i> Да/Нет';
+            const toggleIcon = m.enabled ? '<i data-lucide="eye"></i>' : '<i data-lucide="eye-off"></i>';
             html += `<div class="setting-row">
                 <div class="setting-info">
                     <span class="setting-name ${m.enabled ? '' : 'disabled'}">${m.name}</span>
-                    <span class="setting-type">${m.type === 'time' ? 'Время' : m.type === 'number' ? 'Число' : 'Да/Нет'}</span>
+                    <span class="setting-type">${typeIcon}</span>
                 </div>
                 <div class="setting-actions">
-                    <button class="btn-icon edit-btn" data-metric="${m.id}">✏️</button>
-                    <button class="btn-icon toggle-btn" data-metric="${m.id}" data-enabled="${m.enabled}">${m.enabled ? '&#x2714;' : '&#x2716;'}</button>
-                    <button class="btn-icon delete-btn" data-metric="${m.id}">&times;</button>
+                    <button class="btn-icon edit-btn" data-metric="${m.id}"><i data-lucide="pencil"></i></button>
+                    <button class="btn-icon toggle-btn" data-metric="${m.id}" data-enabled="${m.enabled}">${toggleIcon}</button>
+                    <button class="btn-icon delete-btn btn-icon-danger" data-metric="${m.id}"><i data-lucide="trash-2"></i></button>
                 </div>
             </div>`;
         }
         html += '</div>';
     }
     container.innerHTML = html;
+    if (window.lucide) lucide.createIcons();
 
     document.getElementById('logout-btn').addEventListener('click', () => {
         api.logout();
@@ -834,6 +862,17 @@ function showMetricModal(mode = 'create', existingMetric = null) {
     const buttonText = isEdit ? 'Сохранить изменения' : 'Создать метрику';
     const currentType = existingMetric?.type || 'bool';
 
+    function getScaleParams() {
+        const minEl = document.getElementById('nm-scale-min');
+        const maxEl = document.getElementById('nm-scale-max');
+        const stepEl = document.getElementById('nm-scale-step');
+        return {
+            min: minEl ? parseInt(minEl.value) || 1 : (existingMetric?.scale_min || 1),
+            max: maxEl ? parseInt(maxEl.value) || 5 : (existingMetric?.scale_max || 5),
+            step: stepEl ? parseInt(stepEl.value) || 1 : (existingMetric?.scale_step || 1),
+        };
+    }
+
     function previewInputHtml(type) {
         if (type === 'time') {
             return `<button type="button" class="time-picker-btn">Указать время</button>`;
@@ -845,6 +884,14 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                 <button class="number-btn" data-action="increment">&plus;</button>
                 <button class="number-zero-btn" data-action="set-zero">Установить 0</button>
             </div>`;
+        }
+        if (type === 'scale') {
+            const sp = getScaleParams();
+            let buttons = '';
+            for (let v = sp.min; v <= sp.max; v += sp.step) {
+                buttons += `<button class="scale-btn" data-value="${v}">${v}</button>`;
+            }
+            return `<div class="scale-buttons">${buttons}</div>`;
         }
         return `<div class="bool-buttons">
             <button class="bool-btn" data-value="true">Да</button>
@@ -860,6 +907,10 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         if (type === 'number') {
             return `<span class="label-text">Тип: Число</span>
                     <span class="label-hint">Целое число с кнопками +/−</span>`;
+        }
+        if (type === 'scale') {
+            return `<span class="label-text">Тип: Шкала</span>
+                    <span class="label-hint">Оценка по шкале с настраиваемым диапазоном</span>`;
         }
         return `<span class="label-text">Тип: Да/Нет</span>
                 <span class="label-hint">Простой переключатель (было / не было)</span>`;
@@ -889,6 +940,26 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                 <div class="form-section" id="nm-type-section">
                     ${typeHintHtml(currentType)}
                 </div>
+                ${currentType === 'scale' ? `
+                <div class="form-section" id="nm-scale-config" style="display: flex">
+                    <span class="label-text">Настройки шкалы</span>
+                    <div class="number-options-grid">
+                        <label class="form-label-inline">
+                            <span>Минимум</span>
+                            <input type="number" id="nm-scale-min" class="form-input-small" value="${existingMetric?.scale_min ?? 1}" min="0" step="1">
+                        </label>
+                        <label class="form-label-inline">
+                            <span>Максимум</span>
+                            <input type="number" id="nm-scale-max" class="form-input-small" value="${existingMetric?.scale_max ?? 5}" min="1" step="1">
+                        </label>
+                        <label class="form-label-inline">
+                            <span>Шаг</span>
+                            <input type="number" id="nm-scale-step" class="form-input-small" value="${existingMetric?.scale_step ?? 1}" min="1" step="1">
+                        </label>
+                    </div>
+                    <span class="label-hint">От 1 до 5, шаг 1 → [1] [2] [3] [4] [5]<br>От 1 до 5, шаг 2 → [1] [3] [5]</span>
+                </div>
+                ` : ''}
                 ` : `
                 <div class="form-section" id="nm-type-section">
                     <span class="label-text">Тип метрики</span>
@@ -905,7 +976,29 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                             <input type="radio" name="nm-type" value="number" ${currentType === 'number' ? 'checked' : ''}>
                             <span>Число</span>
                         </label>
+                        <label class="radio-inline">
+                            <input type="radio" name="nm-type" value="scale" ${currentType === 'scale' ? 'checked' : ''}>
+                            <span>Шкала</span>
+                        </label>
                     </div>
+                </div>
+                <div class="form-section" id="nm-scale-config" style="display: ${currentType === 'scale' ? 'flex' : 'none'}">
+                    <span class="label-text">Настройки шкалы</span>
+                    <div class="number-options-grid">
+                        <label class="form-label-inline">
+                            <span>Минимум</span>
+                            <input type="number" id="nm-scale-min" class="form-input-small" value="1" min="0" step="1">
+                        </label>
+                        <label class="form-label-inline">
+                            <span>Максимум</span>
+                            <input type="number" id="nm-scale-max" class="form-input-small" value="5" min="1" step="1">
+                        </label>
+                        <label class="form-label-inline">
+                            <span>Шаг</span>
+                            <input type="number" id="nm-scale-step" class="form-input-small" value="1" min="1" step="1">
+                        </label>
+                    </div>
+                    <span class="label-hint">От 1 до 5, шаг 1 → [1] [2] [3] [4] [5]<br>От 1 до 5, шаг 2 → [1] [3] [5]<br>От 1 до 4, шаг 2 → [1] [3]</span>
                 </div>
                 `}
             </div>
@@ -934,6 +1027,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         </div>
     `;
     document.body.appendChild(overlay);
+    if (window.lucide) lucide.createIcons();
 
     // Update preview on name change
     document.getElementById('nm-name').addEventListener('input', () => {
@@ -947,9 +1041,36 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         overlay.querySelectorAll('input[name="nm-type"]').forEach(radio => {
             radio.addEventListener('change', () => {
                 const selectedType = overlay.querySelector('input[name="nm-type"]:checked').value;
+                const scaleConfig = document.getElementById('nm-scale-config');
+                if (scaleConfig) scaleConfig.style.display = selectedType === 'scale' ? 'flex' : 'none';
                 document.getElementById('preview-input').innerHTML = previewInputHtml(selectedType);
                 setupPreviewInteractions();
             });
+        });
+
+        // Scale config input listeners — update preview in real time
+        ['nm-scale-min', 'nm-scale-max', 'nm-scale-step'].forEach(id => {
+            const el = overlay.querySelector(`#${id}`);
+            if (el) {
+                el.addEventListener('input', () => {
+                    const selectedType = overlay.querySelector('input[name="nm-type"]:checked')?.value;
+                    if (selectedType === 'scale') {
+                        document.getElementById('preview-input').innerHTML = previewInputHtml('scale');
+                        setupPreviewInteractions();
+                    }
+                });
+            }
+        });
+    } else if (currentType === 'scale') {
+        // Edit mode: scale config listeners for preview update
+        ['nm-scale-min', 'nm-scale-max', 'nm-scale-step'].forEach(id => {
+            const el = overlay.querySelector(`#${id}`);
+            if (el) {
+                el.addEventListener('input', () => {
+                    document.getElementById('preview-input').innerHTML = previewInputHtml('scale');
+                    setupPreviewInteractions();
+                });
+            }
         });
     }
 
@@ -961,6 +1082,14 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                 buttons.forEach(b => b.classList.remove('active', 'yes', 'no'));
                 const isYes = btn.dataset.value === 'true';
                 btn.classList.add('active', isYes ? 'yes' : 'no');
+            });
+        });
+        document.querySelectorAll('#preview-card .scale-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const buttons = btn.parentElement.querySelectorAll('.scale-btn');
+                buttons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
             });
         });
     }
@@ -978,7 +1107,14 @@ function showMetricModal(mode = 'create', existingMetric = null) {
 
         try {
             if (isEdit) {
-                await api.updateMetric(existingMetric.id, { name, category });
+                const updateData = { name, category };
+                if (existingMetric.type === 'scale') {
+                    const sp = getScaleParams();
+                    updateData.scale_min = sp.min;
+                    updateData.scale_max = sp.max;
+                    updateData.scale_step = sp.step;
+                }
+                await api.updateMetric(existingMetric.id, updateData);
             } else {
                 const typeRadio = overlay.querySelector('input[name="nm-type"]:checked');
                 const selectedType = typeRadio ? typeRadio.value : 'bool';
@@ -988,12 +1124,24 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     .replace(/[^a-z0-9_а-яё]/gi, '')
                     || 'metric_' + Date.now();
 
-                await api.createMetric({
-                    slug,
-                    name,
-                    category,
-                    type: selectedType,
-                });
+                const createData = { slug, name, category, type: selectedType };
+
+                if (selectedType === 'scale') {
+                    const sp = getScaleParams();
+                    if (sp.min >= sp.max) {
+                        alert('Минимум должен быть меньше максимума');
+                        return;
+                    }
+                    if (sp.step < 1 || sp.step > (sp.max - sp.min)) {
+                        alert('Шаг должен быть >= 1 и <= (макс - мин)');
+                        return;
+                    }
+                    createData.scale_min = sp.min;
+                    createData.scale_max = sp.max;
+                    createData.scale_step = sp.step;
+                }
+
+                await api.createMetric(createData);
             }
 
             overlay.remove();

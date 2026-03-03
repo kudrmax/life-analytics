@@ -27,11 +27,14 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         metrics_writer = csv.writer(metrics_csv)
         metrics_writer.writerow([
             'id', 'slug', 'name', 'category', 'type',
-            'enabled', 'sort_order',
+            'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step',
         ])
 
         metrics = await db.fetch(
-            "SELECT * FROM metric_definitions WHERE user_id = $1 ORDER BY sort_order, id",
+            """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step
+               FROM metric_definitions md
+               LEFT JOIN scale_config sc ON sc.metric_id = md.id
+               WHERE md.user_id = $1 ORDER BY md.sort_order, md.id""",
             current_user["id"],
         )
 
@@ -39,6 +42,9 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             metrics_writer.writerow([
                 m["id"], m["slug"], m["name"], m["category"], m["type"],
                 1 if m["enabled"] else 0, m["sort_order"],
+                m["scale_min"] if m["scale_min"] is not None else '',
+                m["scale_max"] if m["scale_max"] is not None else '',
+                m["scale_step"] if m["scale_step"] is not None else '',
             ])
 
         zip_file.writestr('metrics.csv', metrics_csv.getvalue())
@@ -128,8 +134,13 @@ async def import_data(
                     )
 
                     metric_type = row.get('type', 'bool')
-                    if metric_type not in ('bool', 'time', 'number'):
+                    if metric_type not in ('bool', 'time', 'number', 'scale'):
                         metric_type = 'bool'
+
+                    # Parse scale config from CSV
+                    csv_scale_min = row.get('scale_min', '')
+                    csv_scale_max = row.get('scale_max', '')
+                    csv_scale_step = row.get('scale_step', '')
 
                     if existing:
                         await db.execute(
@@ -139,15 +150,41 @@ async def import_data(
                             name, category, enabled, sort_order,
                             existing["id"], current_user["id"],
                         )
+                        # Update scale_config if needed
+                        if metric_type == 'scale' and csv_scale_min and csv_scale_max and csv_scale_step:
+                            s_min, s_max, s_step = int(csv_scale_min), int(csv_scale_max), int(csv_scale_step)
+                            existing_cfg = await db.fetchrow(
+                                "SELECT metric_id FROM scale_config WHERE metric_id = $1",
+                                existing["id"],
+                            )
+                            if existing_cfg:
+                                await db.execute(
+                                    "UPDATE scale_config SET scale_min = $1, scale_max = $2, scale_step = $3 WHERE metric_id = $4",
+                                    s_min, s_max, s_step, existing["id"],
+                                )
+                            else:
+                                await db.execute(
+                                    "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
+                                    existing["id"], s_min, s_max, s_step,
+                                )
                         metrics_updated += 1
                     else:
-                        await db.fetchval(
+                        new_id = await db.fetchval(
                             """INSERT INTO metric_definitions
                                (user_id, slug, name, category, type, enabled, sort_order)
                                VALUES ($1, $2, $3, $4, $5::metric_type, $6, $7) RETURNING id""",
                             current_user["id"], slug, name, category,
                             metric_type, enabled, sort_order,
                         )
+                        # Create scale_config for new scale metrics
+                        if metric_type == 'scale':
+                            s_min = int(csv_scale_min) if csv_scale_min else 1
+                            s_max = int(csv_scale_max) if csv_scale_max else 5
+                            s_step = int(csv_scale_step) if csv_scale_step else 1
+                            await db.execute(
+                                "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
+                                new_id, s_min, s_max, s_step,
+                            )
                         metrics_imported += 1
 
                 except Exception as e:
@@ -199,6 +236,12 @@ async def import_data(
                         except (ValueError, TypeError):
                             entries_skipped += 1
                             continue
+                    elif mt == "scale":
+                        try:
+                            value = int(value)
+                        except (ValueError, TypeError):
+                            entries_skipped += 1
+                            continue
                     else:
                         if isinstance(value, dict):
                             value = bool(value.get('value', False))
@@ -210,7 +253,7 @@ async def import_data(
                             "INSERT INTO entries (metric_id, user_id, date) VALUES ($1, $2, $3) RETURNING id",
                             metric_id, current_user["id"], d,
                         )
-                        await insert_value(db, entry_id, value, mt, entry_date=d)
+                        await insert_value(db, entry_id, value, mt, entry_date=d, metric_id=metric_id)
 
                     entries_imported += 1
 
