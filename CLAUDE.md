@@ -45,7 +45,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `database.py` — asyncpg pool management, full DDL schema in `init_db()` (tables, enums, indexes)
 - `auth.py` — JWT (HS256, 7-day expiry), bcrypt hashing, `get_current_user` dependency
 - `schemas.py` — Pydantic models for all request/response types
-- `metric_helpers.py` — shared value read/write logic across routers
+- `metric_helpers.py` — shared value read/write logic across routers; `build_metric_out` converts DB rows to response models with slots
 
 **Routers** (all under `/api/`): `auth`, `metrics`, `entries`, `daily`, `analytics`, `export_import`
 
@@ -55,27 +55,34 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 
 **Tables:**
 - `users` — id, username (unique), password_hash, created_at
-- `metric_definitions` — id, user_id (FK), slug, name, category, type (enum), enabled, sort_order; UNIQUE(user_id, slug)
-- `entries` — id, metric_id (FK), user_id (FK), date, recorded_at; UNIQUE(metric_id, user_id, date) — one entry per metric per day
+- `metric_definitions` — id, user_id (FK), slug, name, category, icon, type (enum), enabled, sort_order; UNIQUE(user_id, slug)
+- `measurement_slots` — id, metric_id (FK), sort_order, label, enabled (for multi-slot metrics like Утро/День/Вечер)
+- `entries` — id, metric_id (FK), user_id (FK), date, recorded_at, slot_id (FK, nullable)
 - `values_bool` — entry_id (PK/FK), value BOOLEAN
 - `values_time` — entry_id (PK/FK), value TIMESTAMPTZ
 - `values_number` — entry_id (PK/FK), value INTEGER
 - `values_scale` — entry_id (PK/FK), value INTEGER, scale_min, scale_max, scale_step (stores context at time of entry)
 - `scale_config` — metric_id (PK/FK), scale_min, scale_max, scale_step (current config for rendering)
 
+**Entry uniqueness (partial indexes):** Metrics without slots: `UNIQUE(metric_id, user_id, date) WHERE slot_id IS NULL`. Metrics with slots: `UNIQUE(metric_id, user_id, date, slot_id) WHERE slot_id IS NOT NULL`.
+
 **Value storage pattern:** Separate typed table per metric type (not JSON). Entry creation: INSERT into `entries` → INSERT into `values_{type}`, all within a transaction.
 
 **Scale context pattern:** `scale_config` stores the current min/max/step for rendering buttons. `values_scale` stores the min/max/step that were active when each entry was created. When displaying a filled entry, use context from `values_scale` (not current config) so old entries render correctly even after config changes. Analytics normalizes scale values to percentages using the per-entry context.
 
+**Multi-slot pattern:** A metric can have 2+ measurement slots (e.g. Утро, День, Вечер). `measurement_slots` stores slot definitions per metric. `entries.slot_id` links an entry to a specific slot. Daily endpoint aggregates multi-slot data, showing each slot's value separately.
+
 ### Frontend (Vanilla JS SPA)
 
-- `index.html` — single entry point with nav
+- `index.html` — single entry point with nav, Lucide icons (CDN), emoji-picker-element (CDN)
 - `config.js` — `window.API_BASE` (set by run.sh for local dev, empty for Docker/nginx proxy)
 - `js/api.js` — API client, token in localStorage (`la_auth_token`), auto-redirect on 401
 - `js/app.js` — all page logic: routing, rendering, event handling
-- `css/style.css` — dark/light theme
+- `css/style.css` — dark/light theme via CSS custom properties
 
 **Event delegation pattern:** `#metrics-form` element persists across re-renders (innerHTML replaced). Event listeners (click, change) are attached once via `data-handlersAttached` guard in `attachInputHandlers()` to prevent duplicate async handlers.
+
+**Icons:** Lucide icons via CDN (`<i data-lucide="...">` → `lucide.createIcons()`). Emoji icons on metrics via emoji-picker-element. Metric icons rendered in `<span class="metric-icon">` wrapper.
 
 ### Deployment (Docker Compose)
 
@@ -95,7 +102,7 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 
 ## Key Implementation Details
 
-**Adding a new metric type** requires changes in 7 places:
+**Adding a new metric type** requires changes in 8 places:
 1. `database.py` — `ALTER TYPE metric_type ADD VALUE`, create `values_{type}` table (+ config table if type has settings)
 2. `schemas.py` — add to `MetricType` enum, add config fields to Create/Update/Out if needed (keep `bool` before `int` in value unions — bool is subclass of int in Python)
 3. `metric_helpers.py` — add branch in `get_entry_value`, `insert_value`, `update_value`; pass `metric_id` for types that need config lookup
@@ -119,5 +126,5 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 3. Include in `main.py`: `app.include_router(new_router.router)`
 
 **Export/Import format:**
-- ZIP with `metrics.csv` (id, slug, name, category, type, enabled, sort_order, scale_min, scale_max, scale_step) + `entries.csv` (date, metric_slug, value as JSON)
-- Import: creates/updates metrics by slug, skips duplicate entries by (metric_id, user_id, date)
+- ZIP with `metrics.csv` (id, slug, name, category, type, enabled, sort_order, scale_min, scale_max, scale_step, icon, slot_labels as JSON) + `entries.csv` (date, metric_slug, value as JSON, slot_sort_order, slot_label)
+- Import: creates/updates metrics by slug, recreates slots, skips duplicate entries
