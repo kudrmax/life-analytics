@@ -29,7 +29,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         metrics_writer.writerow([
             'id', 'slug', 'name', 'category', 'icon', 'type',
             'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step',
-            'slot_labels',
+            'slot_labels', 'formula', 'result_type',
         ])
 
         metrics = await db.fetch(
@@ -53,8 +53,29 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         for r in all_slots_rows:
             slots_by_metric[r["metric_id"]].append(r["label"])
 
+        # Load computed_config for all metrics
+        computed_cfg_rows = await db.fetch(
+            "SELECT metric_id, formula, result_type FROM computed_config WHERE metric_id = ANY($1)",
+            metric_ids,
+        ) if metric_ids else []
+        computed_cfgs = {r["metric_id"]: r for r in computed_cfg_rows}
+
         for m in metrics:
             slot_labels = slots_by_metric.get(m["id"], [])
+            # Export formula (slug-based, no IDs for portability)
+            cc = computed_cfgs.get(m["id"])
+            formula_export = ''
+            result_type_export = ''
+            if cc and cc["formula"]:
+                raw_formula = cc["formula"]
+                if isinstance(raw_formula, str):
+                    raw_formula = json.loads(raw_formula)
+                portable = [
+                    {k: v for k, v in t.items() if k != "id"} if isinstance(t, dict) else t
+                    for t in raw_formula
+                ]
+                formula_export = json.dumps(portable)
+                result_type_export = cc["result_type"] or ''
             metrics_writer.writerow([
                 m["id"], m["slug"], m["name"], m["category"], m.get("icon", ""), m["type"],
                 1 if m["enabled"] else 0, m["sort_order"],
@@ -62,6 +83,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
                 m["scale_max"] if m["scale_max"] is not None else '',
                 m["scale_step"] if m["scale_step"] is not None else '',
                 json.dumps(slot_labels) if slot_labels else '',
+                formula_export, result_type_export,
             ])
 
         zip_file.writestr('metrics.csv', metrics_csv.getvalue())
@@ -88,6 +110,8 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
                 continue
 
             mt = type_lookup.get(e["metric_id"], "bool")
+            if mt == "computed":
+                continue  # computed metrics have no stored entries
             value = await get_entry_value(db, e["id"], mt)
             entries_writer.writerow([
                 str(e["date"]), slug,
@@ -157,7 +181,7 @@ async def import_data(
                     )
 
                     metric_type = row.get('type', 'bool')
-                    if metric_type not in ('bool', 'time', 'number', 'scale'):
+                    if metric_type not in ('bool', 'time', 'number', 'scale', 'computed'):
                         metric_type = 'bool'
 
                     # Parse scale config from CSV
@@ -240,6 +264,44 @@ async def import_data(
             slug_to_id = {r["slug"]: r["id"] for r in metric_rows}
             slug_to_type = {r["slug"]: r["type"] for r in metric_rows}
 
+            # Deferred: import computed formulas (need full slug->id map)
+            metrics_csv_text2 = zip_file.read('metrics.csv').decode('utf-8')
+            reader2 = csv.DictReader(StringIO(metrics_csv_text2))
+            for row in reader2:
+                if row.get('type') != 'computed':
+                    continue
+                slug = row.get('slug', '')
+                mid = slug_to_id.get(slug)
+                if not mid:
+                    continue
+                formula_raw = row.get('formula', '')
+                result_type = row.get('result_type', 'float') or 'float'
+                if formula_raw:
+                    try:
+                        portable_tokens = json.loads(formula_raw)
+                        resolved = []
+                        valid = True
+                        for t in portable_tokens:
+                            if isinstance(t, dict) and t.get("type") == "metric":
+                                ref_id = slug_to_id.get(t.get("slug", ""))
+                                if ref_id:
+                                    resolved.append({"type": "metric", "id": ref_id, "slug": t["slug"]})
+                                else:
+                                    valid = False
+                                    break
+                            else:
+                                resolved.append(t)
+                        if valid and resolved:
+                            await db.execute(
+                                """INSERT INTO computed_config (metric_id, formula, result_type)
+                                   VALUES ($1, $2::jsonb, $3)
+                                   ON CONFLICT (metric_id) DO UPDATE
+                                   SET formula = EXCLUDED.formula, result_type = EXCLUDED.result_type""",
+                                mid, json.dumps(resolved), result_type,
+                            )
+                    except (json.JSONDecodeError, TypeError, KeyError):
+                        pass
+
             # Build metric_id -> {sort_order: slot_id} lookup
             all_metric_ids = list(slug_to_id.values())
             slot_rows = await db.fetch(
@@ -260,6 +322,9 @@ async def import_data(
                     slug = row.get('metric_slug', '')
                     metric_id = slug_to_id.get(slug)
                     if not metric_id:
+                        entries_skipped += 1
+                        continue
+                    if slug_to_type.get(slug) == "computed":
                         entries_skipped += 1
                         continue
 

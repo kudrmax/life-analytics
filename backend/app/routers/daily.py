@@ -1,3 +1,4 @@
+import json
 from collections import defaultdict
 from datetime import date as date_type
 
@@ -6,6 +7,16 @@ from fastapi import APIRouter, Depends
 from app.database import get_db
 from app.auth import get_current_user
 from app.metric_helpers import get_entry_value
+from app.formula import convert_metric_value, evaluate_formula
+
+
+def _parse_formula(raw):
+    """Parse formula from DB — may be JSON string or list."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return json.loads(raw)
+    return raw
 
 router = APIRouter(prefix="/api/daily", tags=["daily"])
 
@@ -13,9 +24,11 @@ router = APIRouter(prefix="/api/daily", tags=["daily"])
 @router.get("/{date}")
 async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     metrics = await db.fetch(
-        """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step
+        """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
+                  cc.formula, cc.result_type
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
+           LEFT JOIN computed_config cc ON cc.metric_id = md.id
            WHERE md.enabled = TRUE AND md.user_id = $1
            ORDER BY md.sort_order, md.id""",
         current_user["id"],
@@ -82,6 +95,8 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "scale_step": m["scale_step"],
             "entry": None,
             "slots": None,
+            "formula": _parse_formula(m.get("formula")) or None,
+            "result_type": m.get("result_type"),
         }
 
         if slots or extra_disabled:
@@ -151,5 +166,51 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                         item["scale_step"] = vs["scale_step"]
 
         result.append(item)
+
+    # Compute values for computed metrics
+    # First, build numeric_by_id from all regular metrics
+    numeric_by_id: dict[int, float | None] = {}
+    metrics_by_id = {m["id"]: m for m in metrics}
+    for item in result:
+        m_info = metrics_by_id.get(item["metric_id"])
+        if not m_info or m_info["type"] == "computed":
+            continue
+        mt = m_info["type"]
+        if item["slots"]:
+            slot_vals = []
+            for s in item["slots"]:
+                if s["entry"] is not None:
+                    cv = convert_metric_value(
+                        s["entry"]["value"], mt,
+                        m_info["scale_min"], m_info["scale_max"],
+                    )
+                    if cv is not None:
+                        slot_vals.append(cv)
+            numeric_by_id[item["metric_id"]] = (sum(slot_vals) / len(slot_vals)) if slot_vals else None
+        else:
+            if item["entry"] is not None:
+                numeric_by_id[item["metric_id"]] = convert_metric_value(
+                    item["entry"]["value"], mt,
+                    m_info["scale_min"], m_info["scale_max"],
+                )
+            else:
+                numeric_by_id[item["metric_id"]] = None
+
+    # Evaluate computed metrics
+    for item in result:
+        m_info = metrics_by_id.get(item["metric_id"])
+        if not m_info or m_info["type"] != "computed":
+            continue
+        formula = _parse_formula(m_info.get("formula"))
+        result_type = m_info.get("result_type") or "float"
+        if not formula:
+            continue
+        computed_val = evaluate_formula(formula, numeric_by_id, result_type)
+        if computed_val is not None:
+            item["entry"] = {
+                "id": None,
+                "recorded_at": None,
+                "value": computed_val,
+            }
 
     return {"date": date, "metrics": result}

@@ -1,6 +1,7 @@
 """
 Shared helpers for metric operations across routers.
 """
+import json
 from collections import defaultdict
 from datetime import date as date_type, datetime, timezone
 
@@ -10,6 +11,9 @@ from app.schemas import MetricDefinitionOut, MeasurementSlotOut
 
 
 async def build_metric_out(row: asyncpg.Record, slots: list | None = None) -> MetricDefinitionOut:
+    formula_raw = row.get("formula")
+    if isinstance(formula_raw, str):
+        formula_raw = json.loads(formula_raw)
     return MetricDefinitionOut(
         id=row["id"],
         slug=row["slug"],
@@ -23,6 +27,8 @@ async def build_metric_out(row: asyncpg.Record, slots: list | None = None) -> Me
         scale_max=row.get("scale_max"),
         scale_step=row.get("scale_step"),
         slots=[MeasurementSlotOut(**s) for s in slots] if slots else [],
+        formula=formula_raw,
+        result_type=row.get("result_type"),
     )
 
 

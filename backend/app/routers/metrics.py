@@ -1,9 +1,12 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.database import get_db
 from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut, MetricType
 from app.auth import get_current_user
 from app.metric_helpers import build_metric_out, get_metric_slots
+from app.formula import validate_formula, get_referenced_metric_ids
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
@@ -14,9 +17,11 @@ async def list_metrics(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    query = """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step
+    query = """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
+                      cc.formula, cc.result_type
                FROM metric_definitions md
                LEFT JOIN scale_config sc ON sc.metric_id = md.id
+               LEFT JOIN computed_config cc ON cc.metric_id = md.id
                WHERE md.user_id = $1"""
     params = [current_user["id"]]
     if enabled_only:
@@ -37,9 +42,11 @@ async def get_metric(
     current_user: dict = Depends(get_current_user),
 ):
     row = await db.fetchrow(
-        """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step
+        """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
+                  cc.formula, cc.result_type
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
+           LEFT JOIN computed_config cc ON cc.metric_id = md.id
            WHERE md.id = $1 AND md.user_id = $2""",
         metric_id, current_user["id"],
     )
@@ -93,8 +100,30 @@ async def create_metric(
             metric_id, s_min, s_max, s_step,
         )
 
-    # Create measurement slots if 2+ labels provided
-    labels = data.slot_labels or []
+    if data.type == MetricType.computed:
+        if not data.formula:
+            raise HTTPException(400, "formula is required for computed metrics")
+        if data.result_type not in ("bool", "int", "float", "time"):
+            raise HTTPException(400, "result_type must be one of: bool, int, float, time")
+        ref_ids = get_referenced_metric_ids(data.formula)
+        if ref_ids:
+            source_rows = await db.fetch(
+                "SELECT id, type FROM metric_definitions WHERE id = ANY($1) AND user_id = $2",
+                ref_ids, current_user["id"],
+            )
+            if len(source_rows) != len(set(ref_ids)):
+                raise HTTPException(400, "Formula references unknown metrics")
+            source_types = {r["id"]: r["type"] for r in source_rows}
+            err = validate_formula(data.formula, source_types)
+            if err:
+                raise HTTPException(400, err)
+        await db.execute(
+            "INSERT INTO computed_config (metric_id, formula, result_type) VALUES ($1, $2::jsonb, $3)",
+            metric_id, json.dumps(data.formula), data.result_type,
+        )
+
+    # Create measurement slots if 2+ labels provided (skip for computed)
+    labels = data.slot_labels or [] if data.type != MetricType.computed else []
     if len(labels) >= 2:
         for i, label in enumerate(labels):
             await db.execute(
@@ -169,6 +198,39 @@ async def update_metric(
             await db.execute(
                 "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
                 metric_id, s_min, s_max, s_step,
+            )
+
+    # Update computed_config if this is a computed metric
+    if row["type"] == "computed" and (data.formula is not None or data.result_type is not None):
+        cfg = await db.fetchrow(
+            "SELECT formula, result_type FROM computed_config WHERE metric_id = $1",
+            metric_id,
+        )
+        new_formula = data.formula if data.formula is not None else (json.loads(cfg["formula"]) if cfg and cfg["formula"] else [])
+        new_result_type = data.result_type if data.result_type is not None else (cfg["result_type"] if cfg else "float")
+        if new_result_type not in ("bool", "int", "float", "time"):
+            raise HTTPException(400, "result_type must be one of: bool, int, float, time")
+        ref_ids = get_referenced_metric_ids(new_formula)
+        if ref_ids:
+            source_rows = await db.fetch(
+                "SELECT id, type FROM metric_definitions WHERE id = ANY($1) AND user_id = $2",
+                ref_ids, current_user["id"],
+            )
+            if len(source_rows) != len(set(ref_ids)):
+                raise HTTPException(400, "Formula references unknown metrics")
+            source_types = {r["id"]: r["type"] for r in source_rows}
+            err = validate_formula(new_formula, source_types)
+            if err:
+                raise HTTPException(400, err)
+        if cfg:
+            await db.execute(
+                "UPDATE computed_config SET formula = $1::jsonb, result_type = $2 WHERE metric_id = $3",
+                json.dumps(new_formula), new_result_type, metric_id,
+            )
+        else:
+            await db.execute(
+                "INSERT INTO computed_config (metric_id, formula, result_type) VALUES ($1, $2::jsonb, $3)",
+                metric_id, json.dumps(new_formula), new_result_type,
             )
 
     # Update measurement slots

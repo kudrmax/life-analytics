@@ -63,6 +63,8 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `values_number` — entry_id (PK/FK), value INTEGER
 - `values_scale` — entry_id (PK/FK), value INTEGER, scale_min, scale_max, scale_step (stores context at time of entry)
 - `scale_config` — metric_id (PK/FK), scale_min, scale_max, scale_step (current config for rendering)
+- `correlation_reports` — id, user_id (FK), status ('running'/'done'/'error'), period_start, period_end, created_at, finished_at
+- `correlation_pairs` — id, report_id (FK), metric_a_id, metric_b_id, slot_a_id, slot_b_id, label_a, label_b, type_a, type_b, correlation (FLOAT), data_points (INTEGER)
 
 **Entry uniqueness (partial indexes):** Metrics without slots: `UNIQUE(metric_id, user_id, date) WHERE slot_id IS NULL`. Metrics with slots: `UNIQUE(metric_id, user_id, date, slot_id) WHERE slot_id IS NOT NULL`.
 
@@ -74,11 +76,21 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 
 ### Frontend (Vanilla JS SPA)
 
-- `index.html` — single entry point with nav, Lucide icons (CDN), emoji-picker-element (CDN)
+- `index.html` — single entry point with nav, Lucide icons (CDN), emoji-picker-element (CDN), Chart.js (CDN)
 - `config.js` — `window.API_BASE` (set by run.sh for local dev, empty for Docker/nginx proxy)
 - `js/api.js` — API client, token in localStorage (`la_auth_token`), auto-redirect on 401
 - `js/app.js` — all page logic: routing, rendering, event handling
 - `css/style.css` — dark/light theme via CSS custom properties
+
+**Navigation:** Сегодня, История, Статистика (бывший Дашборд), Настройки.
+
+**Routing:** `navigateTo(page, params = {})` — поддерживает параметры (e.g. `{ metricId }`, `{ openAddModal: true }`).
+
+**Pages:**
+- Сегодня (today): ввод метрик за текущий день; `today-actions` кнопки «Добавить метрику» / «Редактировать метрики»
+- Статистика (dashboard): `stats-header` с выбором периода, тренды с мини-чартами, корреляционные отчёты
+- Детализация метрики (metric-detail): Chart.js графики (bar для bool, line для остальных); переход через `navigateTo('metric-detail', { metricId })`; `detailChartInstance` глобальная переменная для cleanup
+- Настройки (settings): принимает `{ openAddModal: true }` для автооткрытия модалки добавления метрики
 
 **Event delegation pattern:** `#metrics-form` element persists across re-renders (innerHTML replaced). Event listeners (click, change) are attached once via `data-handlersAttached` guard in `attachInputHandlers()` to prevent duplicate async handlers.
 
@@ -111,6 +123,19 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 6. `routers/analytics.py` — `_extract_numeric` + value_table selection in `trends` and `values_by_date`; include extra columns (e.g. scale context) in SELECT
 7. `routers/export_import.py` — type validation on import + value parsing + config export/import
 8. `frontend/js/app.js` — render function, input handlers, history display, settings type label, modal (preview + radio + type hint + config fields)
+
+**Analytics endpoints:**
+- `GET /api/analytics/trends` — тренды метрик за период
+- `GET /api/analytics/metric-stats` — статистика по метрике (streaks, avg, min/max)
+- `POST /api/analytics/correlation-report` — запуск фонового расчёта всех попарных корреляций
+- `GET /api/analytics/correlation-reports` — список отчётов
+- `GET /api/analytics/correlation-report/{id}` — детали отчёта с парами
+
+**Correlation reports pattern:**
+- Background: `asyncio.create_task(_compute_report(...))` в том же процессе
+- Data sources: каждая метрика со слотами → N+1 sources (среднее + каждый слот)
+- P-value: вычисляется на лету при GET через `_p_value(r, n)` (t-test + beta distribution)
+- Фронтенд: polling каждые 3 секунды до завершения
 
 **Data isolation:** All queries filter by `current_user["id"]`. Return 404 (not 403) on unauthorized access.
 

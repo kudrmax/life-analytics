@@ -30,7 +30,11 @@
       "WebFetch(domain:www.chartjs.org)",
       "WebFetch(domain:apexcharts.com)",
       "WebFetch(domain:leeoniya.github.io)",
-      "WebFetch(domain:frappe.io)"
+      "WebFetch(domain:frappe.io)",
+      "Bash(docker compose:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker:*)",
+      "Bash(node:*)"
     ]
   }
 }

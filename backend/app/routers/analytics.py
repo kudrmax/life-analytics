@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import math
 from collections import defaultdict
@@ -11,6 +12,16 @@ from pydantic import BaseModel
 from app import database as _db_module
 from app.database import get_db
 from app.auth import get_current_user
+from app.formula import convert_metric_value, evaluate_formula, get_referenced_metric_ids
+
+
+def _parse_formula(raw):
+    """Parse formula from DB — may be JSON string or list."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return json.loads(raw)
+    return raw
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +105,113 @@ async def _values_by_date_for_slot(
         *params,
     )
     return _aggregate_by_date(rows, metric_type)
+
+
+async def _raw_values_by_date(
+    conn, metric_id: int, metric_type: str,
+    start_date, end_date, user_id: int,
+) -> dict[str, float]:
+    """Get values by date using convert_metric_value (scale→0..1, not 0..100).
+
+    Used for computed metric evaluation to ensure consistent normalization.
+    Multi-slot entries are averaged per day.
+    """
+    value_table, extra_cols = _get_value_table(metric_type)
+
+    # For scale, we need scale_config for normalization
+    scale_min, scale_max = None, None
+    if metric_type == "scale":
+        cfg = await conn.fetchrow(
+            "SELECT scale_min, scale_max FROM scale_config WHERE metric_id = $1",
+            metric_id,
+        )
+        if cfg:
+            scale_min, scale_max = cfg["scale_min"], cfg["scale_max"]
+
+    rows = await conn.fetch(
+        f"""SELECT e.date, v.value{extra_cols}
+            FROM entries e
+            JOIN {value_table} v ON v.entry_id = e.id
+            WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
+              AND e.user_id = $4
+            ORDER BY e.date""",
+        metric_id, start_date, end_date, user_id,
+    )
+
+    day_values: dict[str, list[float]] = defaultdict(list)
+    for r in rows:
+        raw = r["value"]
+        if metric_type == "time":
+            # raw is TIMESTAMPTZ
+            cv = raw.hour * 60 + raw.minute if raw else None
+        elif metric_type == "bool":
+            cv = 1.0 if raw else 0.0
+        elif metric_type == "scale":
+            # Use per-entry context if available, else scale_config
+            s_min = r.get("scale_min", scale_min) if r.get("scale_min") is not None else scale_min
+            s_max = r.get("scale_max", scale_max) if r.get("scale_max") is not None else scale_max
+            s_min_f = float(s_min) if s_min is not None else 1.0
+            s_max_f = float(s_max) if s_max is not None else 5.0
+            cv = (float(raw) - s_min_f) / (s_max_f - s_min_f) if s_max_f != s_min_f else 0.0
+        else:
+            cv = float(raw) if raw is not None else None
+        if cv is not None:
+            day_values[str(r["date"])].append(cv)
+
+    result = {}
+    for d, vals in day_values.items():
+        if metric_type == "bool":
+            result[d] = 1.0 if any(v == 1.0 for v in vals) else 0.0
+        else:
+            result[d] = mean(vals) if vals else 0.0
+    return result
+
+
+async def _values_by_date_for_computed(
+    conn, formula: list, result_type: str,
+    ref_ids: list[int], start_date, end_date, user_id: int,
+) -> dict[str, float]:
+    """Evaluate a computed metric for each date in range."""
+    if not ref_ids:
+        return {}
+
+    source_rows = await conn.fetch(
+        "SELECT id, type FROM metric_definitions WHERE id = ANY($1) AND user_id = $2",
+        ref_ids, user_id,
+    )
+    source_types = {r["id"]: r["type"] for r in source_rows}
+
+    # Fetch data for each referenced metric (using 0..1 scale normalization)
+    source_data: dict[int, dict[str, float]] = {}
+    for mid in ref_ids:
+        mt = source_types.get(mid)
+        if not mt:
+            continue
+        source_data[mid] = await _raw_values_by_date(
+            conn, mid, mt, start_date, end_date, user_id,
+        )
+
+    # Union of all dates
+    all_dates = set()
+    for d in source_data.values():
+        all_dates.update(d.keys())
+
+    result = {}
+    for d in sorted(all_dates):
+        values_for_day = {mid: source_data.get(mid, {}).get(d) for mid in ref_ids}
+        raw = evaluate_formula(formula, values_for_day, result_type)
+        if raw is not None:
+            if result_type == "bool":
+                result[d] = 1.0 if raw else 0.0
+            elif result_type == "time":
+                if isinstance(raw, str) and ":" in raw:
+                    h, m = map(int, raw.split(":"))
+                    result[d] = float(h * 60 + m)
+                else:
+                    result[d] = float(raw)
+            else:
+                result[d] = float(raw)
+    return result
 
 
 def _compute_pearson(
@@ -191,34 +309,47 @@ async def trends(
     current_user: dict = Depends(get_current_user),
 ):
     metric = await db.fetchrow(
-        "SELECT * FROM metric_definitions WHERE id = $1 AND user_id = $2",
+        """SELECT md.*, cc.formula, cc.result_type
+           FROM metric_definitions md
+           LEFT JOIN computed_config cc ON cc.metric_id = md.id
+           WHERE md.id = $1 AND md.user_id = $2""",
         metric_id, current_user["id"],
     )
     if not metric:
         return {"error": "Metric not found"}
 
     mt = metric["type"]
-    if mt == "time":
-        value_table = "values_time"
-    elif mt == "number":
-        value_table = "values_number"
-    elif mt == "scale":
-        value_table = "values_scale"
+    start_d = date_type.fromisoformat(start)
+    end_d = date_type.fromisoformat(end)
+
+    if mt == "computed":
+        formula = _parse_formula(metric.get("formula"))
+        result_type = metric.get("result_type") or "float"
+        ref_ids = get_referenced_metric_ids(formula)
+        aggregated = await _values_by_date_for_computed(
+            db, formula, result_type, ref_ids, start_d, end_d, current_user["id"],
+        )
     else:
-        value_table = "values_bool"
+        if mt == "time":
+            value_table = "values_time"
+        elif mt == "number":
+            value_table = "values_number"
+        elif mt == "scale":
+            value_table = "values_scale"
+        else:
+            value_table = "values_bool"
 
-    extra_cols = ", v.scale_min, v.scale_max, v.scale_step" if mt == "scale" else ""
-    rows = await db.fetch(
-        f"""SELECT e.date, v.value{extra_cols}
-            FROM entries e
-            JOIN {value_table} v ON v.entry_id = e.id
-            WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4
-            ORDER BY e.date""",
-        metric_id, date_type.fromisoformat(start), date_type.fromisoformat(end), current_user["id"],
-    )
+        extra_cols = ", v.scale_min, v.scale_max, v.scale_step" if mt == "scale" else ""
+        rows = await db.fetch(
+            f"""SELECT e.date, v.value{extra_cols}
+                FROM entries e
+                JOIN {value_table} v ON v.entry_id = e.id
+                WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4
+                ORDER BY e.date""",
+            metric_id, start_d, end_d, current_user["id"],
+        )
+        aggregated = _aggregate_by_date(rows, mt)
 
-    # Aggregate multi-slot entries by date
-    aggregated = _aggregate_by_date(rows, mt)
     points = [{"date": d, "value": v} for d, v in sorted(aggregated.items())]
 
     return {
@@ -240,11 +371,15 @@ async def correlations(
     current_user: dict = Depends(get_current_user),
 ):
     ma = await db.fetchrow(
-        "SELECT * FROM metric_definitions WHERE id = $1 AND user_id = $2",
+        """SELECT md.*, cc.formula, cc.result_type
+           FROM metric_definitions md LEFT JOIN computed_config cc ON cc.metric_id = md.id
+           WHERE md.id = $1 AND md.user_id = $2""",
         metric_a, current_user["id"],
     )
     mb = await db.fetchrow(
-        "SELECT * FROM metric_definitions WHERE id = $1 AND user_id = $2",
+        """SELECT md.*, cc.formula, cc.result_type
+           FROM metric_definitions md LEFT JOIN computed_config cc ON cc.metric_id = md.id
+           WHERE md.id = $1 AND md.user_id = $2""",
         metric_b, current_user["id"],
     )
     if not ma or not mb:
@@ -252,8 +387,20 @@ async def correlations(
 
     start_date = date_type.fromisoformat(start)
     end_date = date_type.fromisoformat(end)
-    a_by_date = await _values_by_date_for_slot(db, metric_a, ma["type"], start_date, end_date, current_user["id"])
-    b_by_date = await _values_by_date_for_slot(db, metric_b, mb["type"], start_date, end_date, current_user["id"])
+
+    if ma["type"] == "computed":
+        formula_a = _parse_formula(ma.get("formula"))
+        ref_ids_a = get_referenced_metric_ids(formula_a)
+        a_by_date = await _values_by_date_for_computed(db, formula_a, ma.get("result_type") or "float", ref_ids_a, start_date, end_date, current_user["id"])
+    else:
+        a_by_date = await _values_by_date_for_slot(db, metric_a, ma["type"], start_date, end_date, current_user["id"])
+
+    if mb["type"] == "computed":
+        formula_b = _parse_formula(mb.get("formula"))
+        ref_ids_b = get_referenced_metric_ids(formula_b)
+        b_by_date = await _values_by_date_for_computed(db, formula_b, mb.get("result_type") or "float", ref_ids_b, start_date, end_date, current_user["id"])
+    else:
+        b_by_date = await _values_by_date_for_slot(db, metric_b, mb["type"], start_date, end_date, current_user["id"])
 
     r, n = _compute_pearson(a_by_date, b_by_date)
 
@@ -284,7 +431,10 @@ async def metric_stats(
     current_user: dict = Depends(get_current_user),
 ):
     metric = await db.fetchrow(
-        "SELECT * FROM metric_definitions WHERE id = $1 AND user_id = $2",
+        """SELECT md.*, cc.formula, cc.result_type
+           FROM metric_definitions md
+           LEFT JOIN computed_config cc ON cc.metric_id = md.id
+           WHERE md.id = $1 AND md.user_id = $2""",
         metric_id, current_user["id"],
     )
     if not metric:
@@ -294,6 +444,43 @@ async def metric_stats(
     start_date = date_type.fromisoformat(start)
     end_date = date_type.fromisoformat(end)
     total_days = (end_date - start_date).days + 1
+
+    if mt == "computed":
+        formula = _parse_formula(metric.get("formula"))
+        rt = metric.get("result_type") or "float"
+        ref_ids = get_referenced_metric_ids(formula)
+        aggregated = await _values_by_date_for_computed(
+            db, formula, rt, ref_ids, start_date, end_date, current_user["id"],
+        )
+        total_entries = len(aggregated)
+        fill_rate = round(total_entries / total_days * 100, 1) if total_days > 0 else 0
+        result = {
+            "metric_id": metric_id, "metric_type": "computed", "result_type": rt,
+            "total_entries": total_entries, "total_days": total_days, "fill_rate": fill_rate,
+        }
+        values = sorted(aggregated.values())
+        if rt == "bool":
+            yes_count = sum(1 for v in values if v == 1.0)
+            result.update({
+                "yes_percent": round(yes_count / total_entries * 100, 1) if total_entries else 0,
+                "yes_count": yes_count, "no_count": total_entries - yes_count,
+            })
+        elif rt == "time":
+            if values:
+                avg = mean(values)
+                result.update({
+                    "average": f"{int(avg) // 60:02d}:{int(avg) % 60:02d}",
+                    "earliest": f"{int(min(values)) // 60:02d}:{int(min(values)) % 60:02d}",
+                    "latest": f"{int(max(values)) // 60:02d}:{int(max(values)) % 60:02d}",
+                })
+        else:
+            if values:
+                result.update({
+                    "average": round(mean(values), 2),
+                    "min": round(min(values), 2),
+                    "max": round(max(values), 2),
+                })
+        return result
 
     if mt == "time":
         value_table = "values_time"
@@ -447,25 +634,51 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             for s in slots_rows:
                 slots_by_metric[s["metric_id"]].append(s)
 
-            # Build data sources: (metric_id, slot_id, type)
+            # Load computed_config for computed metrics
+            computed_cfgs = {}
+            computed_ids = [m["id"] for m in metrics_rows if m["type"] == "computed"]
+            if computed_ids:
+                cc_rows = await conn.fetch(
+                    "SELECT metric_id, formula, result_type FROM computed_config WHERE metric_id = ANY($1)",
+                    computed_ids,
+                )
+                computed_cfgs = {r["metric_id"]: r for r in cc_rows}
+
+            # Build data sources: (metric_id, slot_id, type, label)
+            metric_names = {m["id"]: m["name"] for m in metrics_rows}
             sources = []
             for m in metrics_rows:
                 mid = m["id"]
                 mt = m["type"]
+                if mt == "computed":
+                    sources.append((mid, None, mt, m["name"]))
+                    continue
                 metric_slots = slots_by_metric.get(mid, [])
                 if metric_slots:
-                    sources.append((mid, None, mt))
+                    sources.append((mid, None, mt, m["name"]))
                     for s in metric_slots:
-                        sources.append((mid, s["id"], mt))
+                        sources.append((mid, s["id"], mt, f"{m['name']} — {s['label']}"))
                 else:
-                    sources.append((mid, None, mt))
+                    sources.append((mid, None, mt, m["name"]))
 
             # Fetch data for each source
             source_data = {}
-            for i, (mid, sid, mt) in enumerate(sources):
-                source_data[i] = await _values_by_date_for_slot(
-                    conn, mid, mt, start_date, end_date, user_id, slot_id=sid,
-                )
+            for i, (mid, sid, mt, _label) in enumerate(sources):
+                if mt == "computed":
+                    cfg = computed_cfgs.get(mid)
+                    if cfg and cfg["formula"]:
+                        formula = _parse_formula(cfg["formula"])
+                        rt = cfg["result_type"] or "float"
+                        ref_ids = get_referenced_metric_ids(formula)
+                        source_data[i] = await _values_by_date_for_computed(
+                            conn, formula, rt, ref_ids, start_date, end_date, user_id,
+                        )
+                    else:
+                        source_data[i] = {}
+                else:
+                    source_data[i] = await _values_by_date_for_slot(
+                        conn, mid, mt, start_date, end_date, user_id, slot_id=sid,
+                    )
 
             # Compute all pairs (i < j, different metrics only)
             pairs_to_insert = []
@@ -480,6 +693,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             report_id,
                             si[0], sj[0],       # metric_a_id, metric_b_id
                             si[1], sj[1],       # slot_a_id, slot_b_id
+                            si[3], sj[3],       # label_a, label_b
                             si[2], sj[2],       # type_a, type_b
                             r, n,
                         ))
@@ -489,8 +703,8 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 await conn.executemany(
                     """INSERT INTO correlation_pairs
                        (report_id, metric_a_id, metric_b_id, slot_a_id, slot_b_id,
-                        type_a, type_b, correlation, data_points)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)""",
+                        label_a, label_b, type_a, type_b, correlation, data_points)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)""",
                     pairs_to_insert,
                 )
 

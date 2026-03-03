@@ -186,7 +186,7 @@ nav button:hover { color: var(--text); }
 .today-actions {
     display: flex;
     gap: 8px;
-    justify-content: center;
+    justify-content: flex-start;
     margin: 20px 0 8px;
     padding-bottom: 80px;
 }
@@ -1789,4 +1789,205 @@ emoji-picker {
     width: 22px;
     height: 22px;
     color: var(--text-dim);
+}
+
+/* ─── Computed Metrics ─── */
+.computed-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    background: var(--accent);
+    color: #fff;
+    border-radius: 4px;
+    opacity: 0.8;
+    margin-left: 6px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+.computed-value {
+    font-size: 14px;
+    font-weight: 600;
+    text-align: left;
+    padding: 2px 0;
+    color: var(--text);
+}
+
+.computed-value.empty {
+    color: var(--text-dim);
+    font-weight: 400;
+}
+
+/* ─── Formula Builder ─── */
+.formula-tokens {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-height: 40px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.formula-tokens-empty {
+    color: var(--text-dim);
+    font-size: 12px;
+    padding: 4px;
+}
+
+.formula-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.formula-chip-metric {
+    background: var(--accent);
+    color: #fff;
+}
+
+.formula-chip-number {
+    background: var(--green);
+    color: #fff;
+}
+
+.formula-chip-op {
+    background: var(--surface2);
+    color: var(--text);
+    font-weight: 700;
+    font-size: 15px;
+    padding: 2px 6px;
+}
+
+.formula-chip-paren {
+    background: var(--surface2);
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 15px;
+    padding: 2px 6px;
+}
+
+.chip-remove {
+    background: none;
+    border: none;
+    color: inherit;
+    opacity: 0.6;
+    cursor: pointer;
+    padding: 0 1px;
+    font-size: 13px;
+    line-height: 1;
+    margin-left: 2px;
+}
+
+.chip-remove:hover {
+    opacity: 1;
+}
+
+.formula-palette {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.formula-op-buttons {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.formula-op-btn {
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.formula-op-btn:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+.formula-number-add {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.formula-number-add input {
+    width: 80px;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+}
+
+.formula-number-add button,
+.formula-clear-btn {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.formula-number-add button:hover,
+.formula-clear-btn:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+.formula-metric-select {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.formula-result-type {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.formula-result-type select {
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 13px;
+}
+
+.formula-error {
+    color: var(--red);
+    font-size: 12px;
+    margin-top: 4px;
 }

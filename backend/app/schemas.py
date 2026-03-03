@@ -7,6 +7,7 @@ class MetricType(str, Enum):
     time = "time"
     number = "number"
     scale = "scale"
+    computed = "computed"
 
 
 class MeasurementSlotOut(BaseModel):
@@ -27,6 +28,8 @@ class MetricDefinitionCreate(BaseModel):
     scale_max: int | None = None
     scale_step: int | None = None
     slot_labels: list[str] | None = None
+    formula: list[dict] | None = None
+    result_type: str | None = None
 
 
 class MetricDefinitionUpdate(BaseModel):
@@ -39,6 +42,8 @@ class MetricDefinitionUpdate(BaseModel):
     scale_max: int | None = None
     scale_step: int | None = None
     slot_labels: list[str] | None = None
+    formula: list[dict] | None = None
+    result_type: str | None = None
 
 
 class MetricDefinitionOut(BaseModel):
@@ -54,6 +59,8 @@ class MetricDefinitionOut(BaseModel):
     scale_max: int | None = None
     scale_step: int | None = None
     slots: list[MeasurementSlotOut] = []
+    formula: list[dict] | None = None
+    result_type: str | None = None
 
 
 class EntryCreate(BaseModel):

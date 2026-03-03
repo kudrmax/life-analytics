@@ -269,11 +269,11 @@ async function renderToday(container) {
         </div>
         <div id="metrics-form"></div>
         <div class="today-actions">
-            <button class="btn-primary" id="today-add-metric">
-                <i data-lucide="plus"></i> Добавить метрику
-            </button>
             <button class="btn-small" id="today-edit-metrics">
                 <i data-lucide="settings"></i> Редактировать метрики
+            </button>
+            <button class="btn-small" id="today-add-metric">
+                <i data-lucide="plus"></i> Добавить метрику
             </button>
         </div>
     `;
@@ -323,10 +323,11 @@ async function renderTodayForm() {
     form.innerHTML = html;
     attachInputHandlers();
 
-    // Update progress bar
+    // Update progress bar (skip computed metrics)
     let total = 0;
     let filled = 0;
     for (const m of summary.metrics) {
+        if (m.type === 'computed') continue;
         if (m.slots && m.slots.length > 0) {
             total += m.slots.length;
             filled += m.slots.filter(s => s.entry !== null).length;
@@ -343,6 +344,33 @@ async function renderTodayForm() {
 }
 
 function renderMetricInput(m) {
+    // Computed metric — read-only display
+    if (m.type === 'computed') {
+        const entry = m.entry;
+        const val = entry ? entry.value : null;
+        const isFilled = val !== null && val !== undefined;
+        const rt = m.result_type || 'float';
+        let displayVal;
+        if (!isFilled) {
+            displayVal = '—';
+        } else if (rt === 'bool') {
+            displayVal = val ? 'Да' : 'Нет';
+        } else if (rt === 'time') {
+            displayVal = String(val);
+        } else if (rt === 'int') {
+            displayVal = String(Math.round(val));
+        } else {
+            displayVal = typeof val === 'number' ? val.toFixed(2) : String(val);
+        }
+        return `<div class="metric-card ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="computed">
+            <div class="metric-header">
+                <label class="metric-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</label>
+                <span class="computed-badge">авто</span>
+            </div>
+            <div class="computed-value ${isFilled ? '' : 'empty'}">${displayVal}</div>
+        </div>`;
+    }
+
     // Multi-slot metric
     if (m.slots && m.slots.length > 0) {
         const allFilled = m.slots.every(s => s.entry !== null);
@@ -684,10 +712,11 @@ async function showDayDetail(date) {
     const detail = document.getElementById('day-detail');
     const summary = await api.getDailySummary(date);
 
-    // Update progress bar
+    // Update progress bar (skip computed metrics)
     let total = 0;
     let filled = 0;
     for (const m of summary.metrics) {
+        if (m.type === 'computed') continue;
         if (m.slots && m.slots.length > 0) {
             total += m.slots.length;
             filled += m.slots.filter(s => s.entry !== null).length;
@@ -715,13 +744,13 @@ async function showDayDetail(date) {
             if (filledSlots.length === 0) continue;
             hasAny = true;
             for (const s of filledSlots) {
-                const valStr = _formatEntryValue(s.entry, m.type);
+                const valStr = _formatEntryValue(s.entry, m.type, m.result_type);
                 html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name} — ${s.label}</span><span class="summary-value">${valStr}</span></div>`;
             }
         } else {
             if (!m.entry) continue;
             hasAny = true;
-            const valStr = _formatEntryValue(m.entry, m.type);
+            const valStr = _formatEntryValue(m.entry, m.type, m.result_type);
             html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span><span class="summary-value">${valStr}</span></div>`;
         }
     }
@@ -734,7 +763,16 @@ async function showDayDetail(date) {
     detail.innerHTML = html;
 }
 
-function _formatEntryValue(entry, type) {
+function _formatEntryValue(entry, type, resultType) {
+    if (type === 'computed') {
+        const v = entry.value;
+        if (v === null || v === undefined) return '—';
+        const rt = resultType || 'float';
+        if (rt === 'bool') return v ? 'Да' : 'Нет';
+        if (rt === 'time') return String(v);
+        if (rt === 'int') return String(Math.round(v));
+        return typeof v === 'number' ? v.toFixed(2) : String(v);
+    }
     if (type === 'time') {
         return entry.value || '—';
     } else if (type === 'number' || type === 'scale') {
@@ -1004,6 +1042,109 @@ function renderMiniCharts() {
 
 // ─── Metric Detail Page ───
 let detailChartInstance = null;
+let formulaTokens = [];
+let formulaBuilderInitialized = false;
+
+function renderFormulaTokens() {
+    const container = document.getElementById('nm-formula-tokens');
+    if (!container) return;
+    if (formulaTokens.length === 0) {
+        container.innerHTML = '<span class="formula-tokens-empty">Добавьте метрики и операторы</span>';
+        return;
+    }
+    const opLabels = {'+': '+', '-': '−', '*': '×', '/': '÷'};
+    container.innerHTML = formulaTokens.map((tok, i) => {
+        if (tok.type === 'metric') {
+            const icon = tok.icon ? `<span class="metric-icon">${tok.icon}</span>` : '';
+            return `<span class="formula-chip formula-chip-metric">${icon}${tok.name || tok.slug}<button type="button" class="chip-remove" data-idx="${i}">&times;</button></span>`;
+        } else if (tok.type === 'op') {
+            return `<span class="formula-chip formula-chip-op">${opLabels[tok.value] || tok.value}<button type="button" class="chip-remove" data-idx="${i}">&times;</button></span>`;
+        } else if (tok.type === 'number') {
+            return `<span class="formula-chip formula-chip-number">${tok.value}<button type="button" class="chip-remove" data-idx="${i}">&times;</button></span>`;
+        } else if (tok.type === 'lparen') {
+            return `<span class="formula-chip formula-chip-paren">(<button type="button" class="chip-remove" data-idx="${i}">&times;</button></span>`;
+        } else if (tok.type === 'rparen') {
+            return `<span class="formula-chip formula-chip-paren">)<button type="button" class="chip-remove" data-idx="${i}">&times;</button></span>`;
+        }
+        return '';
+    }).join('');
+    container.querySelectorAll('.chip-remove').forEach(btn => {
+        btn.addEventListener('click', () => {
+            formulaTokens.splice(parseInt(btn.dataset.idx), 1);
+            renderFormulaTokens();
+        });
+    });
+}
+
+function populateFormulaMetricSelect(editingMetricId) {
+    const sel = document.getElementById('nm-formula-metric-select');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">Добавить метрику...</option>';
+    metrics.filter(m => m.type !== 'computed' && m.enabled && m.id !== editingMetricId).forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = (m.icon || '') + ' ' + m.name;
+        opt.dataset.slug = m.slug;
+        opt.dataset.name = m.name;
+        opt.dataset.icon = m.icon || '';
+        sel.appendChild(opt);
+    });
+}
+
+function setupFormulaBuilderHandlers(overlay) {
+    if (formulaBuilderInitialized) return;
+    formulaBuilderInitialized = true;
+
+    const metricSelect = overlay.querySelector('#nm-formula-metric-select');
+    if (metricSelect) {
+        metricSelect.addEventListener('change', () => {
+            const val = metricSelect.value;
+            if (!val) return;
+            const opt = metricSelect.selectedOptions[0];
+            formulaTokens.push({
+                type: 'metric',
+                id: parseInt(val),
+                slug: opt.dataset.slug,
+                name: opt.dataset.name,
+                icon: opt.dataset.icon || undefined,
+            });
+            metricSelect.value = '';
+            renderFormulaTokens();
+        });
+    }
+
+    overlay.querySelectorAll('.formula-op-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const op = btn.dataset.op;
+            if (op === '(' || op === ')') {
+                formulaTokens.push({ type: op === '(' ? 'lparen' : 'rparen' });
+            } else {
+                formulaTokens.push({ type: 'op', value: op });
+            }
+            renderFormulaTokens();
+        });
+    });
+
+    const addNumBtn = overlay.querySelector('#nm-formula-add-num');
+    const numInput = overlay.querySelector('#nm-formula-num-input');
+    if (addNumBtn && numInput) {
+        addNumBtn.addEventListener('click', () => {
+            const v = parseFloat(numInput.value);
+            if (isNaN(v)) return;
+            formulaTokens.push({ type: 'number', value: v });
+            numInput.value = '';
+            renderFormulaTokens();
+        });
+    }
+
+    const clearBtn = overlay.querySelector('#nm-formula-clear-last');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+            formulaTokens.pop();
+            renderFormulaTokens();
+        });
+    }
+}
 
 function minutesToHHMM(m) {
     const h = Math.floor(m / 60);
@@ -1069,11 +1210,13 @@ async function loadMetricDetail(metricId, metric, start, end) {
     const points = trend.points || [];
     const labels = points.map(p => p.date);
     const values = points.map(p => p.value);
-    const mt = metric.type;
+    const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type;
     const showPoints = points.length <= 30;
 
     let chartConfig;
-    if (mt === 'bool') {
+    // Map computed result types to chart-compatible types
+    const chartType = (mt === 'int' || mt === 'float') ? 'number' : mt;
+    if (chartType === 'bool') {
         chartConfig = {
             type: 'bar',
             data: {
@@ -1095,9 +1238,9 @@ async function loadMetricDetail(metricId, metric, start, end) {
         };
     } else {
         const yConfig = {};
-        if (mt === 'time') {
+        if (chartType === 'time') {
             yConfig.ticks = { callback: v => minutesToHHMM(v) };
-        } else if (mt === 'scale') {
+        } else if (chartType === 'scale') {
             yConfig.min = 0; yConfig.max = 100;
             yConfig.ticks = { callback: v => v + '%' };
         }
@@ -1124,7 +1267,7 @@ async function loadMetricDetail(metricId, metric, start, end) {
                 },
             },
         };
-        if (mt === 'time') {
+        if (chartType === 'time') {
             chartConfig.options.plugins.tooltip = {
                 callbacks: { label: ctx => minutesToHHMM(ctx.parsed.y) }
             };
@@ -1133,8 +1276,9 @@ async function loadMetricDetail(metricId, metric, start, end) {
 
     detailChartInstance = new Chart(ctx, chartConfig);
 
-    // Render stats
-    renderDetailStats(stats, mt);
+    // Render stats (use result_type for computed)
+    const statsType = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type;
+    renderDetailStats(stats, statsType);
 }
 
 function renderDetailStats(stats, metricType) {
@@ -1158,12 +1302,12 @@ function renderDetailStats(stats, metricType) {
             <div class="stat-card"><div class="stat-value">${stats.earliest}</div><div class="stat-label">Раньше всего</div></div>
             <div class="stat-card"><div class="stat-value">${stats.latest}</div><div class="stat-label">Позже всего</div></div>
         `;
-    } else if (metricType === 'number') {
+    } else if (metricType === 'number' || metricType === 'int' || metricType === 'float') {
         cards += `
             <div class="stat-card"><div class="stat-value">${stats.average}</div><div class="stat-label">Среднее</div></div>
             <div class="stat-card"><div class="stat-value">${stats.min}</div><div class="stat-label">Мин</div></div>
             <div class="stat-card"><div class="stat-value">${stats.max}</div><div class="stat-label">Макс</div></div>
-            <div class="stat-card"><div class="stat-value">${stats.median}</div><div class="stat-label">Медиана</div></div>
+            ${stats.median !== undefined ? `<div class="stat-card"><div class="stat-value">${stats.median}</div><div class="stat-label">Медиана</div></div>` : ''}
         `;
     } else if (metricType === 'scale') {
         cards += `
@@ -1208,6 +1352,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                 : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
+                : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
             html += `<div class="setting-row">
                 <div class="setting-info">
@@ -1237,6 +1382,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                 : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
+                : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
             html += `<div class="setting-row archived-row">
                 <div class="setting-info">
@@ -1447,6 +1593,9 @@ function showMetricModal(mode = 'create', existingMetric = null) {
             }
             return `<div class="scale-buttons">${buttons}</div>`;
         }
+        if (type === 'computed') {
+            return `<div class="computed-value empty">= ?</div>`;
+        }
         return `<div class="bool-buttons">
             <button class="bool-btn" data-value="true">Да</button>
             <button class="bool-btn" data-value="false">Нет</button>
@@ -1465,6 +1614,10 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         if (type === 'scale') {
             return `<span class="label-text">Тип: Шкала</span>
                     <span class="label-hint">Оценка по шкале с настраиваемым диапазоном</span>`;
+        }
+        if (type === 'computed') {
+            return `<span class="label-text">Тип: Формула</span>
+                    <span class="label-hint">Вычисляется автоматически из других метрик</span>`;
         }
         return `<span class="label-text">Тип: Да/Нет</span>
                 <span class="label-hint">Простой переключатель (было / не было)</span>`;
@@ -1521,7 +1674,43 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     <span class="label-hint">От 1 до 5, шаг 1 → [1] [2] [3] [4] [5]<br>От 1 до 5, шаг 2 → [1] [3] [5]</span>
                 </div>
                 ` : ''}
-                <div class="form-section" id="nm-slots-section">
+                ${currentType === 'computed' ? `
+                <div class="form-section" id="nm-computed-config" style="display: block">
+                    <span class="label-text">Формула</span>
+                    <div class="formula-tokens" id="nm-formula-tokens">
+                        <span class="formula-tokens-empty">Добавьте метрики и операторы</span>
+                    </div>
+                    <div class="formula-palette">
+                        <select class="formula-metric-select" id="nm-formula-metric-select">
+                            <option value="">Добавить метрику...</option>
+                        </select>
+                        <div class="formula-op-buttons">
+                            <button type="button" class="formula-op-btn" data-op="+">+</button>
+                            <button type="button" class="formula-op-btn" data-op="-">−</button>
+                            <button type="button" class="formula-op-btn" data-op="*">×</button>
+                            <button type="button" class="formula-op-btn" data-op="/">÷</button>
+                            <button type="button" class="formula-op-btn" data-op="(">(</button>
+                            <button type="button" class="formula-op-btn" data-op=")">)</button>
+                        </div>
+                        <div class="formula-number-add">
+                            <input type="number" id="nm-formula-num-input" placeholder="0" step="any">
+                            <button type="button" id="nm-formula-add-num">Число</button>
+                            <button type="button" class="formula-clear-btn" id="nm-formula-clear-last">← Удалить</button>
+                        </div>
+                    </div>
+                    <div class="formula-result-type">
+                        <span class="label-text">Тип результата</span>
+                        <select id="nm-result-type">
+                            <option value="float" ${existingMetric?.result_type === 'float' ? 'selected' : ''}>Дробное число</option>
+                            <option value="int" ${existingMetric?.result_type === 'int' ? 'selected' : ''}>Целое число</option>
+                            <option value="bool" ${existingMetric?.result_type === 'bool' ? 'selected' : ''}>Да/Нет</option>
+                            <option value="time" ${existingMetric?.result_type === 'time' ? 'selected' : ''}>Время</option>
+                        </select>
+                    </div>
+                    <span class="label-hint">Поддерживаются +, −, ×, ÷ и скобки.</span>
+                </div>
+                ` : ''}
+                <div class="form-section" id="nm-slots-section" ${currentType === 'computed' ? 'style="display:none"' : ''}>
                     <span class="label-text">Замеры в день</span>
                     <div class="slot-labels-list" id="nm-slot-labels"></div>
                     <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить замер</button>
@@ -1547,6 +1736,10 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                             <input type="radio" name="nm-type" value="scale" ${currentType === 'scale' ? 'checked' : ''}>
                             <span>Шкала</span>
                         </label>
+                        <label class="radio-inline">
+                            <input type="radio" name="nm-type" value="computed" ${currentType === 'computed' ? 'checked' : ''}>
+                            <span>Формула</span>
+                        </label>
                     </div>
                 </div>
                 <div class="form-section" id="nm-scale-config" style="display: ${currentType === 'scale' ? 'flex' : 'none'}">
@@ -1567,7 +1760,41 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     </div>
                     <span class="label-hint">От 1 до 5, шаг 1 → [1] [2] [3] [4] [5]<br>От 1 до 5, шаг 2 → [1] [3] [5]<br>От 1 до 4, шаг 2 → [1] [3]</span>
                 </div>
-                <div class="form-section" id="nm-slots-section">
+                <div class="form-section" id="nm-computed-config" style="display: ${currentType === 'computed' ? 'block' : 'none'}">
+                    <span class="label-text">Формула</span>
+                    <div class="formula-tokens" id="nm-formula-tokens">
+                        <span class="formula-tokens-empty">Добавьте метрики и операторы</span>
+                    </div>
+                    <div class="formula-palette">
+                        <select class="formula-metric-select" id="nm-formula-metric-select">
+                            <option value="">Добавить метрику...</option>
+                        </select>
+                        <div class="formula-op-buttons">
+                            <button type="button" class="formula-op-btn" data-op="+">+</button>
+                            <button type="button" class="formula-op-btn" data-op="-">−</button>
+                            <button type="button" class="formula-op-btn" data-op="*">×</button>
+                            <button type="button" class="formula-op-btn" data-op="/">÷</button>
+                            <button type="button" class="formula-op-btn" data-op="(">(</button>
+                            <button type="button" class="formula-op-btn" data-op=")">)</button>
+                        </div>
+                        <div class="formula-number-add">
+                            <input type="number" id="nm-formula-num-input" placeholder="0" step="any">
+                            <button type="button" id="nm-formula-add-num">Число</button>
+                            <button type="button" class="formula-clear-btn" id="nm-formula-clear-last">← Удалить</button>
+                        </div>
+                    </div>
+                    <div class="formula-result-type">
+                        <span class="label-text">Тип результата</span>
+                        <select id="nm-result-type">
+                            <option value="float">Дробное число</option>
+                            <option value="int">Целое число</option>
+                            <option value="bool">Да/Нет</option>
+                            <option value="time">Время</option>
+                        </select>
+                    </div>
+                    <span class="label-hint">Поддерживаются +, −, ×, ÷ и скобки. Время можно комбинировать только с временем.</span>
+                </div>
+                <div class="form-section" id="nm-slots-section" style="display: ${currentType === 'computed' ? 'none' : ''}">
                     <span class="label-text">Замеры в день</span>
                     <div class="slot-labels-list" id="nm-slot-labels"></div>
                     <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить замер</button>
@@ -1674,7 +1901,18 @@ function showMetricModal(mode = 'create', existingMetric = null) {
             radio.addEventListener('change', () => {
                 const selectedType = overlay.querySelector('input[name="nm-type"]:checked').value;
                 const scaleConfig = document.getElementById('nm-scale-config');
+                const computedConfig = document.getElementById('nm-computed-config');
+                const slotsSection = document.getElementById('nm-slots-section');
                 if (scaleConfig) scaleConfig.style.display = selectedType === 'scale' ? 'flex' : 'none';
+                if (computedConfig) computedConfig.style.display = selectedType === 'computed' ? 'block' : 'none';
+                if (slotsSection) slotsSection.style.display = selectedType === 'computed' ? 'none' : '';
+                if (selectedType === 'computed') {
+                    formulaTokens = [];
+                    formulaBuilderInitialized = false;
+                    renderFormulaTokens();
+                    populateFormulaMetricSelect();
+                    setupFormulaBuilderHandlers(overlay);
+                }
                 updatePreview();
             });
         });
@@ -1694,6 +1932,19 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                 el.addEventListener('input', () => updatePreview());
             }
         });
+    } else if (currentType === 'computed') {
+        // Edit mode: pre-populate formula builder
+        formulaTokens = (existingMetric.formula || []).map(t => {
+            if (t.type === 'metric') {
+                const m = metrics.find(mm => mm.id === t.id);
+                return { ...t, name: m ? m.name : t.slug, icon: m ? m.icon : undefined };
+            }
+            return { ...t };
+        });
+        formulaBuilderInitialized = false;
+        renderFormulaTokens();
+        populateFormulaMetricSelect(existingMetric.id);
+        setupFormulaBuilderHandlers(overlay);
     }
 
     function setupPreviewInteractions() {
@@ -1806,20 +2057,37 @@ function showMetricModal(mode = 'create', existingMetric = null) {
             if (isEdit) {
                 const icon = document.getElementById('nm-icon').value;
                 const updateData = { name, category, icon };
+                if (existingMetric.type === 'computed') {
+                    if (formulaTokens.length === 0) {
+                        alert('Добавьте хотя бы один элемент в формулу');
+                        return;
+                    }
+                    updateData.formula = formulaTokens.map(t => {
+                        if (t.type === 'metric') return { type: 'metric', id: t.id, slug: t.slug };
+                        if (t.type === 'op') return { type: 'op', value: t.value };
+                        if (t.type === 'number') return { type: 'number', value: t.value };
+                        if (t.type === 'lparen') return { type: 'lparen' };
+                        if (t.type === 'rparen') return { type: 'rparen' };
+                        return t;
+                    });
+                    updateData.result_type = document.getElementById('nm-result-type').value;
+                }
                 if (existingMetric.type === 'scale') {
                     const sp = getScaleParams();
                     updateData.scale_min = sp.min;
                     updateData.scale_max = sp.max;
                     updateData.scale_step = sp.step;
                 }
-                // Send slot_labels if user configured slots
-                if (slotLabels.length >= 2) {
-                    updateData.slot_labels = slotLabels;
-                } else if (slotLabels.length === 0 && (!existingMetric.slots || existingMetric.slots.length === 0)) {
-                    // No slots before, no slots now — don't send
-                } else if (slotLabels.length < 2 && existingMetric.slots && existingMetric.slots.length > 0) {
-                    alert('Нельзя уменьшить количество замеров меньше 2. Удалите все поля, чтобы не менять настройку.');
-                    return;
+                // Send slot_labels if user configured slots (not for computed)
+                if (existingMetric.type !== 'computed') {
+                    if (slotLabels.length >= 2) {
+                        updateData.slot_labels = slotLabels;
+                    } else if (slotLabels.length === 0 && (!existingMetric.slots || existingMetric.slots.length === 0)) {
+                        // No slots before, no slots now — don't send
+                    } else if (slotLabels.length < 2 && existingMetric.slots && existingMetric.slots.length > 0) {
+                        alert('Нельзя уменьшить количество замеров меньше 2. Удалите все поля, чтобы не менять настройку.');
+                        return;
+                    }
                 }
                 await api.updateMetric(existingMetric.id, updateData);
             } else {
@@ -1849,7 +2117,23 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     createData.scale_step = sp.step;
                 }
 
-                if (slotLabels.length >= 2) {
+                if (selectedType === 'computed') {
+                    if (formulaTokens.length === 0) {
+                        alert('Добавьте хотя бы один элемент в формулу');
+                        return;
+                    }
+                    createData.formula = formulaTokens.map(t => {
+                        if (t.type === 'metric') return { type: 'metric', id: t.id, slug: t.slug };
+                        if (t.type === 'op') return { type: 'op', value: t.value };
+                        if (t.type === 'number') return { type: 'number', value: t.value };
+                        if (t.type === 'lparen') return { type: 'lparen' };
+                        if (t.type === 'rparen') return { type: 'rparen' };
+                        return t;
+                    });
+                    createData.result_type = document.getElementById('nm-result-type').value;
+                }
+
+                if (selectedType !== 'computed' && slotLabels.length >= 2) {
                     createData.slot_labels = slotLabels;
                 }
 

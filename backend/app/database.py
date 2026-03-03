@@ -46,6 +46,9 @@ async def init_db():
         await conn.execute("""
             ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'scale'
         """)
+        await conn.execute("""
+            ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'computed'
+        """)
 
         # Users
         await conn.execute("""
@@ -213,6 +216,15 @@ async def init_db():
         """)
         await conn.execute("""
             ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS type_b VARCHAR(20) NOT NULL DEFAULT ''
+        """)
+
+        # Computed metric config (formula stored as JSONB token list)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS computed_config (
+                metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
+                formula JSONB NOT NULL DEFAULT '[]',
+                result_type VARCHAR(10) NOT NULL DEFAULT 'float'
+            )
         """)
 
         # Indexes
