@@ -4,295 +4,112 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Life Analytics — a multi-user daily metrics tracker with JWT authentication, flexible metric configuration, multi-entry support, and ZIP export/import.
-
-## Architecture
-
-**Backend** (Python + FastAPI + SQLite) — standalone REST API with JWT authentication, fully decoupled from frontend.
-
-**Frontend** (Web SPA) — vanilla JS application with login/register pages, communicates with backend exclusively via REST API.
-
-### Authentication & Multi-User
-
-- **JWT tokens** with 7-day expiration (HS256 algorithm)
-- **Password hashing** using bcrypt (12 rounds)
-- **User isolation**: Each user has their own metrics and entries
-- **Default metrics**: 23 metrics automatically created on registration from `seed.py`
-- **Session management**: Token stored in localStorage, auto-redirect on 401
-
-Environment variables:
-- `LA_SECRET_KEY` — JWT signing key (default: "dev-secret-key-change-in-production")
-- `LA_DB_PATH` — database file path (default: "life_analytics.db")
-
-### Database Schema
-
-**Multi-tenant architecture** with complete data isolation:
-
-```
-users (1) ──→ (N) metric_configs  [ON DELETE CASCADE]
-users (1) ──→ (N) entries          [ON DELETE CASCADE]
-```
-
-**Key tables:**
-- `users` — id, username (unique), password_hash, created_at
-- `metric_configs` — id, user_id, name, type, frequency, source, config_json, enabled, sort_order
-  - PRIMARY KEY: (id, user_id) — allows same metric ID across different users
-- `entries` — id, metric_id, user_id, date, timestamp, value_json
-
-**JSON fields for flexibility:**
-- `config_json` — metric settings (min/max, options, compound fields with conditions)
-- `value_json` — entry values (varies by type: {"value": 5}, {"period": "morning", "value": 4}, etc.)
-
-**Indexes:** user_id on all tables, (metric_id, date) on entries, date on entries
-
-### Metric System
-
-**Types:** scale (1-5), boolean, number, time, enum, compound
-
-**Frequencies:**
-- **daily** — one entry per day
-- **multiple** — three entries per day (morning/day/evening) with automatic aggregation
-
-**Sources:** manual (default), todoist, google_calendar (integrations not yet implemented)
-
-**Compound metrics:** Support conditional fields using "condition" property (e.g., "planned == true" to show field only when another is true)
-
-**Default metrics location:** `backend/app/seed.py` — edit `DEFAULT_METRICS` list to customize metrics for new users
-
-### API Structure
-
-**Authentication:**
-- `POST /api/auth/register` — create user, seed default metrics, return JWT
-- `POST /api/auth/login` — authenticate + return JWT
-- `GET /api/auth/me` — get current user info
-
-**Core:**
-- `/api/metrics` — CRUD for metric definitions (protected)
-- `/api/entries` — CRUD for metric values (protected)
-- `/api/daily/{date}` — daily summary with aggregations (protected)
-
-**Analytics:**
-- `/api/analytics/trends` — time series for a metric
-- `/api/analytics/correlations` — Pearson correlation between two metrics
-- `/api/analytics/streaks` — consecutive days for boolean metrics
-
-**Export/Import:**
-- `GET /api/export/csv` — export ZIP archive with metrics.csv + entries.csv
-- `POST /api/export/import` — import ZIP archive (creates/updates metrics, imports entries)
-
-All endpoints except `/api/auth/*` require `Authorization: Bearer <token>` header.
-
-### Frontend Architecture
-
-**Single Page App** (vanilla JS) with:
-- Client-side routing (login/register/today/history/dashboard/settings)
-- Token-based authentication with auto-redirect
-- Event delegation pattern for dynamic content
-
-**Key files:**
-- `js/api.js` — API client with token management and 401 handling
-- `js/app.js` — routing, rendering, auth state, all page logic (1200+ lines)
-
-**Auth flow:**
-1. App loads → check token in localStorage
-2. If valid token → fetch user info → navigate to 'today'
-3. If no/invalid token → navigate to 'login'
-4. On 401 from any API call → clear token → redirect to login
-
-**UX patterns:**
-- Visual feedback: filled daily metrics dimmed (50% opacity)
-- Quick actions: +/- buttons for numbers, × clear button per metric
-- Period-based tracking: morning/day/evening sections for multiple-frequency metrics
-- Export: downloads ZIP file with metrics.csv + entries.csv
-- Import: file picker (accepts .zip) → upload → shows detailed summary (metrics: imported/updated, entries: imported/skipped/errors)
+Life Analytics — multi-user daily metrics tracker. FastAPI + PostgreSQL backend, vanilla JS SPA frontend, Docker Compose deployment.
 
 ## Commands
 
 ```bash
-# Initial setup (one-time)
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cd ..
+# Run everything (Docker Compose — preferred)
+./run.sh                    # or: docker compose up --build
+make up                     # detached mode with rebuild
 
-# Run backend + frontend
-./run.sh
-
-# Backend only (with auto-reload)
-cd backend
-source venv/bin/activate
+# Run locally (without Docker — needs local PostgreSQL)
+cd backend && source venv/bin/activate
 python -m uvicorn app.main:app --reload --port 8000
+cd frontend && python -m http.server 3000
 
-# Frontend only (static file server)
-cd frontend
-python -m http.server 3000
+# Logs
+make logs                   # all services
+make logs-backend           # backend only
 
-# View database schema
-sqlite3 backend/life_analytics.db ".schema"
+# Database access
+docker exec -it life-analytics-db-1 psql -U la_user -d life_analytics
 
-# Query database
-sqlite3 backend/life_analytics.db "SELECT * FROM users"
-
-# Count metrics per user
-sqlite3 backend/life_analytics.db "SELECT username, COUNT(m.id) FROM users u LEFT JOIN metric_configs m ON u.id = m.user_id GROUP BY username"
+# Restart / update
+make restart                # restart backend only
+make update                 # git pull + rebuild
+make down                   # stop all
 ```
 
-**URLs:**
-- Frontend: http://localhost:3000
-- Backend: http://localhost:8000
-- API docs: http://localhost:8000/docs
+**URLs:** Frontend :3000, Backend :8000, API docs :8000/docs, Health check: GET /api/health
 
-**Database:**
-- Location: `backend/life_analytics.db` (configurable via `LA_DB_PATH` env var)
-- WAL mode enabled for concurrent reads
-- Foreign keys enforced
-- Auto-created on first run
+**No tests exist in this project.**
 
-**Important:** On schema changes, remove `life_analytics.db` to recreate with new schema (or write migration).
+Frontend is served by `python -m http.server` (local) or nginx (Docker). Both serve files from disk on each request — no restart needed for JS/CSS/HTML changes, just refresh the browser.
 
-**Note:** No tests exist yet in this project.
+## Architecture
 
-## Project Structure
+### Backend (FastAPI + asyncpg + PostgreSQL)
+
+- `main.py` — FastAPI app with lifespan (creates/closes asyncpg pool, runs `init_db`)
+- `database.py` — asyncpg pool management, full DDL schema in `init_db()` (tables, enums, indexes)
+- `auth.py` — JWT (HS256, 7-day expiry), bcrypt hashing, `get_current_user` dependency
+- `schemas.py` — Pydantic models for all request/response types
+- `metric_helpers.py` — shared value read/write logic across routers
+
+**Routers** (all under `/api/`): `auth`, `metrics`, `entries`, `daily`, `analytics`, `export_import`
+
+### Database Schema (PostgreSQL)
+
+**Enum:** `metric_type` = 'bool' | 'time' | 'number'
+
+**Tables:**
+- `users` — id, username (unique), password_hash, created_at
+- `metric_definitions` — id, user_id (FK), slug, name, category, type (enum), enabled, sort_order; UNIQUE(user_id, slug)
+- `entries` — id, metric_id (FK), user_id (FK), date, recorded_at; UNIQUE(metric_id, user_id, date) — one entry per metric per day
+- `values_bool` — entry_id (PK/FK), value BOOLEAN
+- `values_time` — entry_id (PK/FK), value TIMESTAMPTZ
+- `values_number` — entry_id (PK/FK), value INTEGER
+
+**Value storage pattern:** Separate typed table per metric type (not JSON). Entry creation: INSERT into `entries` → INSERT into `values_{type}`, all within a transaction.
+
+### Frontend (Vanilla JS SPA)
+
+- `index.html` — single entry point with nav
+- `config.js` — `window.API_BASE` (set by run.sh for local dev, empty for Docker/nginx proxy)
+- `js/api.js` — API client, token in localStorage (`la_auth_token`), auto-redirect on 401
+- `js/app.js` — all page logic: routing, rendering, event handling (~1600 lines)
+- `css/style.css` — dark/light theme
+
+**Event delegation pattern:** `#metrics-form` element persists across re-renders (innerHTML replaced). Event listeners (click, change) are attached once via `data-handlersAttached` guard in `attachInputHandlers()` to prevent duplicate async handlers.
+
+### Deployment (Docker Compose)
+
+Three services: `db` (postgres:16-alpine), `backend` (Python 3.12-slim + uvicorn), `frontend` (nginx:alpine proxies `/api/` to backend).
+
+## Environment Variables
 
 ```
-backend/
-  app/
-    main.py            — FastAPI app, CORS, startup (init_db)
-    database.py        — SQLite connection, schema init with users table
-    schemas.py         — Pydantic models (auth + metrics + entries)
-    auth.py            — JWT utils (create_token, verify_token, hash_password with bcrypt)
-    seed.py            — DEFAULT_METRICS definitions (23 metrics)
-    routers/
-      auth.py          — /api/auth/* (register with metric seeding, login, me)
-      metrics.py       — /api/metrics CRUD (protected)
-      entries.py       — /api/entries CRUD (protected)
-      daily.py         — /api/daily/{date} summary (protected)
-      analytics.py     — trends, correlations, streaks (protected)
-      export_import.py — ZIP export/import (protected)
-  requirements.txt     — dependencies (bcrypt, python-jose, etc.)
-
-frontend/
-  index.html           — main HTML with nav
-  js/
-    api.js             — API client + token management
-    app.js             — SPA: routing, auth, all pages
-  css/style.css        — dark theme styles + auth pages
-
-life_analytics.db      — SQLite database (gitignored)
-run.sh                 — convenience script to run backend + frontend
+DATABASE_URL=postgresql://la_user:la_password@db:5432/life_analytics
+LA_SECRET_KEY=change-me-in-production
+POSTGRES_USER=la_user
+POSTGRES_PASSWORD=la_password
+POSTGRES_DB=life_analytics
 ```
+
+See `.env.example`. Defaults work for local Docker Compose dev.
 
 ## Key Implementation Details
 
-**Password security:**
-- Bcrypt with 12 rounds
-- Never store plain passwords
-- Validate minimum 8 characters on registration
+**Adding a new metric type** requires changes in 6 places:
+1. `database.py` — `ALTER TYPE metric_type ADD VALUE`, create `values_{type}` table
+2. `schemas.py` — add to `MetricType` enum, update `value` union in EntryCreate/Update/Out (keep `bool` before `int` — bool is subclass of int in Python)
+3. `metric_helpers.py` — add branch in `get_entry_value`, `insert_value`, `update_value`
+4. `routers/analytics.py` — `_extract_numeric` + value_table selection in `trends` and `values_by_date`
+5. `routers/export_import.py` — type validation on import + value parsing
+6. `frontend/js/app.js` — render function, input handlers, history display, settings type label, modal (preview + radio + type hint)
 
-**Data isolation:**
-- All queries filter by `current_user["id"]`
-- Metrics with same ID allowed across users (composite PK: id + user_id)
-- Return 404 (not 403) on unauthorized access to prevent info disclosure
+**Data isolation:** All queries filter by `current_user["id"]`. Return 404 (not 403) on unauthorized access.
 
-**ZIP export format:**
-```
-archive.zip
-├── metrics.csv     — id, name, category, type, frequency, source, config_json, enabled, sort_order
-└── entries.csv     — date, metric_id, timestamp, value_json
-```
-
-**Import behavior:**
-- Imports metrics first (creates new or updates existing by id+user_id)
-- Then imports entries (skips duplicates: same metric_id, date, value_json, user_id)
-- Returns detailed summary: {metrics: {imported, updated, errors}, entries: {imported, skipped, errors}}
-
-**Metric config examples:**
-```json
-// Scale
-{"min": 1, "max": 5}
-
-// Number
-{"min": 0, "max": 20, "label": "чашек"}
-
-// Compound with conditional fields
-{
-  "fields": [
-    {"name": "done", "type": "boolean", "label": "Была тренировка"},
-    {"name": "type", "type": "enum", "label": "Тип",
-     "options": ["кардио", "силовая"], "condition": "done == true"}
-  ]
-}
-```
-
-**Value JSON examples:**
-```json
-// Daily scale
-{"value": 4}
-
-// Multiple-frequency scale
-{"period": "morning", "value": 5}
-
-// Boolean
-{"value": true}
-
-// Compound
-{"done": true, "type": "кардио"}
-```
-
-## Customizing Default Metrics
-
-**File:** `backend/app/seed.py`
-
-Edit `DEFAULT_METRICS` list to customize metrics created for new users on registration.
-
-**Structure:**
-```python
-{
-    "id": "unique_id",           # Unique identifier
-    "name": "Display Name",      # User-facing name
-    "category": "Category",      # For grouping in UI
-    "type": "scale",             # scale/boolean/number/time/enum/compound
-    "frequency": "daily",        # daily/multiple
-    "source": "manual",          # manual/todoist/google_calendar (optional)
-    "config": {                  # Type-specific config
-        "min": 1,
-        "max": 5
-    },
-    "enabled": True,             # Default True (optional)
-    "sort_order": 0              # Display order (optional)
-}
-```
-
-**Important:** Changes only affect NEW users. Existing users must add metrics via UI or import.
+**Schema changes:** Update DDL in `database.py` `init_db()`. For new enum values, use `ALTER TYPE ... ADD VALUE IF NOT EXISTS` (safe for existing DBs). For new tables, use `CREATE TABLE IF NOT EXISTS`. Destructive changes require dropping and recreating the database.
 
 ## Common Workflows
 
 **Add new router:**
-1. Create `backend/app/routers/new_router.py`
-2. Define router with `router = APIRouter(prefix="/api/path", tags=["tag"])`
-3. Add `current_user = Depends(get_current_user)` to protected endpoints
-4. Import and include in `main.py`: `app.include_router(new_router.router)`
+1. Create `backend/app/routers/new_router.py` with `router = APIRouter(prefix="/api/path", tags=["tag"])`
+2. Add `current_user = Depends(get_current_user)` to protected endpoints
+3. Include in `main.py`: `app.include_router(new_router.router)`
 
-**Add new metric type:**
-1. Update frontend rendering in `app.js` (renderMetricInput function)
-2. Update config validation if needed
-3. Add to DEFAULT_METRICS in `seed.py` if should be default
-
-**Modify default metrics:**
-1. Edit `backend/app/seed.py` DEFAULT_METRICS list
-2. Restart backend
-3. Changes apply only to new registrations
-4. Existing users unaffected
-
-**Database changes:**
-1. Update schema in `database.py` init_db()
-2. Delete `backend/life_analytics.db` file
-3. Restart backend (will recreate DB)
-4. Note: This loses all data — migrations not implemented yet
-
-**Migrate user to new metrics:**
-1. Register new account (gets updated DEFAULT_METRICS)
-2. Export data from old account (Settings → Export ZIP)
-3. Import into new account (Settings → Import ZIP)
-4. Old metrics will be created/updated during import
+**Export/Import format:**
+- ZIP with `metrics.csv` (id, slug, name, category, type, enabled, sort_order) + `entries.csv` (date, metric_slug, value as JSON)
+- Import: creates/updates metrics by slug, skips duplicate entries by (metric_id, user_id, date)
