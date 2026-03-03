@@ -9,6 +9,12 @@ class MetricType(str, Enum):
     scale = "scale"
 
 
+class MeasurementSlotOut(BaseModel):
+    id: int
+    label: str
+    sort_order: int
+
+
 class MetricDefinitionCreate(BaseModel):
     slug: str
     name: str
@@ -19,6 +25,7 @@ class MetricDefinitionCreate(BaseModel):
     scale_min: int | None = None
     scale_max: int | None = None
     scale_step: int | None = None
+    slot_labels: list[str] | None = None
 
 
 class MetricDefinitionUpdate(BaseModel):
@@ -29,6 +36,7 @@ class MetricDefinitionUpdate(BaseModel):
     scale_min: int | None = None
     scale_max: int | None = None
     scale_step: int | None = None
+    slot_labels: list[str] | None = None
 
 
 class MetricDefinitionOut(BaseModel):
@@ -42,12 +50,14 @@ class MetricDefinitionOut(BaseModel):
     scale_min: int | None = None
     scale_max: int | None = None
     scale_step: int | None = None
+    slots: list[MeasurementSlotOut] = []
 
 
 class EntryCreate(BaseModel):
     metric_id: int
     date: str  # YYYY-MM-DD
     value: bool | str | int  # bool for bool, "HH:MM" for time, int for number
+    slot_id: int | None = None
 
 
 class EntryUpdate(BaseModel):
@@ -60,6 +70,8 @@ class EntryOut(BaseModel):
     date: str
     recorded_at: str
     value: bool | str | int | None
+    slot_id: int | None = None
+    slot_label: str = ""
 
 
 # Auth schemas

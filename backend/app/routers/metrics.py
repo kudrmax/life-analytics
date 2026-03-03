@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.database import get_db
 from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut, MetricType
 from app.auth import get_current_user
-from app.metric_helpers import build_metric_out
+from app.metric_helpers import build_metric_out, get_metric_slots
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
@@ -23,7 +23,11 @@ async def list_metrics(
         query += " AND md.enabled = TRUE"
     query += " ORDER BY md.sort_order, md.id"
     rows = await db.fetch(query, *params)
-    return [await build_metric_out(r) for r in rows]
+
+    metric_ids = [r["id"] for r in rows]
+    slots_map = await get_metric_slots(db, metric_ids) if metric_ids else {}
+
+    return [await build_metric_out(r, slots_map.get(r["id"])) for r in rows]
 
 
 @router.get("/{metric_id}", response_model=MetricDefinitionOut)
@@ -41,7 +45,9 @@ async def get_metric(
     )
     if not row:
         raise HTTPException(404, "Metric not found")
-    return await build_metric_out(row)
+
+    slots_map = await get_metric_slots(db, [metric_id])
+    return await build_metric_out(row, slots_map.get(metric_id))
 
 
 @router.post("", response_model=MetricDefinitionOut, status_code=201)
@@ -85,6 +91,15 @@ async def create_metric(
             "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
             metric_id, s_min, s_max, s_step,
         )
+
+    # Create measurement slots if 2+ labels provided
+    labels = data.slot_labels or []
+    if len(labels) >= 2:
+        for i, label in enumerate(labels):
+            await db.execute(
+                "INSERT INTO measurement_slots (metric_id, sort_order, label) VALUES ($1, $2, $3)",
+                metric_id, i, label,
+            )
 
     return await get_metric(metric_id, db, current_user)
 
@@ -152,6 +167,62 @@ async def update_metric(
                 "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
                 metric_id, s_min, s_max, s_step,
             )
+
+    # Update measurement slots
+    if data.slot_labels is not None:
+        new_labels = data.slot_labels
+        # Get ALL existing slots (including disabled) sorted by sort_order
+        existing_slots = await db.fetch(
+            "SELECT * FROM measurement_slots WHERE metric_id = $1 ORDER BY sort_order",
+            metric_id,
+        )
+        has_existing_slots = len(existing_slots) > 0
+
+        if len(new_labels) < 2:
+            # Trying to go to 0-1 slots
+            if has_existing_slots:
+                raise HTTPException(400, "Cannot reduce to fewer than 2 slots once configured")
+            # No existing slots and 0-1 labels = no-op
+        else:
+            # 2+ new labels
+            if not has_existing_slots:
+                # First time creating slots — create them and migrate NULL entries
+                first_slot_id = None
+                for i, label in enumerate(new_labels):
+                    sid = await db.fetchval(
+                        "INSERT INTO measurement_slots (metric_id, sort_order, label) VALUES ($1, $2, $3) RETURNING id",
+                        metric_id, i, label,
+                    )
+                    if i == 0:
+                        first_slot_id = sid
+                # Migrate existing NULL-slot entries to first slot
+                if first_slot_id:
+                    await db.execute(
+                        "UPDATE entries SET slot_id = $1 WHERE metric_id = $2 AND slot_id IS NULL",
+                        first_slot_id, metric_id,
+                    )
+            else:
+                # Update existing slots
+                for i, label in enumerate(new_labels):
+                    # Find existing slot with this sort_order
+                    matching = [s for s in existing_slots if s["sort_order"] == i]
+                    if matching:
+                        await db.execute(
+                            "UPDATE measurement_slots SET label = $1, enabled = TRUE WHERE id = $2",
+                            label, matching[0]["id"],
+                        )
+                    else:
+                        await db.execute(
+                            "INSERT INTO measurement_slots (metric_id, sort_order, label) VALUES ($1, $2, $3)",
+                            metric_id, i, label,
+                        )
+                # Disable slots beyond new count
+                for s in existing_slots:
+                    if s["sort_order"] >= len(new_labels):
+                        await db.execute(
+                            "UPDATE measurement_slots SET enabled = FALSE WHERE id = $1",
+                            s["id"],
+                        )
 
     return await get_metric(metric_id, db, current_user)
 

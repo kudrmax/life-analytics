@@ -4,6 +4,7 @@ Export and import data in ZIP format (metrics + entries).
 import csv
 import json
 import zipfile
+from collections import defaultdict
 from io import StringIO, BytesIO
 from datetime import date as date_type, datetime
 
@@ -28,6 +29,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         metrics_writer.writerow([
             'id', 'slug', 'name', 'category', 'type',
             'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step',
+            'slot_labels',
         ])
 
         metrics = await db.fetch(
@@ -38,13 +40,28 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             current_user["id"],
         )
 
+        # Get slots for all metrics
+        metric_ids = [m["id"] for m in metrics]
+        all_slots_rows = await db.fetch(
+            """SELECT metric_id, label, sort_order FROM measurement_slots
+               WHERE metric_id = ANY($1) AND enabled = TRUE
+               ORDER BY metric_id, sort_order""",
+            metric_ids,
+        ) if metric_ids else []
+
+        slots_by_metric: dict[int, list[str]] = defaultdict(list)
+        for r in all_slots_rows:
+            slots_by_metric[r["metric_id"]].append(r["label"])
+
         for m in metrics:
+            slot_labels = slots_by_metric.get(m["id"], [])
             metrics_writer.writerow([
                 m["id"], m["slug"], m["name"], m["category"], m["type"],
                 1 if m["enabled"] else 0, m["sort_order"],
                 m["scale_min"] if m["scale_min"] is not None else '',
                 m["scale_max"] if m["scale_max"] is not None else '',
                 m["scale_step"] if m["scale_step"] is not None else '',
+                json.dumps(slot_labels) if slot_labels else '',
             ])
 
         zip_file.writestr('metrics.csv', metrics_csv.getvalue())
@@ -52,13 +69,16 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         # Export entries
         entries_csv = StringIO()
         entries_writer = csv.writer(entries_csv)
-        entries_writer.writerow(['date', 'metric_slug', 'value'])
+        entries_writer.writerow(['date', 'metric_slug', 'value', 'slot_sort_order', 'slot_label'])
 
         slug_lookup = {m["id"]: m["slug"] for m in metrics}
         type_lookup = {m["id"]: m["type"] for m in metrics}
 
         entries = await db.fetch(
-            "SELECT * FROM entries WHERE user_id = $1 ORDER BY date DESC, metric_id",
+            """SELECT e.*, ms.sort_order AS slot_sort_order, ms.label AS slot_label
+               FROM entries e
+               LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
+               WHERE e.user_id = $1 ORDER BY e.date DESC, e.metric_id""",
             current_user["id"],
         )
 
@@ -72,6 +92,8 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             entries_writer.writerow([
                 str(e["date"]), slug,
                 json.dumps(value),
+                e["slot_sort_order"] if e["slot_sort_order"] is not None else '',
+                e["slot_label"] or '',
             ])
 
         zip_file.writestr('entries.csv', entries_csv.getvalue())
@@ -142,6 +164,15 @@ async def import_data(
                     csv_scale_max = row.get('scale_max', '')
                     csv_scale_step = row.get('scale_step', '')
 
+                    # Parse slot_labels from CSV
+                    csv_slot_labels_raw = row.get('slot_labels', '')
+                    csv_slot_labels = []
+                    if csv_slot_labels_raw:
+                        try:
+                            csv_slot_labels = json.loads(csv_slot_labels_raw)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
                     if existing:
                         await db.execute(
                             """UPDATE metric_definitions
@@ -167,6 +198,9 @@ async def import_data(
                                     "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
                                     existing["id"], s_min, s_max, s_step,
                                 )
+                        # Import slots if provided
+                        if len(csv_slot_labels) >= 2:
+                            await _import_slots(db, existing["id"], csv_slot_labels)
                         metrics_updated += 1
                     else:
                         new_id = await db.fetchval(
@@ -185,18 +219,36 @@ async def import_data(
                                 "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
                                 new_id, s_min, s_max, s_step,
                             )
+                        # Create slots if provided
+                        if len(csv_slot_labels) >= 2:
+                            for i, label in enumerate(csv_slot_labels):
+                                await db.execute(
+                                    "INSERT INTO measurement_slots (metric_id, sort_order, label) VALUES ($1, $2, $3)",
+                                    new_id, i, label,
+                                )
                         metrics_imported += 1
 
                 except Exception as e:
                     metrics_errors.append(f"Row {row_num}: {str(e)}")
 
-            # Build slug→id and slug→type lookups after metric import
+            # Build slug->id and slug->type lookups after metric import
             metric_rows = await db.fetch(
                 "SELECT id, slug, type FROM metric_definitions WHERE user_id = $1",
                 current_user["id"],
             )
             slug_to_id = {r["slug"]: r["id"] for r in metric_rows}
             slug_to_type = {r["slug"]: r["type"] for r in metric_rows}
+
+            # Build metric_id -> {sort_order: slot_id} lookup
+            all_metric_ids = list(slug_to_id.values())
+            slot_rows = await db.fetch(
+                """SELECT id, metric_id, sort_order FROM measurement_slots
+                   WHERE metric_id = ANY($1)""",
+                all_metric_ids,
+            ) if all_metric_ids else []
+            slot_lookup: dict[int, dict[int, int]] = defaultdict(dict)
+            for sr in slot_rows:
+                slot_lookup[sr["metric_id"]][sr["sort_order"]] = sr["id"]
 
             # Import entries
             entries_csv_text = zip_file.read('entries.csv').decode('utf-8')
@@ -213,10 +265,38 @@ async def import_data(
                     date = row['date']
                     d = date_type.fromisoformat(date)
 
-                    existing = await db.fetchval(
-                        "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3",
-                        metric_id, current_user["id"], d,
-                    )
+                    # Determine slot_id from CSV columns
+                    slot_id = None
+                    csv_slot_sort_order = row.get('slot_sort_order', '')
+                    if csv_slot_sort_order != '' and csv_slot_sort_order is not None:
+                        try:
+                            so = int(csv_slot_sort_order)
+                            # Find existing slot by metric + sort_order
+                            if metric_id in slot_lookup and so in slot_lookup[metric_id]:
+                                slot_id = slot_lookup[metric_id][so]
+                            else:
+                                # Create slot on the fly
+                                csv_slot_label = row.get('slot_label', '')
+                                new_slot_id = await db.fetchval(
+                                    "INSERT INTO measurement_slots (metric_id, sort_order, label) VALUES ($1, $2, $3) RETURNING id",
+                                    metric_id, so, csv_slot_label or '',
+                                )
+                                slot_lookup[metric_id][so] = new_slot_id
+                                slot_id = new_slot_id
+                        except (ValueError, TypeError):
+                            pass
+
+                    # Check for duplicate
+                    if slot_id is not None:
+                        existing = await db.fetchval(
+                            "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND slot_id = $4",
+                            metric_id, current_user["id"], d, slot_id,
+                        )
+                    else:
+                        existing = await db.fetchval(
+                            "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND slot_id IS NULL",
+                            metric_id, current_user["id"], d,
+                        )
                     if existing:
                         entries_skipped += 1
                         continue
@@ -250,8 +330,8 @@ async def import_data(
 
                     async with db.transaction():
                         entry_id = await db.fetchval(
-                            "INSERT INTO entries (metric_id, user_id, date) VALUES ($1, $2, $3) RETURNING id",
-                            metric_id, current_user["id"], d,
+                            "INSERT INTO entries (metric_id, user_id, date, slot_id) VALUES ($1, $2, $3, $4) RETURNING id",
+                            metric_id, current_user["id"], d, slot_id,
                         )
                         await insert_value(db, entry_id, value, mt, entry_date=d, metric_id=metric_id)
 
@@ -280,3 +360,29 @@ async def import_data(
             "errors": entries_errors[:10] if entries_errors else [],
         },
     }
+
+
+async def _import_slots(db, metric_id: int, labels: list[str]):
+    """Create or update slots during import (same logic as update_metric)."""
+    existing_slots = await db.fetch(
+        "SELECT * FROM measurement_slots WHERE metric_id = $1 ORDER BY sort_order",
+        metric_id,
+    )
+    for i, label in enumerate(labels):
+        matching = [s for s in existing_slots if s["sort_order"] == i]
+        if matching:
+            await db.execute(
+                "UPDATE measurement_slots SET label = $1, enabled = TRUE WHERE id = $2",
+                label, matching[0]["id"],
+            )
+        else:
+            await db.execute(
+                "INSERT INTO measurement_slots (metric_id, sort_order, label) VALUES ($1, $2, $3)",
+                metric_id, i, label,
+            )
+    for s in existing_slots:
+        if s["sort_order"] >= len(labels):
+            await db.execute(
+                "UPDATE measurement_slots SET enabled = FALSE WHERE id = $1",
+                s["id"],
+            )

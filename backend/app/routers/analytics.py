@@ -14,7 +14,7 @@ def _extract_numeric(value_row, metric_type: str = "bool") -> float | None:
     """Extract a numeric value from a value row.
 
     For bool: True=1, False=0.
-    For time: minutes from midnight (e.g. 23:30 → 1410).
+    For time: minutes from midnight (e.g. 23:30 -> 1410).
     """
     if not value_row:
         return None
@@ -31,6 +31,27 @@ def _extract_numeric(value_row, metric_type: str = "bool") -> float | None:
             return 0.0
         return (float(v) - v_min) / (v_max - v_min) * 100
     return 1.0 if v else 0.0
+
+
+def _aggregate_by_date(rows, metric_type: str) -> dict[str, float]:
+    """Group rows by date, aggregate multiple entries per day (multi-slot).
+
+    For number/scale/time: mean of values per day.
+    For bool: 1.0 if any True, else 0.0.
+    """
+    day_values: dict[str, list[float]] = defaultdict(list)
+    for r in rows:
+        v = _extract_numeric(r, metric_type)
+        if v is not None:
+            day_values[str(r["date"])].append(v)
+
+    result = {}
+    for d, vals in day_values.items():
+        if metric_type == "bool":
+            result[d] = 1.0 if any(v == 1.0 for v in vals) else 0.0
+        else:
+            result[d] = mean(vals)
+    return result
 
 
 @router.get("/trends")
@@ -68,14 +89,9 @@ async def trends(
         metric_id, date_type.fromisoformat(start), date_type.fromisoformat(end), current_user["id"],
     )
 
-    points = []
-    for r in rows:
-        v = _extract_numeric(r, mt)
-        if v is not None:
-            points.append({
-                "date": str(r["date"]),
-                "value": v,
-            })
+    # Aggregate multi-slot entries by date
+    aggregated = _aggregate_by_date(rows, mt)
+    points = [{"date": d, "value": v} for d, v in sorted(aggregated.items())]
 
     return {
         "metric_id": metric_id,
@@ -123,12 +139,7 @@ async def correlations(
                 WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4""",
             mid, date_type.fromisoformat(start), date_type.fromisoformat(end), current_user["id"],
         )
-        result = {}
-        for r in rows:
-            v = _extract_numeric(r, mt)
-            if v is not None:
-                result[str(r["date"])] = v
-        return result
+        return _aggregate_by_date(rows, mt)
 
     a_by_date = await values_by_date(metric_a, ma["type"])
     b_by_date = await values_by_date(metric_b, mb["type"])
@@ -178,17 +189,19 @@ async def streaks(db=Depends(get_db), current_user: dict = Depends(get_current_u
 
     result = []
     for m in metrics:
+        # Group by date: day counts as True only if ALL slot entries are True
         rows = await db.fetch(
-            """SELECT DISTINCT e.date, vb.value
+            """SELECT e.date, bool_and(vb.value) AS day_value
                FROM entries e
                JOIN values_bool vb ON vb.entry_id = e.id
                WHERE e.metric_id = $1 AND e.user_id = $2
+               GROUP BY e.date
                ORDER BY e.date DESC""",
             m["id"], current_user["id"],
         )
         current_streak = 0
         for r in rows:
-            if r["value"] is True:
+            if r["day_value"] is True:
                 current_streak += 1
             else:
                 break

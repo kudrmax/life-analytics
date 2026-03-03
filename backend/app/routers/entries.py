@@ -19,6 +19,8 @@ async def _entry_to_out(conn, entry_row, metric_type: str = "bool") -> EntryOut:
         date=str(entry_row["date"]),
         recorded_at=str(entry_row["recorded_at"]),
         value=value if value is not None else default,
+        slot_id=entry_row["slot_id"],
+        slot_label=entry_row.get("slot_label") or "",
     )
 
 
@@ -32,16 +34,23 @@ async def list_entries(
     d = date_type.fromisoformat(date)
     if metric_id:
         rows = await db.fetch(
-            "SELECT * FROM entries WHERE date = $1 AND metric_id = $2 AND user_id = $3",
+            """SELECT e.*, ms.label AS slot_label
+               FROM entries e
+               LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
+               WHERE e.date = $1 AND e.metric_id = $2 AND e.user_id = $3""",
             d, metric_id, current_user["id"],
         )
     else:
         rows = await db.fetch(
-            "SELECT * FROM entries WHERE date = $1 AND user_id = $2 ORDER BY metric_id",
+            """SELECT e.*, ms.label AS slot_label
+               FROM entries e
+               LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
+               WHERE e.date = $1 AND e.user_id = $2
+               ORDER BY e.metric_id""",
             d, current_user["id"],
         )
 
-    # Build metric_id → type lookup
+    # Build metric_id -> type lookup
     metric_ids = list({r["metric_id"] for r in rows})
     type_lookup = {}
     if metric_ids:
@@ -68,22 +77,36 @@ async def create_entry(
         raise HTTPException(404, "Metric not found")
 
     d = date_type.fromisoformat(data.date)
-    existing = await db.fetchval(
-        "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3",
-        data.metric_id, current_user["id"], d,
-    )
+
+    # Check for duplicate based on slot_id
+    if data.slot_id is not None:
+        existing = await db.fetchval(
+            "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND slot_id = $4",
+            data.metric_id, current_user["id"], d, data.slot_id,
+        )
+    else:
+        existing = await db.fetchval(
+            "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND slot_id IS NULL",
+            data.metric_id, current_user["id"], d,
+        )
     if existing:
-        raise HTTPException(409, "Entry already exists for this metric/date. Use PUT to update.")
+        raise HTTPException(409, "Entry already exists for this metric/date/slot. Use PUT to update.")
 
     mt = metric["type"]
     async with db.transaction():
         entry_id = await db.fetchval(
-            "INSERT INTO entries (metric_id, user_id, date) VALUES ($1, $2, $3) RETURNING id",
-            data.metric_id, current_user["id"], d,
+            "INSERT INTO entries (metric_id, user_id, date, slot_id) VALUES ($1, $2, $3, $4) RETURNING id",
+            data.metric_id, current_user["id"], d, data.slot_id,
         )
         await insert_value(db, entry_id, data.value, mt, entry_date=d, metric_id=data.metric_id)
 
-    row = await db.fetchrow("SELECT * FROM entries WHERE id = $1", entry_id)
+    row = await db.fetchrow(
+        """SELECT e.*, ms.label AS slot_label
+           FROM entries e
+           LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
+           WHERE e.id = $1""",
+        entry_id,
+    )
     return await _entry_to_out(db, row, mt)
 
 
@@ -95,7 +118,10 @@ async def update_entry(
     current_user: dict = Depends(get_current_user),
 ):
     row = await db.fetchrow(
-        "SELECT * FROM entries WHERE id = $1 AND user_id = $2",
+        """SELECT e.*, ms.label AS slot_label
+           FROM entries e
+           LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
+           WHERE e.id = $1 AND e.user_id = $2""",
         entry_id, current_user["id"],
     )
     if not row:

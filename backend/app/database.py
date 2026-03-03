@@ -130,6 +130,48 @@ async def init_db():
             )
         """)
 
+        # Measurement slots (multi-slot per metric per day)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS measurement_slots (
+                id SERIAL PRIMARY KEY,
+                metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                label VARCHAR(100) NOT NULL DEFAULT '',
+                enabled BOOLEAN NOT NULL DEFAULT TRUE
+            )
+        """)
+
+        # Add slot_id column to entries (nullable)
+        await conn.execute("""
+            ALTER TABLE entries ADD COLUMN IF NOT EXISTS
+                slot_id INTEGER REFERENCES measurement_slots(id)
+        """)
+
+        # Migrate from old UNIQUE constraint to partial indexes
+        await conn.execute("""
+            DO $$ BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'entries_metric_id_user_id_date_key'
+                    AND conrelid = 'entries'::regclass
+                ) THEN
+                    ALTER TABLE entries DROP CONSTRAINT entries_metric_id_user_id_date_key;
+                END IF;
+            END $$
+        """)
+
+        # Partial index for metrics without slots (max 1 entry per metric/user/date)
+        await conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS entries_no_slot_key
+            ON entries(metric_id, user_id, date) WHERE slot_id IS NULL
+        """)
+
+        # Partial index for metrics with slots (max 1 entry per metric/user/date/slot)
+        await conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS entries_with_slot_key
+            ON entries(metric_id, user_id, date, slot_id) WHERE slot_id IS NOT NULL
+        """)
+
         # Indexes
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_metric_definitions_user

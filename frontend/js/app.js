@@ -308,8 +308,17 @@ async function renderTodayForm() {
     attachInputHandlers();
 
     // Update progress bar
-    const total = summary.metrics.length;
-    const filled = summary.metrics.filter(m => m.entry !== null).length;
+    let total = 0;
+    let filled = 0;
+    for (const m of summary.metrics) {
+        if (m.slots && m.slots.length > 0) {
+            total += m.slots.length;
+            filled += m.slots.filter(s => s.entry !== null).length;
+        } else {
+            total += 1;
+            filled += m.entry !== null ? 1 : 0;
+        }
+    }
     const pct = total > 0 ? Math.round((filled / total) * 100) : 0;
     document.getElementById('progress-count').textContent = `${pct}%`;
     const progressFill = document.getElementById('progress-fill');
@@ -318,6 +327,51 @@ async function renderTodayForm() {
 }
 
 function renderMetricInput(m) {
+    // Multi-slot metric
+    if (m.slots && m.slots.length > 0) {
+        const allFilled = m.slots.every(s => s.entry !== null);
+        const filledClass = allFilled ? 'filled' : '';
+
+        let slotsHtml = '<div class="multiple-entry">';
+        for (const slot of m.slots) {
+            const entry = slot.entry;
+            const val = entry ? entry.value : null;
+            const entryId = entry ? entry.id : null;
+
+            let input;
+            if (m.type === 'time') input = renderTime(val);
+            else if (m.type === 'number') input = renderNumber(val);
+            else if (m.type === 'scale') {
+                const sMin = (entry && entry.scale_min != null) ? entry.scale_min : m.scale_min;
+                const sMax = (entry && entry.scale_max != null) ? entry.scale_max : m.scale_max;
+                const sStep = (entry && entry.scale_step != null) ? entry.scale_step : m.scale_step;
+                input = renderScale(val, sMin, sMax, sStep);
+            }
+            else input = renderBoolean(val);
+
+            const clearBtn = entry
+                ? `<button class="period-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`
+                : '';
+
+            slotsHtml += `<div class="metric-slot" data-slot-id="${slot.slot_id}" data-entry-id="${entryId || ''}">
+                <div class="period-header">
+                    <span class="period-label">${slot.label}</span>
+                    ${clearBtn}
+                </div>
+                <div class="metric-input">${input}</div>
+            </div>`;
+        }
+        slotsHtml += '</div>';
+
+        return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="">
+            <div class="metric-header">
+                <label class="metric-label">${m.name}</label>
+            </div>
+            ${slotsHtml}
+        </div>`;
+    }
+
+    // Single entry metric (no slots)
     const entry = m.entry;
     const val = entry ? entry.value : null;
     const entryId = entry ? entry.id : null;
@@ -389,7 +443,9 @@ async function handleNumberChange(e) {
     if (!card) return;
 
     const metricId = card.dataset.metricId;
-    const entryId = card.dataset.entryId;
+    const slotEl = input.closest('.metric-slot');
+    const entryId = slotEl ? slotEl.dataset.entryId : card.dataset.entryId;
+    const slotId = slotEl ? slotEl.dataset.slotId : null;
 
     const raw = input.value.trim();
     if (raw === '') {
@@ -410,7 +466,7 @@ async function handleNumberChange(e) {
     }
 
     try {
-        await saveDaily(metricId, entryId, parsed);
+        await saveDaily(metricId, entryId, parsed, slotId);
         await renderTodayForm();
     } catch (error) { alert('Ошибка: ' + error.message); }
 }
@@ -429,7 +485,9 @@ async function handleFormClick(e) {
     if (!card) return;
 
     const metricId = card.dataset.metricId;
-    const entryId = card.dataset.entryId;
+    const slotEl = btn.closest('.metric-slot');
+    const entryId = slotEl ? slotEl.dataset.entryId : card.dataset.entryId;
+    const slotId = slotEl ? slotEl.dataset.slotId : null;
 
     // Clear metric entry
     if (btn.dataset.clearEntry) {
@@ -447,7 +505,7 @@ async function handleFormClick(e) {
     if (btn.classList.contains('bool-btn')) {
         try {
             const boolVal = btn.dataset.value === 'true';
-            await saveDaily(metricId, entryId, boolVal);
+            await saveDaily(metricId, entryId, boolVal, slotId);
             await renderTodayForm();
         } catch (error) {
             alert('Ошибка: ' + error.message);
@@ -458,7 +516,7 @@ async function handleFormClick(e) {
     // Scale buttons
     if (btn.classList.contains('scale-btn')) {
         try {
-            await saveDaily(metricId, entryId, parseInt(btn.dataset.value));
+            await saveDaily(metricId, entryId, parseInt(btn.dataset.value), slotId);
             await renderTodayForm();
         } catch (error) {
             alert('Ошибка: ' + error.message);
@@ -469,7 +527,7 @@ async function handleFormClick(e) {
     // Number "=0" button
     if (btn.dataset.action === 'set-zero') {
         try {
-            await saveDaily(metricId, entryId, 0);
+            await saveDaily(metricId, entryId, 0, slotId);
             await renderTodayForm();
         } catch (error) { alert('Ошибка: ' + error.message); }
         return;
@@ -477,12 +535,13 @@ async function handleFormClick(e) {
 
     // Number +/- buttons
     if (btn.classList.contains('number-btn')) {
-        const input = card.querySelector('.number-value-input');
+        const container = slotEl || card;
+        const input = container.querySelector('.number-value-input');
         let currentVal = input.value !== '' ? parseInt(input.value) : 0;
         if (isNaN(currentVal)) currentVal = 0;
         const newVal = currentVal + (btn.dataset.action === 'increment' ? 1 : -1);
         try {
-            await saveDaily(metricId, entryId, newVal);
+            await saveDaily(metricId, entryId, newVal, slotId);
             await renderTodayForm();
         } catch (error) { alert('Ошибка: ' + error.message); }
         return;
@@ -495,7 +554,7 @@ async function handleFormClick(e) {
         const currentVal = timeTrigger.classList.contains('has-value') ? timeTrigger.textContent.trim() : '';
         showClockPicker(currentVal, async (newVal) => {
             try {
-                await saveDaily(metricId, entryId, newVal);
+                await saveDaily(metricId, entryId, newVal, slotId);
                 await renderTodayForm();
             } catch (error) {
                 alert('Ошибка: ' + error.message);
@@ -505,15 +564,17 @@ async function handleFormClick(e) {
     }
 }
 
-async function saveDaily(metricId, entryId, value) {
+async function saveDaily(metricId, entryId, value, slotId) {
     if (entryId) {
         await api.updateEntry(parseInt(entryId), { value });
     } else {
-        await api.createEntry({
+        const payload = {
             metric_id: parseInt(metricId),
             date: currentDate,
             value,
-        });
+        };
+        if (slotId) payload.slot_id = parseInt(slotId);
+        await api.createEntry(payload);
     }
 }
 
@@ -561,21 +622,32 @@ async function showDayDetail(date) {
     let html = `<h3>${formatDate(date)}</h3><div class="day-summary">`;
 
     for (const m of summary.metrics) {
-        if (!m.entry) continue;
-        let valStr;
-        if (m.type === 'time') {
-            valStr = m.entry.value || '—';
-        } else if (m.type === 'number') {
-            valStr = m.entry.value !== null && m.entry.value !== undefined ? String(m.entry.value) : '—';
-        } else if (m.type === 'scale') {
-            valStr = m.entry.value !== null && m.entry.value !== undefined ? String(m.entry.value) : '—';
+        if (m.slots && m.slots.length > 0) {
+            // Multi-slot metric
+            const filledSlots = m.slots.filter(s => s.entry !== null);
+            if (filledSlots.length === 0) continue;
+            for (const s of filledSlots) {
+                const valStr = _formatEntryValue(s.entry, m.type);
+                html += `<div class="summary-row"><span class="summary-label">${m.name} — ${s.label}</span><span class="summary-value">${valStr}</span></div>`;
+            }
         } else {
-            valStr = m.entry.value ? 'Да' : 'Нет';
+            if (!m.entry) continue;
+            const valStr = _formatEntryValue(m.entry, m.type);
+            html += `<div class="summary-row"><span class="summary-label">${m.name}</span><span class="summary-value">${valStr}</span></div>`;
         }
-        html += `<div class="summary-row"><span class="summary-label">${m.name}</span><span class="summary-value">${valStr}</span></div>`;
     }
     html += '</div>';
     detail.innerHTML = html;
+}
+
+function _formatEntryValue(entry, type) {
+    if (type === 'time') {
+        return entry.value || '—';
+    } else if (type === 'number' || type === 'scale') {
+        return entry.value !== null && entry.value !== undefined ? String(entry.value) : '—';
+    } else {
+        return entry.value ? 'Да' : 'Нет';
+    }
 }
 
 // ─── Dashboard Page ───
@@ -707,10 +779,12 @@ async function renderSettings(container) {
     for (const [cat, items] of Object.entries(categories)) {
         html += `<div class="category"><h3>${cat}</h3>`;
         for (const m of items) {
-            const typeIcon = m.type === 'time' ? '<i data-lucide="clock"></i> Время'
+            const slotsBadge = m.slots && m.slots.length > 0
+                ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
+            const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                 : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
-                : '<i data-lucide="toggle-left"></i> Да/Нет';
+                : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
             const toggleIcon = m.enabled ? '<i data-lucide="eye"></i>' : '<i data-lucide="eye-off"></i>';
             html += `<div class="setting-row">
                 <div class="setting-info">
@@ -960,6 +1034,12 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     <span class="label-hint">От 1 до 5, шаг 1 → [1] [2] [3] [4] [5]<br>От 1 до 5, шаг 2 → [1] [3] [5]</span>
                 </div>
                 ` : ''}
+                <div class="form-section" id="nm-slots-section">
+                    <span class="label-text">Замеры в день</span>
+                    <div class="slot-labels-list" id="nm-slot-labels"></div>
+                    <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить замер</button>
+                    <span class="label-hint">Оставьте пустым для одного замера в день. Добавьте 2+ замера (Утро, День, Вечер) для нескольких записей.</span>
+                </div>
                 ` : `
                 <div class="form-section" id="nm-type-section">
                     <span class="label-text">Тип метрики</span>
@@ -999,6 +1079,12 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                         </label>
                     </div>
                     <span class="label-hint">От 1 до 5, шаг 1 → [1] [2] [3] [4] [5]<br>От 1 до 5, шаг 2 → [1] [3] [5]<br>От 1 до 4, шаг 2 → [1] [3]</span>
+                </div>
+                <div class="form-section" id="nm-slots-section">
+                    <span class="label-text">Замеры в день</span>
+                    <div class="slot-labels-list" id="nm-slot-labels"></div>
+                    <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить замер</button>
+                    <span class="label-hint">Оставьте пустым для одного замера в день. Добавьте 2+ замера (Утро, День, Вечер) для нескольких записей.</span>
                 </div>
                 `}
             </div>
@@ -1095,6 +1181,34 @@ function showMetricModal(mode = 'create', existingMetric = null) {
     }
     setupPreviewInteractions();
 
+    // ─── Slot management ───
+    const slotList = document.getElementById('nm-slot-labels');
+    const addSlotBtn = document.getElementById('nm-add-slot');
+
+    function addSlotField(label = '') {
+        const row = document.createElement('div');
+        row.className = 'slot-label-row';
+        row.innerHTML = `<input type="text" class="form-input slot-label-input" placeholder="Например: Утро" value="${label}">
+            <button type="button" class="btn-remove-slot">&times;</button>`;
+        slotList.appendChild(row);
+        row.querySelector('.btn-remove-slot').onclick = () => { row.remove(); };
+    }
+
+    if (addSlotBtn) {
+        addSlotBtn.onclick = () => addSlotField('');
+        // Pre-fill slots in edit mode
+        if (isEdit && existingMetric?.slots) {
+            for (const s of existingMetric.slots) {
+                addSlotField(s.label);
+            }
+        }
+    }
+
+    function getSlotLabels() {
+        const inputs = slotList ? slotList.querySelectorAll('.slot-label-input') : [];
+        return Array.from(inputs).map(i => i.value.trim()).filter(v => v !== '');
+    }
+
     document.getElementById('nm-cancel').onclick = () => overlay.remove();
     document.getElementById('nm-save').onclick = async () => {
         const name = document.getElementById('nm-name').value;
@@ -1106,6 +1220,8 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         }
 
         try {
+            const slotLabels = getSlotLabels();
+
             if (isEdit) {
                 const updateData = { name, category };
                 if (existingMetric.type === 'scale') {
@@ -1113,6 +1229,15 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     updateData.scale_min = sp.min;
                     updateData.scale_max = sp.max;
                     updateData.scale_step = sp.step;
+                }
+                // Send slot_labels if user configured slots
+                if (slotLabels.length >= 2) {
+                    updateData.slot_labels = slotLabels;
+                } else if (slotLabels.length === 0 && (!existingMetric.slots || existingMetric.slots.length === 0)) {
+                    // No slots before, no slots now — don't send
+                } else if (slotLabels.length < 2 && existingMetric.slots && existingMetric.slots.length > 0) {
+                    alert('Нельзя уменьшить количество замеров меньше 2. Удалите все поля, чтобы не менять настройку.');
+                    return;
                 }
                 await api.updateMetric(existingMetric.id, updateData);
             } else {
@@ -1139,6 +1264,10 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     createData.scale_min = sp.min;
                     createData.scale_max = sp.max;
                     createData.scale_step = sp.step;
+                }
+
+                if (slotLabels.length >= 2) {
+                    createData.slot_labels = slotLabels;
                 }
 
                 await api.createMetric(createData);

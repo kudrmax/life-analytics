@@ -1,14 +1,15 @@
 """
 Shared helpers for metric operations across routers.
 """
+from collections import defaultdict
 from datetime import date as date_type, datetime, timezone
 
 import asyncpg
 
-from app.schemas import MetricDefinitionOut
+from app.schemas import MetricDefinitionOut, MeasurementSlotOut
 
 
-async def build_metric_out(row: asyncpg.Record) -> MetricDefinitionOut:
+async def build_metric_out(row: asyncpg.Record, slots: list | None = None) -> MetricDefinitionOut:
     return MetricDefinitionOut(
         id=row["id"],
         slug=row["slug"],
@@ -20,7 +21,30 @@ async def build_metric_out(row: asyncpg.Record) -> MetricDefinitionOut:
         scale_min=row.get("scale_min"),
         scale_max=row.get("scale_max"),
         scale_step=row.get("scale_step"),
+        slots=[MeasurementSlotOut(**s) for s in slots] if slots else [],
     )
+
+
+async def get_metric_slots(
+    conn: asyncpg.Connection,
+    metric_ids: list[int],
+    enabled_only: bool = True,
+) -> dict[int, list]:
+    """Return {metric_id: [{id, label, sort_order}, ...]}."""
+    condition = "AND ms.enabled = TRUE" if enabled_only else ""
+    rows = await conn.fetch(
+        f"""SELECT ms.id, ms.metric_id, ms.label, ms.sort_order
+            FROM measurement_slots ms
+            WHERE ms.metric_id = ANY($1) {condition}
+            ORDER BY ms.metric_id, ms.sort_order""",
+        metric_ids,
+    )
+    result: dict[int, list] = defaultdict(list)
+    for r in rows:
+        result[r["metric_id"]].append({
+            "id": r["id"], "label": r["label"], "sort_order": r["sort_order"],
+        })
+    return result
 
 
 async def get_entry_value(

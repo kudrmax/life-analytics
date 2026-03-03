@@ -1343,3 +1343,80 @@ input[type="month"], input[type="date"] {
 .theme-toggle:active {
     transform: scale(0.95);
 }
+
+/* ─── Multi-Slot ─── */
+.metric-slot {
+    padding: 6px 0;
+}
+
+.metric-slot + .metric-slot {
+    border-top: 1px solid var(--border);
+}
+
+.slot-labels-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.slot-label-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.slot-label-row input {
+    flex: 1;
+}
+
+.slot-label-row .btn-remove-slot {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s;
+}
+
+.slot-label-row .btn-remove-slot:hover {
+    border-color: var(--red);
+    color: var(--red);
+    background: rgba(239, 83, 80, 0.1);
+}
+
+.btn-add-slot {
+    background: var(--surface2);
+    border: 1px dashed var(--border);
+    color: var(--text-dim);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.15s;
+    width: 100%;
+    text-align: center;
+}
+
+.btn-add-slot:hover {
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.setting-slots {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
