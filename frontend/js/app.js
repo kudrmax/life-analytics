@@ -816,29 +816,50 @@ async function renderDashboard(container) {
 }
 
 async function loadDashboard(start, end) {
-    // Trends — vertical list with "Подробнее" buttons
+    // Destroy previous trend charts
+    trendChartInstances.forEach(c => c.destroy());
+    trendChartInstances = [];
+
     const trendsEl = document.getElementById('trends-section');
-    let trendsHtml = '<h3>Тренды</h3><div class="trends-list">';
+    let trendsHtml = '<h3>Графики и данные</h3><div class="trends-list">';
+    const trendData = [];
     for (const m of metrics) {
         const trend = await api.getTrends(m.id, start, end);
         if (trend.points && trend.points.length > 0) {
-            trendsHtml += `<div class="trend-card-row">
+            trendData.push({ metric: m, points: trend.points });
+            trendsHtml += `<div class="trend-card-row" data-metric-id="${m.id}" style="cursor:pointer">
                 <div class="trend-card-header">
                     <h4>${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</h4>
-                    <button class="btn-small detail-btn" data-metric-id="${m.id}">Подробнее</button>
+                    <i data-lucide="info" class="trend-info-icon"></i>
                 </div>
-                <div class="mini-chart" data-points='${JSON.stringify(trend.points)}'></div>
+                <div class="trend-chart-container"><canvas id="trend-chart-${m.id}"></canvas></div>
             </div>`;
         }
     }
     trendsHtml += '</div>';
     trendsEl.innerHTML = trendsHtml;
-    renderMiniCharts();
 
-    // Attach detail buttons
-    trendsEl.querySelectorAll('.detail-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            navigateTo('metric-detail', { metricId: parseInt(btn.dataset.metricId) });
+    // Initialize Chart.js for each trend card
+    const style = getComputedStyle(document.documentElement);
+    const colors = {
+        accent: style.getPropertyValue('--accent').trim(),
+        green: style.getPropertyValue('--green').trim(),
+        red: style.getPropertyValue('--red').trim(),
+    };
+    for (const { metric, points } of trendData) {
+        const canvas = document.getElementById(`trend-chart-${metric.id}`);
+        if (!canvas) continue;
+        const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type;
+        const config = buildChartConfig(points, mt, colors, { compact: true });
+        trendChartInstances.push(new Chart(canvas.getContext('2d'), config));
+    }
+
+    if (window.lucide) lucide.createIcons({ nameAttr: 'data-lucide' });
+
+    // Attach click on entire card
+    trendsEl.querySelectorAll('.trend-card-row[data-metric-id]').forEach(card => {
+        card.addEventListener('click', () => {
+            navigateTo('metric-detail', { metricId: parseInt(card.dataset.metricId) });
         });
     });
 
@@ -1013,35 +1034,91 @@ function renderCorrelationReport(report, container) {
     container.innerHTML = html;
 }
 
-function renderMiniCharts() {
-    document.querySelectorAll('.mini-chart').forEach(el => {
-        const points = JSON.parse(el.dataset.points);
-        if (points.length === 0) return;
+// ─── Charts ───
+let trendChartInstances = [];
+let detailChartInstance = null;
 
-        const values = points.map(p => p.value);
-        const max = Math.max(...values);
-        const min = Math.min(...values);
-        const range = max - min || 1;
-        const w = el.offsetWidth || 200;
-        const h = 60;
-
-        let svg = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`;
-        const step = w / Math.max(points.length - 1, 1);
-
-        let pathD = '';
-        for (let i = 0; i < values.length; i++) {
-            const x = i * step;
-            const y = h - ((values[i] - min) / range) * (h - 10) - 5;
-            pathD += (i === 0 ? 'M' : 'L') + `${x.toFixed(1)},${y.toFixed(1)}`;
-        }
-        svg += `<path d="${pathD}" fill="none" stroke="var(--accent)" stroke-width="2"/>`;
-        svg += '</svg>';
-        el.innerHTML = svg;
-    });
+function formatShortDate(dateStr) {
+    const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+    const parts = dateStr.split('-');
+    return parseInt(parts[2]) + ' ' + months[parseInt(parts[1]) - 1];
 }
 
-// ─── Metric Detail Page ───
-let detailChartInstance = null;
+function buildChartConfig(points, metricType, colors, options = {}) {
+    const compact = options.compact || false;
+    const labels = points.map(p => formatShortDate(p.date));
+    const values = points.map(p => p.value);
+    const showPoints = points.length <= 30;
+    const chartType = (metricType === 'int' || metricType === 'float') ? 'number' : metricType;
+    const xConfig = { ticks: { maxTicksLimit: compact ? 4 : 7, maxRotation: 0 }, grid: { display: false } };
+
+    if (chartType === 'bool') {
+        return {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    data: values.map(() => 1),
+                    backgroundColor: values.map(v => v === 1 ? colors.green : colors.red),
+                    borderRadius: 3,
+                }],
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { enabled: !compact, callbacks: { label: ctx => values[ctx.dataIndex] === 1 ? 'Да' : 'Нет' } },
+                },
+                interaction: compact ? { mode: null } : undefined,
+                events: compact ? [] : undefined,
+                scales: {
+                    y: { min: 0, max: 1, display: false },
+                    x: xConfig,
+                },
+            },
+        };
+    }
+
+    const yConfig = { grid: { color: 'rgba(128,128,128,0.1)' } };
+    if (chartType === 'time') {
+        yConfig.min = 0; yConfig.max = 1439;
+        yConfig.ticks = { callback: v => minutesToHHMM(v), stepSize: 360 };
+    } else if (chartType === 'scale') {
+        yConfig.min = 0; yConfig.max = 100;
+        yConfig.ticks = { callback: v => v + '%' };
+    }
+
+    const config = {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                data: values,
+                borderColor: colors.accent,
+                backgroundColor: colors.accent + '22',
+                fill: true,
+                tension: 0.3,
+                pointRadius: showPoints ? 3 : 0,
+            }],
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { enabled: !compact } },
+            interaction: compact ? { mode: null } : undefined,
+            events: compact ? [] : undefined,
+            scales: {
+                y: yConfig,
+                x: xConfig,
+            },
+        },
+    };
+    if (chartType === 'time') {
+        config.options.plugins.tooltip = {
+            callbacks: { label: ctx => minutesToHHMM(ctx.parsed.y) }
+        };
+    }
+    return config;
+}
 let formulaTokens = [];
 let formulaBuilderInitialized = false;
 
@@ -1202,79 +1279,18 @@ async function loadMetricDetail(metricId, metric, start, end) {
 
     const canvas = document.getElementById('detail-chart');
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
-    const green = getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
-    const red = getComputedStyle(document.documentElement).getPropertyValue('--red').trim();
+    const style = getComputedStyle(document.documentElement);
+    const colors = {
+        accent: style.getPropertyValue('--accent').trim(),
+        green: style.getPropertyValue('--green').trim(),
+        red: style.getPropertyValue('--red').trim(),
+    };
 
     const points = trend.points || [];
-    const labels = points.map(p => p.date);
-    const values = points.map(p => p.value);
     const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type;
-    const showPoints = points.length <= 30;
+    const chartConfig = buildChartConfig(points, mt, colors);
 
-    let chartConfig;
-    // Map computed result types to chart-compatible types
-    const chartType = (mt === 'int' || mt === 'float') ? 'number' : mt;
-    if (chartType === 'bool') {
-        chartConfig = {
-            type: 'bar',
-            data: {
-                labels,
-                datasets: [{
-                    data: values,
-                    backgroundColor: values.map(v => v === 1 ? green : red),
-                    borderRadius: 3,
-                }],
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    y: { min: 0, max: 1, ticks: { callback: v => v === 1 ? 'Да' : 'Нет', stepSize: 1 }, grid: { color: 'rgba(128,128,128,0.1)' } },
-                    x: { ticks: { maxTicksLimit: 10 }, grid: { display: false } },
-                },
-            },
-        };
-    } else {
-        const yConfig = {};
-        if (chartType === 'time') {
-            yConfig.ticks = { callback: v => minutesToHHMM(v) };
-        } else if (chartType === 'scale') {
-            yConfig.min = 0; yConfig.max = 100;
-            yConfig.ticks = { callback: v => v + '%' };
-        }
-        yConfig.grid = { color: 'rgba(128,128,128,0.1)' };
-        chartConfig = {
-            type: 'line',
-            data: {
-                labels,
-                datasets: [{
-                    data: values,
-                    borderColor: accent,
-                    backgroundColor: accent + '22',
-                    fill: true,
-                    tension: 0.3,
-                    pointRadius: showPoints ? 3 : 0,
-                }],
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    y: yConfig,
-                    x: { ticks: { maxTicksLimit: 10 }, grid: { display: false } },
-                },
-            },
-        };
-        if (chartType === 'time') {
-            chartConfig.options.plugins.tooltip = {
-                callbacks: { label: ctx => minutesToHHMM(ctx.parsed.y) }
-            };
-        }
-    }
-
-    detailChartInstance = new Chart(ctx, chartConfig);
+    detailChartInstance = new Chart(canvas.getContext('2d'), chartConfig);
 
     // Render stats (use result_type for computed)
     const statsType = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type;
