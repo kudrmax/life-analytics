@@ -579,21 +579,65 @@ async function saveDaily(metricId, entryId, value, slotId) {
 }
 
 // ─── History Page ───
+let historyDate = todayStr();
+
 async function renderHistory(container) {
+    historyDate = todayStr();
     container.innerHTML = `
-        <h2>История</h2>
-        <input type="month" id="history-month" value="${currentDate.slice(0, 7)}">
+        <div class="day-header">
+            <div class="day-progress">
+                <div class="progress-track">
+                    <div class="progress-fill" id="hist-progress-fill" style="width: 0%"></div>
+                </div>
+                <span class="progress-count" id="hist-progress-count">0%</span>
+            </div>
+            <button class="go-today-btn" id="hist-go-today" style="display:none" title="Вернуться к сегодня">
+                <i data-lucide="undo-2"></i>
+            </button>
+            <div class="day-nav">
+                <button class="day-nav-arrow" id="hist-prev-day">
+                    <i data-lucide="chevron-left"></i>
+                </button>
+                <span class="day-nav-date" id="hist-date-label"></span>
+                <button class="day-nav-arrow" id="hist-next-day">
+                    <i data-lucide="chevron-right"></i>
+                </button>
+            </div>
+        </div>
         <div id="history-calendar" class="calendar-grid"></div>
         <div id="day-detail"></div>
     `;
 
-    document.getElementById('history-month').addEventListener('change', (e) => {
-        renderCalendar(e.target.value);
-    });
-    renderCalendar(currentDate.slice(0, 7));
+    if (window.lucide) lucide.createIcons();
+
+    document.getElementById('hist-prev-day').onclick = () => changeHistoryDay(-1);
+    document.getElementById('hist-next-day').onclick = () => changeHistoryDay(1);
+    document.getElementById('hist-go-today').onclick = () => { historyDate = todayStr(); updateHistoryView(); };
+
+    await updateHistoryView();
 }
 
-async function renderCalendar(yearMonth) {
+function changeHistoryDay(delta) {
+    const d = new Date(historyDate);
+    d.setDate(d.getDate() + delta);
+    historyDate = d.toISOString().slice(0, 10);
+    updateHistoryView();
+}
+
+async function updateHistoryView() {
+    // Update header
+    document.getElementById('hist-date-label').textContent = formatDate(historyDate);
+    const goBtn = document.getElementById('hist-go-today');
+    if (goBtn) goBtn.style.display = (historyDate === todayStr()) ? 'none' : '';
+
+    // Render calendar for the month of historyDate
+    renderCalendar(historyDate.slice(0, 7));
+
+    // Load and show day detail + progress
+    await showDayDetail(historyDate);
+}
+
+function renderCalendar(yearMonth) {
     const [year, month] = yearMonth.split('-').map(Number);
     const daysInMonth = new Date(year, month, 0).getDate();
     const grid = document.getElementById('history-calendar');
@@ -606,36 +650,70 @@ async function renderCalendar(yearMonth) {
 
     for (let d = 1; d <= daysInMonth; d++) {
         const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        const isToday = dateStr === todayStr() ? 'today' : '';
-        html += `<div class="cal-day ${isToday}" data-date="${dateStr}">${d}</div>`;
+        const isTodayCls = dateStr === todayStr() ? 'today' : '';
+        const isSelected = dateStr === historyDate ? 'selected' : '';
+        html += `<div class="cal-day ${isTodayCls} ${isSelected}" data-date="${dateStr}">${d}</div>`;
     }
     grid.innerHTML = html;
 
     grid.querySelectorAll('.cal-day').forEach(el => {
-        el.addEventListener('click', () => showDayDetail(el.dataset.date));
+        el.addEventListener('click', () => {
+            historyDate = el.dataset.date;
+            updateHistoryView();
+        });
     });
 }
 
 async function showDayDetail(date) {
     const detail = document.getElementById('day-detail');
     const summary = await api.getDailySummary(date);
-    let html = `<h3>${formatDate(date)}</h3><div class="day-summary">`;
+
+    // Update progress bar
+    let total = 0;
+    let filled = 0;
+    for (const m of summary.metrics) {
+        if (m.slots && m.slots.length > 0) {
+            total += m.slots.length;
+            filled += m.slots.filter(s => s.entry !== null).length;
+        } else {
+            total += 1;
+            filled += m.entry !== null ? 1 : 0;
+        }
+    }
+    const pct = total > 0 ? Math.round((filled / total) * 100) : 0;
+    const progressCount = document.getElementById('hist-progress-count');
+    const progressFill = document.getElementById('hist-progress-fill');
+    if (progressCount) progressCount.textContent = `${pct}%`;
+    if (progressFill) {
+        progressFill.style.width = `${pct}%`;
+        progressFill.classList.toggle('complete', filled === total && total > 0);
+    }
+
+    // Build detail HTML
+    let html = `<div class="day-summary">`;
+    let hasAny = false;
 
     for (const m of summary.metrics) {
         if (m.slots && m.slots.length > 0) {
-            // Multi-slot metric
             const filledSlots = m.slots.filter(s => s.entry !== null);
             if (filledSlots.length === 0) continue;
+            hasAny = true;
             for (const s of filledSlots) {
                 const valStr = _formatEntryValue(s.entry, m.type);
                 html += `<div class="summary-row"><span class="summary-label">${m.name} — ${s.label}</span><span class="summary-value">${valStr}</span></div>`;
             }
         } else {
             if (!m.entry) continue;
+            hasAny = true;
             const valStr = _formatEntryValue(m.entry, m.type);
             html += `<div class="summary-row"><span class="summary-label">${m.name}</span><span class="summary-value">${valStr}</span></div>`;
         }
     }
+
+    if (!hasAny) {
+        html += `<div class="summary-row"><span class="summary-label" style="color:var(--text-dim)">Нет записей</span></div>`;
+    }
+
     html += '</div>';
     detail.innerHTML = html;
 }

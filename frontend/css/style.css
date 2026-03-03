@@ -730,6 +730,7 @@ input[type="month"], input[type="date"] {
 
 .cal-day:hover { border-color: var(--accent); }
 .cal-day.today { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.cal-day.selected { background: var(--accent); color: #fff; font-weight: 600; border-color: var(--accent); }
 .cal-empty { padding: 10px; }
 
 .day-summary {
