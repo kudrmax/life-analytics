@@ -54,6 +54,16 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                 "recorded_at": str(entry["recorded_at"]),
                 "value": value,
             }
+            # For filled scale entries, use stored context instead of current config
+            if m["type"] == "scale":
+                vs = await db.fetchrow(
+                    "SELECT scale_min, scale_max, scale_step FROM values_scale WHERE entry_id = $1",
+                    entry["id"],
+                )
+                if vs:
+                    item["scale_min"] = vs["scale_min"]
+                    item["scale_max"] = vs["scale_max"]
+                    item["scale_step"] = vs["scale_step"]
 
         result.append(item)
 
