@@ -26,7 +26,11 @@
       "WebSearch",
       "WebFetch(domain:www.npmjs.com)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:www.jqueryscript.net)"
+      "WebFetch(domain:www.jqueryscript.net)",
+      "WebFetch(domain:www.chartjs.org)",
+      "WebFetch(domain:apexcharts.com)",
+      "WebFetch(domain:leeoniya.github.io)",
+      "WebFetch(domain:frappe.io)"
     ]
   }
 }

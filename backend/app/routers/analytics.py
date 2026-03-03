@@ -447,24 +447,24 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             for s in slots_rows:
                 slots_by_metric[s["metric_id"]].append(s)
 
-            # Build data sources: (metric_id, slot_id_or_None, label, metric_type)
+            # Build data sources: (metric_id, slot_id, name, type, icon, slot_label)
             sources = []
             for m in metrics_rows:
                 mid = m["id"]
                 name = m["name"]
                 mt = m["type"]
+                icon = m["icon"] or ""
                 metric_slots = slots_by_metric.get(mid, [])
-                # Average across all slots (or single value if no slots)
                 if metric_slots:
-                    sources.append((mid, None, name, mt))
+                    sources.append((mid, None, name, mt, icon, ""))
                     for s in metric_slots:
-                        sources.append((mid, s["id"], f"{name} ({s['label']})", mt))
+                        sources.append((mid, s["id"], name, mt, icon, s["label"]))
                 else:
-                    sources.append((mid, None, name, mt))
+                    sources.append((mid, None, name, mt, icon, ""))
 
             # Fetch data for each source
             source_data = {}
-            for i, (mid, sid, label, mt) in enumerate(sources):
+            for i, (mid, sid, name, mt, icon, sl) in enumerate(sources):
                 source_data[i] = await _values_by_date_for_slot(
                     conn, mid, mt, start_date, end_date, user_id, slot_id=sid,
                 )
@@ -477,12 +477,15 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                         continue  # same metric — skip
                     r, n = _compute_pearson(source_data[i], source_data[j])
                     if r is not None:
+                        si, sj = sources[i], sources[j]
                         pairs_to_insert.append((
                             report_id,
-                            sources[i][0], sources[j][0],
-                            sources[i][1], sources[j][1],
-                            sources[i][2], sources[j][2],
-                            sources[i][3], sources[j][3],
+                            si[0], sj[0],       # metric_a_id, metric_b_id
+                            si[1], sj[1],       # slot_a_id, slot_b_id
+                            si[2], sj[2],       # label_a, label_b (metric name)
+                            si[3], sj[3],       # type_a, type_b
+                            si[4], sj[4],       # icon_a, icon_b
+                            si[5], sj[5],       # slot_label_a, slot_label_b
                             r, n,
                         ))
 
@@ -491,8 +494,9 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 await conn.executemany(
                     """INSERT INTO correlation_pairs
                        (report_id, metric_a_id, metric_b_id, slot_a_id, slot_b_id,
-                        label_a, label_b, type_a, type_b, correlation, data_points)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)""",
+                        label_a, label_b, type_a, type_b, icon_a, icon_b,
+                        slot_label_a, slot_label_b, correlation, data_points)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)""",
                     pairs_to_insert,
                 )
 
@@ -553,7 +557,9 @@ async def get_correlation_report(
         return {"error": "Report not found"}
 
     pairs = await db.fetch(
-        """SELECT label_a, label_b, type_a, type_b, correlation, data_points
+        """SELECT label_a, label_b, type_a, type_b,
+                  icon_a, icon_b, slot_label_a, slot_label_b,
+                  correlation, data_points
            FROM correlation_pairs
            WHERE report_id = $1
            ORDER BY abs(correlation) DESC""",
@@ -572,6 +578,10 @@ async def get_correlation_report(
                 "label_b": p["label_b"],
                 "type_a": p["type_a"],
                 "type_b": p["type_b"],
+                "icon_a": p["icon_a"],
+                "icon_b": p["icon_b"],
+                "slot_label_a": p["slot_label_a"],
+                "slot_label_b": p["slot_label_b"],
                 "correlation": p["correlation"],
                 "data_points": p["data_points"],
                 "p_value": round(_p_value(p["correlation"], p["data_points"]), 4) if p["correlation"] is not None else None,

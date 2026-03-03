@@ -895,23 +895,31 @@ function corrTypeWords(type) {
     }
 }
 
-function corrInterpretation(labelA, typeA, labelB, typeB, r) {
+function corrInterpretation(typeA, typeB, r) {
     if (!typeA || !typeB) return '';
     const [posA] = corrTypeWords(typeA);
     const [posB, negB] = corrTypeWords(typeB);
     const wordA = typeA === 'bool' ? `= ${posA}` : posA;
     const wordB = r > 0 ? (typeB === 'bool' ? `= ${posB}` : posB) : (typeB === 'bool' ? `= ${negB}` : negB);
-    return `${labelA} ${wordA} — ${labelB} ${wordB}`;
+    return `${wordA} — ${wordB}`;
+}
+
+function renderCorrMetricLabel(label, icon, slotLabel) {
+    const iconHtml = icon ? `<span class="metric-icon">${icon}</span>` : '';
+    const slotHtml = slotLabel ? `<span class="corr-slot-badge">${slotLabel}</span>` : '';
+    return `${iconHtml}${label}${slotHtml}`;
 }
 
 function renderCorrPair(p) {
     const r = p.correlation;
     const absR = Math.abs(r);
     const cls = absR > 0.7 ? 'strong' : absR > 0.3 ? 'medium' : 'weak';
-    const hint = corrInterpretation(p.label_a, p.type_a, p.label_b, p.type_b, r);
+    const hint = corrInterpretation(p.type_a, p.type_b, r);
+    const a = renderCorrMetricLabel(p.label_a, p.icon_a, p.slot_label_a);
+    const b = renderCorrMetricLabel(p.label_b, p.icon_b, p.slot_label_b);
     return `<div class="corr-pair-row">
         <div>
-            <div class="corr-pair-metrics">${p.label_a} ↔ ${p.label_b}</div>
+            <div class="corr-pair-metrics">${a} <span class="corr-arrow">↔</span> ${b}</div>
             ${hint ? `<div class="corr-pair-hint">${hint}</div>` : ''}
         </div>
         <div style="text-align:right">
