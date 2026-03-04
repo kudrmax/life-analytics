@@ -902,7 +902,7 @@ async function loadDashboard(start, end) {
         <div class="corr-header">
             <div class="corr-header-left">
                 <h3>Корреляции</h3>
-                <span class="corr-count" id="corr-count"></span>
+                <span class="corr-count" id="corr-count" style="display:none"></span>
                 <button class="corr-help-btn" id="corr-help-btn">?</button>
             </div>
             <button class="btn-primary btn-sm" id="corr-calc-all">Рассчитать</button>
@@ -961,6 +961,12 @@ async function loadCorrelationReport(start, end) {
     const countEl = document.getElementById('corr-count');
     if (countEl && data.report) {
         countEl.textContent = data.report.pairs.length;
+        countEl.style.display = '';
+    }
+
+    const calcBtn = document.getElementById('corr-calc-all');
+    if (calcBtn) {
+        calcBtn.textContent = data.report ? 'Обновить' : 'Рассчитать';
     }
 
     if (data.report) {
@@ -1106,7 +1112,7 @@ function renderCorrelationReport(report, container) {
 
     if (sig.length > 0) {
         html += '<div class="corr-section">';
-        html += '<div class="corr-section-header">Статистически значимо <span class="corr-sig corr-sig-yes">p&lt;0.05</span></div>';
+        html += '<h4>Статистически значимо <span class="corr-sig corr-sig-yes">p&lt;0.05</span></h4>';
         if (strong.length > 0) {
             html += '<div class="corr-subsection-header">Сильная корреляция</div>';
             for (const p of strong) html += renderCorrPair(p);
@@ -1124,7 +1130,7 @@ function renderCorrelationReport(report, container) {
 
     if (insig.length > 0) {
         html += '<div class="corr-section corr-section-low">';
-        html += '<div class="corr-section-header">Незначимо или мало данных</div>';
+        html += '<h4>Незначимо или мало данных</h4>';
         for (const p of insig) html += renderCorrPair(p);
         html += '</div>';
     }

@@ -198,7 +198,7 @@ h2 {
 }
 
 h3 {
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 600;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -823,8 +823,8 @@ input[type="month"], input[type="date"] {
 .trends-list {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    margin-bottom: 16px;
+    gap: 12px;
+    margin-bottom: 24px;
 }
 
 .trend-card-row {
@@ -962,7 +962,7 @@ input[type="month"], input[type="date"] {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 12px;
+    margin-bottom: 16px;
 }
 
 .corr-header-left {
@@ -973,10 +973,19 @@ input[type="month"], input[type="date"] {
 
 .corr-header h3 {
     margin: 0;
+    padding: 0;
+}
+
+.corr-header .btn-primary {
+    margin-bottom: 0;
 }
 
 .corr-count {
-    font-size: 13px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(136, 136, 136, 0.15);
     color: var(--text-dim);
 }
 
@@ -994,7 +1003,7 @@ input[type="month"], input[type="date"] {
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 10px 12px;
-    margin-bottom: 4px;
+    margin-bottom: 8px;
 }
 
 .corr-col-metric {
@@ -1116,15 +1125,15 @@ input[type="month"], input[type="date"] {
 }
 
 .corr-section {
-    margin-bottom: 20px;
+    margin-bottom: 28px;
 }
-.corr-section-header {
+.corr-section h4 {
     font-size: 13px;
     font-weight: 600;
     color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    margin-bottom: 8px;
+    margin: 0 0 8px;
     padding-bottom: 6px;
     border-bottom: 1px solid var(--border);
     display: flex;
