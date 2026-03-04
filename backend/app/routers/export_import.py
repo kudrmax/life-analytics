@@ -29,12 +29,12 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         metrics_writer.writerow([
             'id', 'slug', 'name', 'category', 'icon', 'type',
             'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step',
-            'slot_labels', 'formula', 'result_type', 'provider', 'metric_key',
+            'slot_labels', 'formula', 'result_type', 'provider', 'metric_key', 'value_type',
         ])
 
         metrics = await db.fetch(
             """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
-                      ic.provider, ic.metric_key
+                      ic.provider, ic.metric_key, ic.value_type
                FROM metric_definitions md
                LEFT JOIN scale_config sc ON sc.metric_id = md.id
                LEFT JOIN integration_config ic ON ic.metric_id = md.id
@@ -86,7 +86,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
                 m["scale_step"] if m["scale_step"] is not None else '',
                 json.dumps(slot_labels) if slot_labels else '',
                 formula_export, result_type_export,
-                m.get("provider") or '', m.get("metric_key") or '',
+                m.get("provider") or '', m.get("metric_key") or '', m.get("value_type") or '',
             ])
 
         zip_file.writestr('metrics.csv', metrics_csv.getvalue())
@@ -97,7 +97,10 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         entries_writer.writerow(['date', 'metric_slug', 'value', 'slot_sort_order', 'slot_label'])
 
         slug_lookup = {m["id"]: m["slug"] for m in metrics}
-        type_lookup = {m["id"]: m["type"] for m in metrics}
+        type_lookup = {
+            m["id"]: (m.get("value_type") or "number") if m["type"] == "integration" else m["type"]
+            for m in metrics
+        }
 
         entries = await db.fetch(
             """SELECT e.*, ms.sort_order AS slot_sort_order, ms.label AS slot_label
@@ -201,6 +204,11 @@ async def import_data(
                         except (json.JSONDecodeError, TypeError):
                             pass
 
+                    # Parse integration fields from CSV
+                    csv_provider = row.get('provider', '')
+                    csv_metric_key = row.get('metric_key', '')
+                    csv_value_type = row.get('value_type', '')
+
                     if existing:
                         await db.execute(
                             """UPDATE metric_definitions
@@ -226,6 +234,15 @@ async def import_data(
                                     "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
                                     existing["id"], s_min, s_max, s_step,
                                 )
+                        # Upsert integration_config if needed
+                        if metric_type == 'integration' and csv_provider and csv_metric_key:
+                            await db.execute(
+                                """INSERT INTO integration_config (metric_id, provider, metric_key, value_type)
+                                   VALUES ($1, $2, $3, $4)
+                                   ON CONFLICT (metric_id) DO UPDATE
+                                   SET provider = EXCLUDED.provider, metric_key = EXCLUDED.metric_key, value_type = EXCLUDED.value_type""",
+                                existing["id"], csv_provider, csv_metric_key, csv_value_type or 'number',
+                            )
                         # Import slots if provided
                         if len(csv_slot_labels) >= 2:
                             await _import_slots(db, existing["id"], csv_slot_labels)
@@ -247,6 +264,12 @@ async def import_data(
                                 "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
                                 new_id, s_min, s_max, s_step,
                             )
+                        # Create integration_config for new integration metrics
+                        if metric_type == 'integration' and csv_provider and csv_metric_key:
+                            await db.execute(
+                                "INSERT INTO integration_config (metric_id, provider, metric_key, value_type) VALUES ($1, $2, $3, $4)",
+                                new_id, csv_provider, csv_metric_key, csv_value_type or 'number',
+                            )
                         # Create slots if provided
                         if len(csv_slot_labels) >= 2:
                             for i, label in enumerate(csv_slot_labels):
@@ -261,11 +284,17 @@ async def import_data(
 
             # Build slug->id and slug->type lookups after metric import
             metric_rows = await db.fetch(
-                "SELECT id, slug, type FROM metric_definitions WHERE user_id = $1",
+                """SELECT md.id, md.slug, md.type, ic.value_type AS ic_value_type
+                   FROM metric_definitions md
+                   LEFT JOIN integration_config ic ON ic.metric_id = md.id
+                   WHERE md.user_id = $1""",
                 current_user["id"],
             )
             slug_to_id = {r["slug"]: r["id"] for r in metric_rows}
-            slug_to_type = {r["slug"]: r["type"] for r in metric_rows}
+            slug_to_type = {
+                r["slug"]: (r["ic_value_type"] or "number") if r["type"] == "integration" else r["type"]
+                for r in metric_rows
+            }
 
             # Deferred: import computed formulas (need full slug->id map)
             metrics_csv_text2 = zip_file.read('metrics.csv').decode('utf-8')
@@ -379,7 +408,7 @@ async def import_data(
                         if not isinstance(value, str):
                             entries_skipped += 1
                             continue
-                    elif mt in ("number", "integration"):
+                    elif mt == "number":
                         try:
                             value = int(value)
                         except (ValueError, TypeError):

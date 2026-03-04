@@ -7,6 +7,7 @@ from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDe
 from app.auth import get_current_user
 from app.metric_helpers import build_metric_out, get_metric_slots
 from app.formula import validate_formula, get_referenced_metric_ids
+from app.integrations.todoist.registry import TODOIST_METRICS, TODOIST_ICON
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
@@ -19,7 +20,7 @@ async def list_metrics(
 ):
     query = """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
                       cc.formula, cc.result_type,
-                      ic.provider, ic.metric_key
+                      ic.provider, ic.metric_key, ic.value_type
                FROM metric_definitions md
                LEFT JOIN scale_config sc ON sc.metric_id = md.id
                LEFT JOIN computed_config cc ON cc.metric_id = md.id
@@ -46,7 +47,7 @@ async def get_metric(
     row = await db.fetchrow(
         """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
                   cc.formula, cc.result_type,
-                  ic.provider, ic.metric_key
+                  ic.provider, ic.metric_key, ic.value_type
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
            LEFT JOIN computed_config cc ON cc.metric_id = md.id
@@ -68,7 +69,21 @@ async def create_metric(
     current_user: dict = Depends(get_current_user),
 ):
     if data.type == MetricType.integration:
-        raise HTTPException(400, "Integration metrics are created automatically via OAuth")
+        if not data.provider:
+            raise HTTPException(400, "provider is required for integration metrics")
+        if not data.metric_key:
+            raise HTTPException(400, "metric_key is required for integration metrics")
+        if data.provider == "todoist":
+            if data.metric_key not in TODOIST_METRICS:
+                raise HTTPException(400, f"Unknown metric_key: {data.metric_key}")
+            integration_row = await db.fetchval(
+                "SELECT id FROM user_integrations WHERE user_id = $1 AND provider = 'todoist' AND enabled = TRUE",
+                current_user["id"],
+            )
+            if not integration_row:
+                raise HTTPException(400, "Todoist is not connected")
+        else:
+            raise HTTPException(400, f"Unknown provider: {data.provider}")
 
     existing = await db.fetchval(
         "SELECT id FROM metric_definitions WHERE slug = $1 AND user_id = $2",
@@ -86,6 +101,8 @@ async def create_metric(
         if s_step < 1 or s_step > (s_max - s_min):
             raise HTTPException(400, "scale_step must be >= 1 and <= (max - min)")
 
+    icon = TODOIST_ICON if data.type == MetricType.integration else data.icon
+
     metric_id = await db.fetchval(
         """INSERT INTO metric_definitions
            (user_id, slug, name, category, icon, type, enabled, sort_order)
@@ -95,11 +112,18 @@ async def create_metric(
         data.slug,
         data.name,
         data.category,
-        data.icon,
+        icon,
         data.type.value,
         data.enabled,
         data.sort_order,
     )
+
+    if data.type == MetricType.integration:
+        value_type = TODOIST_METRICS[data.metric_key]["value_type"]
+        await db.execute(
+            "INSERT INTO integration_config (metric_id, provider, metric_key, value_type) VALUES ($1, $2, $3, $4)",
+            metric_id, data.provider, data.metric_key, value_type,
+        )
 
     if data.type == MetricType.scale:
         await db.execute(
@@ -129,8 +153,8 @@ async def create_metric(
             metric_id, json.dumps(data.formula), data.result_type,
         )
 
-    # Create measurement slots if 2+ labels provided (skip for computed)
-    labels = data.slot_labels or [] if data.type != MetricType.computed else []
+    # Create measurement slots if 2+ labels provided (skip for computed/integration)
+    labels = data.slot_labels or [] if data.type not in (MetricType.computed, MetricType.integration) else []
     if len(labels) >= 2:
         for i, label in enumerate(labels):
             await db.execute(
@@ -160,7 +184,7 @@ async def update_metric(
         updates["name"] = data.name
     if data.category is not None:
         updates["category"] = data.category
-    if data.icon is not None:
+    if data.icon is not None and row["type"] != "integration":
         updates["icon"] = data.icon
     if data.enabled is not None:
         updates["enabled"] = data.enabled

@@ -138,4 +138,7 @@ const api = {
     fetchIntegration(provider) {
         return this.request('POST', `/api/integrations/${provider}/fetch`);
     },
+    getTodoistAvailableMetrics() {
+        return this.request('GET', '/api/integrations/todoist/available-metrics');
+    },
 };

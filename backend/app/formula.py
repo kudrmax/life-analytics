@@ -105,7 +105,7 @@ def convert_metric_value(
         return None
     if metric_type == "bool":
         return 1.0 if raw_value else 0.0
-    if metric_type in ("number", "integration"):
+    if metric_type == "number":
         return float(raw_value)
     if metric_type == "scale":
         v = float(raw_value)

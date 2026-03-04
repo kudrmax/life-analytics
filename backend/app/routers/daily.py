@@ -26,7 +26,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
     metrics = await db.fetch(
         """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
                   cc.formula, cc.result_type,
-                  ic.provider, ic.metric_key
+                  ic.provider, ic.metric_key, ic.value_type
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
            LEFT JOIN computed_config cc ON cc.metric_id = md.id
@@ -101,6 +101,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "result_type": m.get("result_type"),
             "provider": m.get("provider"),
             "metric_key": m.get("metric_key"),
+            "value_type": m.get("value_type"),
         }
 
         if slots or extra_disabled:
@@ -123,7 +124,8 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                     "entry": None,
                 }
                 if entry:
-                    value = await get_entry_value(db, entry["id"], m["type"])
+                    etype = m.get("value_type") or m["type"] if m["type"] == "integration" else m["type"]
+                    value = await get_entry_value(db, entry["id"], etype)
                     slot_item["entry"] = {
                         "id": entry["id"],
                         "recorded_at": str(entry["recorded_at"]),
@@ -152,7 +154,8 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                     break
 
             if entry:
-                value = await get_entry_value(db, entry["id"], m["type"])
+                etype = m.get("value_type") or m["type"] if m["type"] == "integration" else m["type"]
+                value = await get_entry_value(db, entry["id"], etype)
                 item["entry"] = {
                     "id": entry["id"],
                     "recorded_at": str(entry["recorded_at"]),

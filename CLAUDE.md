@@ -138,6 +138,8 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 
 ## Key Implementation Details
 
+**Backend-first logic:** All business logic lives on the backend. Frontend is a thin client — display and input only. Criterion: imagine a second, different frontend exists; avoid any logic duplication. Examples: available integration metrics registry — served via endpoint, not hardcoded on frontend; validation — backend only; value_type resolution — backend only.
+
 **Adding a new metric type** requires changes in 8 places:
 1. `database.py` — `ALTER TYPE metric_type ADD VALUE`, create `values_{type}` table (+ config table if type has settings)
 2. `schemas.py` — add to `MetricType` enum, add config fields to Create/Update/Out if needed (keep `bool` before `int` in value unions — bool is subclass of int in Python)

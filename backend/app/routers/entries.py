@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import get_db
 from app.schemas import EntryCreate, EntryUpdate, EntryOut
 from app.auth import get_current_user
-from app.metric_helpers import get_entry_value, insert_value, update_value, get_metric_type
+from app.metric_helpers import get_entry_value, insert_value, update_value, get_metric_type, resolve_storage_type
 
 router = APIRouter(prefix="/api/entries", tags=["entries"])
 
@@ -50,7 +50,7 @@ async def list_entries(
             d, current_user["id"],
         )
 
-    # Build metric_id -> type lookup
+    # Build metric_id -> type lookup (resolve integration to actual storage type)
     metric_ids = list({r["metric_id"] for r in rows})
     type_lookup = {}
     if metric_ids:
@@ -58,7 +58,8 @@ async def list_entries(
             "SELECT id, type FROM metric_definitions WHERE id = ANY($1) AND user_id = $2",
             metric_ids, current_user["id"],
         )
-        type_lookup = {r["id"]: r["type"] for r in type_rows}
+        for tr in type_rows:
+            type_lookup[tr["id"]] = await resolve_storage_type(db, tr["id"], tr["type"])
 
     return [await _entry_to_out(db, r, type_lookup.get(r["metric_id"], "bool")) for r in rows]
 
@@ -92,7 +93,7 @@ async def create_entry(
     if existing:
         raise HTTPException(409, "Entry already exists for this metric/date/slot. Use PUT to update.")
 
-    mt = metric["type"]
+    mt = await resolve_storage_type(db, data.metric_id, metric["type"])
     async with db.transaction():
         entry_id = await db.fetchval(
             "INSERT INTO entries (metric_id, user_id, date, slot_id) VALUES ($1, $2, $3, $4) RETURNING id",
@@ -127,7 +128,8 @@ async def update_entry(
     if not row:
         raise HTTPException(404, "Entry not found")
 
-    mt = await get_metric_type(db, row["metric_id"], current_user["id"]) or "bool"
+    raw_mt = await get_metric_type(db, row["metric_id"], current_user["id"]) or "bool"
+    mt = await resolve_storage_type(db, row["metric_id"], raw_mt)
     await update_value(db, entry_id, data.value, mt, entry_date=row["date"], metric_id=row["metric_id"])
 
     return await _entry_to_out(db, row, mt)

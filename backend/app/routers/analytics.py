@@ -41,7 +41,7 @@ def _extract_numeric(value_row, metric_type: str = "bool") -> float | None:
     if metric_type == "time":
         # v is a datetime (TIMESTAMPTZ)
         return v.hour * 60 + v.minute
-    elif metric_type in ("number", "integration"):
+    elif metric_type == "number":
         return float(v)
     elif metric_type == "scale":
         v_min = value_row["scale_min"]
@@ -77,7 +77,7 @@ def _get_value_table(mt: str) -> tuple[str, str]:
     """Return (table_name, extra_cols) for a metric type."""
     if mt == "time":
         return "values_time", ""
-    elif mt in ("number", "integration"):
+    elif mt == "number":
         return "values_number", ""
     elif mt == "scale":
         return "values_scale", ", v.scale_min, v.scale_max, v.scale_step"
@@ -315,9 +315,10 @@ async def trends(
     current_user: dict = Depends(get_current_user),
 ):
     metric = await db.fetchrow(
-        """SELECT md.*, cc.formula, cc.result_type
+        """SELECT md.*, cc.formula, cc.result_type, ic.value_type AS ic_value_type
            FROM metric_definitions md
            LEFT JOIN computed_config cc ON cc.metric_id = md.id
+           LEFT JOIN integration_config ic ON ic.metric_id = md.id
            WHERE md.id = $1 AND md.user_id = $2""",
         metric_id, current_user["id"],
     )
@@ -325,10 +326,12 @@ async def trends(
         return {"error": "Metric not found"}
 
     mt = metric["type"]
+    if mt == "integration":
+        mt = metric["ic_value_type"] or "number"
     start_d = date_type.fromisoformat(start)
     end_d = date_type.fromisoformat(end)
 
-    if mt == "computed":
+    if metric["type"] == "computed":
         formula = _parse_formula(metric.get("formula"))
         result_type = metric.get("result_type") or "float"
         ref_ids = get_referenced_metric_ids(formula)
@@ -428,9 +431,10 @@ async def metric_stats(
     current_user: dict = Depends(get_current_user),
 ):
     metric = await db.fetchrow(
-        """SELECT md.*, cc.formula, cc.result_type
+        """SELECT md.*, cc.formula, cc.result_type, ic.value_type AS ic_value_type
            FROM metric_definitions md
            LEFT JOIN computed_config cc ON cc.metric_id = md.id
+           LEFT JOIN integration_config ic ON ic.metric_id = md.id
            WHERE md.id = $1 AND md.user_id = $2""",
         metric_id, current_user["id"],
     )
@@ -438,11 +442,13 @@ async def metric_stats(
         return {"error": "Metric not found"}
 
     mt = metric["type"]
+    if mt == "integration":
+        mt = metric["ic_value_type"] or "number"
     start_date = date_type.fromisoformat(start)
     end_date = date_type.fromisoformat(end)
     total_days = (end_date - start_date).days + 1
 
-    if mt == "computed":
+    if metric["type"] == "computed":
         formula = _parse_formula(metric.get("formula"))
         rt = metric.get("result_type") or "float"
         ref_ids = get_referenced_metric_ids(formula)
@@ -550,7 +556,7 @@ async def metric_stats(
         else:
             result.update({"average": "--:--", "earliest": "--:--", "latest": "--:--"})
 
-    elif mt in ("number", "integration"):
+    elif mt == "number":
         if values:
             result.update({
                 "average": round(mean(values), 1),
@@ -603,12 +609,19 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             start_date = date_type.fromisoformat(start)
             end_date = date_type.fromisoformat(end)
 
-            # Load enabled metrics
+            # Load enabled metrics (resolve integration type via integration_config)
             metrics_rows = await conn.fetch(
-                """SELECT id, name, type FROM metric_definitions
-                   WHERE user_id = $1 AND enabled = TRUE ORDER BY sort_order""",
+                """SELECT md.id, md.name, md.type, ic.value_type AS ic_value_type
+                   FROM metric_definitions md
+                   LEFT JOIN integration_config ic ON ic.metric_id = md.id
+                   WHERE md.user_id = $1 AND md.enabled = TRUE ORDER BY md.sort_order""",
                 user_id,
             )
+            # Resolve integration types
+            for i, m in enumerate(metrics_rows):
+                if m["type"] == "integration":
+                    metrics_rows[i] = dict(m)
+                    metrics_rows[i]["type"] = m["ic_value_type"] or "number"
 
             # Load enabled slots for all metrics
             metric_ids = [m["id"] for m in metrics_rows]

@@ -31,6 +31,8 @@ class MetricDefinitionCreate(BaseModel):
     slot_labels: list[str] | None = None
     formula: list[dict] | None = None
     result_type: str | None = None
+    provider: str | None = None
+    metric_key: str | None = None
 
 
 class MetricDefinitionUpdate(BaseModel):
@@ -64,6 +66,7 @@ class MetricDefinitionOut(BaseModel):
     result_type: str | None = None
     provider: str | None = None
     metric_key: str | None = None
+    value_type: str | None = None
 
 
 class EntryCreate(BaseModel):

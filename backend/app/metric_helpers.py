@@ -31,6 +31,7 @@ async def build_metric_out(row: asyncpg.Record, slots: list | None = None) -> Me
         result_type=row.get("result_type"),
         provider=row.get("provider"),
         metric_key=row.get("metric_key"),
+        value_type=row.get("value_type"),
     )
 
 
@@ -56,6 +57,16 @@ async def get_metric_slots(
     return result
 
 
+async def resolve_storage_type(conn: asyncpg.Connection, metric_id: int, metric_type: str) -> str:
+    """For integration metrics, resolve the actual storage type from integration_config."""
+    if metric_type != "integration":
+        return metric_type
+    row = await conn.fetchrow(
+        "SELECT value_type FROM integration_config WHERE metric_id = $1", metric_id
+    )
+    return row["value_type"] if row else "number"
+
+
 async def get_entry_value(
     conn: asyncpg.Connection, entry_id: int, metric_type: str
 ) -> bool | str | int | None:
@@ -67,7 +78,7 @@ async def get_entry_value(
             return None
         ts = row["value"]
         return f"{ts.hour:02d}:{ts.minute:02d}"
-    elif metric_type in ("number", "integration"):
+    elif metric_type == "number":
         row = await conn.fetchrow(
             "SELECT value FROM values_number WHERE entry_id = $1", entry_id
         )
@@ -102,7 +113,7 @@ async def insert_value(
             "INSERT INTO values_time (entry_id, value) VALUES ($1, $2)",
             entry_id, ts,
         )
-    elif metric_type in ("number", "integration"):
+    elif metric_type == "number":
         await conn.execute(
             "INSERT INTO values_number (entry_id, value) VALUES ($1, $2)",
             entry_id, int(value),
@@ -140,7 +151,7 @@ async def update_value(
             "UPDATE values_time SET value = $1 WHERE entry_id = $2",
             ts, entry_id,
         )
-    elif metric_type in ("number", "integration"):
+    elif metric_type == "number":
         await conn.execute(
             "UPDATE values_number SET value = $1 WHERE entry_id = $2",
             int(value), entry_id,

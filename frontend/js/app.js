@@ -1,3 +1,6 @@
+// ─── Constants ───
+const TODOIST_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><rect width="24" height="24" rx="4" fill="#e44332"/><path d="M6 8.5l3.5 2 5-3 3.5 2" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M6 12.5l3.5 2 5-3 3.5 2" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M6 16.5l3.5 2 5-3 3.5 2" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
+
 // ─── State ───
 let currentDate = todayStr();
 let metrics = [];
@@ -377,21 +380,33 @@ async function renderTodayForm() {
 }
 
 function renderMetricInput(m) {
-    // Integration metric — fetch button
+    // Integration metric — fetch button + standard card
     if (m.type === 'integration') {
         const entry = m.entry;
         const val = entry ? entry.value : null;
+        const entryId = entry ? entry.id : null;
         const isFilled = val !== null && val !== undefined;
-        const displayVal = isFilled ? String(val) : '—';
-        const btnLabel = isFilled ? 'Обновить' : 'Получить данные';
-        return `<div class="metric-card integration-card ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="integration" data-provider="${m.provider || ''}">
+        const vt = m.value_type || 'number';
+        let displayVal;
+        if (!isFilled) {
+            displayVal = '—';
+        } else if (vt === 'bool') {
+            displayVal = val ? 'Да' : 'Нет';
+        } else {
+            displayVal = String(val);
+        }
+        const btnLabel = isFilled ? 'Обновить' : 'Получить';
+        const clearBtn = entry
+            ? `<button class="metric-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`
+            : '';
+        return `<div class="metric-card ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="integration" data-provider="${m.provider || ''}" data-entry-id="${entryId || ''}">
             <div class="metric-header">
                 <label class="metric-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</label>
-                <span class="computed-badge">интеграция</span>
+                ${clearBtn}
             </div>
-            <div class="integration-row">
-                <span class="integration-value ${isFilled ? '' : 'empty'}">${displayVal}</span>
-                <button class="integration-fetch-btn" data-action="fetch-integration" data-provider="${m.provider || 'todoist'}">${btnLabel}</button>
+            <div class="metric-input integration-input">
+                <span class="computed-value ${isFilled ? '' : 'empty'}">${displayVal}</span>
+                <button class="btn-small btn-fetch" data-action="fetch-integration" data-provider="${m.provider || 'todoist'}">${btnLabel}</button>
             </div>
         </div>`;
     }
@@ -596,7 +611,7 @@ async function handleFormClick(e) {
         } catch (error) {
             alert('Ошибка: ' + error.message);
             btn.disabled = false;
-            btn.textContent = 'Получить данные';
+            btn.textContent = 'Получить';
         }
         return;
     }
@@ -842,7 +857,9 @@ function _formatEntryValue(entry, type, resultType) {
         return typeof v === 'number' ? v.toFixed(2) : String(v);
     }
     if (type === 'integration') {
-        return entry.value !== null && entry.value !== undefined ? String(entry.value) : '—';
+        const v = entry.value;
+        if (v === null || v === undefined) return '—';
+        return String(v);
     }
     if (type === 'time') {
         return entry.value || '—';
@@ -920,7 +937,7 @@ async function loadDashboard(start, end) {
     for (const { metric, points } of trendData) {
         const canvas = document.getElementById(`trend-chart-${metric.id}`);
         if (!canvas) continue;
-        const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? 'number' : metric.type;
+        const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type;
         const config = buildChartConfig(points, mt, colors, { compact: true });
         trendChartInstances.push(new Chart(canvas.getContext('2d'), config));
     }
@@ -1129,7 +1146,7 @@ function formatMetricStatsHtml(stats) {
         rows.push(`<div class="corr-stats-row"><span>Да</span><span>${stats.yes_percent}%</span></div>`);
     } else if (mt === 'time' || (mt === 'computed' && rt === 'time')) {
         if (stats.average) rows.push(`<div class="corr-stats-row"><span>Среднее</span><span>${stats.average}</span></div>`);
-    } else if (mt === 'number' || mt === 'integration' || (mt === 'computed' && !rt) || (mt === 'computed' && rt === 'float')) {
+    } else if (mt === 'number' || (mt === 'computed' && !rt) || (mt === 'computed' && rt === 'float')) {
         if (stats.average != null) rows.push(`<div class="corr-stats-row"><span>Среднее</span><span>${stats.average}</span></div>`);
         if (stats.min != null && stats.max != null) rows.push(`<div class="corr-stats-row"><span>Диапазон</span><span>${stats.min} – ${stats.max}</span></div>`);
     } else if (mt === 'scale') {
@@ -1497,13 +1514,13 @@ async function loadMetricDetail(metricId, metric, start, end) {
     };
 
     const points = trend.points || [];
-    const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? 'number' : metric.type;
+    const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type;
     const chartConfig = buildChartConfig(points, mt, colors);
 
     detailChartInstance = new Chart(canvas.getContext('2d'), chartConfig);
 
     // Render stats (use result_type for computed)
-    const statsType = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? 'number' : metric.type;
+    const statsType = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type;
     renderDetailStats(stats, statsType);
 }
 
@@ -1579,7 +1596,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                 : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
-                : m.type === 'integration' ? '<i data-lucide="plug"></i> Интеграция'
+                : m.type === 'integration' ? '<span class="metric-icon">' + TODOIST_ICON + '</span> Todoist'
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
             html += `<div class="setting-row">
                 <div class="setting-info">
@@ -1610,7 +1627,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                 : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
-                : m.type === 'integration' ? '<i data-lucide="plug"></i> Интеграция'
+                : m.type === 'integration' ? '<span class="metric-icon">' + TODOIST_ICON + '</span> Todoist'
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
             html += `<div class="setting-row archived-row">
                 <div class="setting-info">
@@ -1841,11 +1858,26 @@ async function _loadIntegrationsSection() {
     }
 }
 
-function showMetricModal(mode = 'create', existingMetric = null) {
+async function showMetricModal(mode = 'create', existingMetric = null) {
     const isEdit = mode === 'edit';
     const title = isEdit ? 'Редактировать метрику' : 'Создать метрику';
     const buttonText = isEdit ? 'Сохранить изменения' : 'Создать метрику';
     const currentType = existingMetric?.type || 'bool';
+
+    // Fetch integration data for create mode
+    let todoistConnected = false;
+    let todoistAvailableMetrics = [];
+    if (!isEdit) {
+        try {
+            const [integrations, availMetrics] = await Promise.all([
+                api.listIntegrations().catch(() => []),
+                api.getTodoistAvailableMetrics().catch(() => []),
+            ]);
+            const todoist = integrations.find(i => i.provider === 'todoist');
+            todoistConnected = !!(todoist && todoist.enabled);
+            todoistAvailableMetrics = availMetrics;
+        } catch { /* ignore */ }
+    }
 
     function getScaleParams() {
         const minEl = document.getElementById('nm-scale-min');
@@ -1881,6 +1913,10 @@ function showMetricModal(mode = 'create', existingMetric = null) {
         if (type === 'computed') {
             return `<div class="computed-value empty">= ?</div>`;
         }
+        if (type === 'integration') {
+            return `<div class="computed-value empty">—</div>
+                <button type="button" class="btn-small btn-fetch" disabled>Получить</button>`;
+        }
         return `<div class="bool-buttons">
             <button class="bool-btn" data-value="true">Да</button>
             <button class="bool-btn" data-value="false">Нет</button>
@@ -1904,6 +1940,10 @@ function showMetricModal(mode = 'create', existingMetric = null) {
             return `<span class="label-text">Тип: Формула</span>
                     <span class="label-hint">Вычисляется автоматически из других метрик</span>`;
         }
+        if (type === 'integration') {
+            return `<span class="label-text">Тип: Todoist</span>
+                    <span class="label-hint">Данные получаются из Todoist</span>`;
+        }
         return `<span class="label-text">Тип: Да/Нет</span>
                 <span class="label-hint">Простой переключатель (было / не было)</span>`;
     }
@@ -1921,7 +1961,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     <input id="nm-name" placeholder="Например: Зарядка" class="form-input" value="${existingMetric?.name || ''}">
                 </label>
 
-                <div class="form-label">
+                <div class="form-label" ${isEdit && currentType === 'integration' ? 'style="display:none"' : ''}>
                     <span class="label-text">Иконка</span>
                     <div class="emoji-picker-wrapper">
                         <button type="button" class="emoji-trigger-btn ${existingMetric?.icon ? 'has-icon' : ''}" id="nm-icon-btn">${existingMetric?.icon || '<i data-lucide="smile-plus"></i>'}</button>
@@ -1995,12 +2035,14 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     <span class="label-hint">Поддерживаются +, −, ×, ÷ и скобки.</span>
                 </div>
                 ` : ''}
-                <div class="form-section" id="nm-slots-section" ${currentType === 'computed' ? 'style="display:none"' : ''}>
+                ${currentType !== 'computed' && currentType !== 'integration' ? `
+                <div class="form-section" id="nm-slots-section">
                     <span class="label-text">Замеры в день</span>
                     <div class="slot-labels-list" id="nm-slot-labels"></div>
                     <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить замер</button>
                     <span class="label-hint">Оставьте пустым для одного замера в день. Добавьте 2+ замера (например Утро, День, Вечер) для нескольких записей.</span>
                 </div>
+                ` : ''}
                 ` : `
                 <div class="form-section" id="nm-type-section">
                     <span class="label-text">Тип метрики</span>
@@ -2025,7 +2067,17 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                             <input type="radio" name="nm-type" value="computed" ${currentType === 'computed' ? 'checked' : ''}>
                             <span>Формула</span>
                         </label>
+                        ${todoistConnected ? `<label class="radio-inline">
+                            <input type="radio" name="nm-type" value="integration">
+                            <span>Todoist</span>
+                        </label>` : ''}
                     </div>
+                </div>
+                <div class="form-section" id="nm-integration-config" style="display: none">
+                    <span class="label-text">Метрика Todoist</span>
+                    <select id="nm-integration-metric" class="form-input">
+                        ${todoistAvailableMetrics.map(m => `<option value="${m.key}">${m.name}</option>`).join('')}
+                    </select>
                 </div>
                 <div class="form-section" id="nm-scale-config" style="display: ${currentType === 'scale' ? 'flex' : 'none'}">
                     <span class="label-text">Настройки шкалы</span>
@@ -2187,10 +2239,14 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                 const selectedType = overlay.querySelector('input[name="nm-type"]:checked').value;
                 const scaleConfig = document.getElementById('nm-scale-config');
                 const computedConfig = document.getElementById('nm-computed-config');
+                const integrationConfig = document.getElementById('nm-integration-config');
                 const slotsSection = document.getElementById('nm-slots-section');
+                const emojiWrapper = overlay.querySelector('.emoji-picker-wrapper');
                 if (scaleConfig) scaleConfig.style.display = selectedType === 'scale' ? 'flex' : 'none';
                 if (computedConfig) computedConfig.style.display = selectedType === 'computed' ? 'block' : 'none';
-                if (slotsSection) slotsSection.style.display = selectedType === 'computed' ? 'none' : '';
+                if (integrationConfig) integrationConfig.style.display = selectedType === 'integration' ? 'block' : 'none';
+                if (slotsSection) slotsSection.style.display = (selectedType === 'computed' || selectedType === 'integration') ? 'none' : '';
+                if (emojiWrapper) emojiWrapper.style.display = selectedType === 'integration' ? 'none' : '';
                 if (selectedType === 'computed') {
                     formulaTokens = [];
                     formulaBuilderInitialized = false;
@@ -2260,7 +2316,7 @@ function showMetricModal(mode = 'create', existingMetric = null) {
     function updatePreview() {
         const type = getCurrentType();
         const rawName = document.getElementById('nm-name').value || 'Название метрики';
-        const icon = document.getElementById('nm-icon').value;
+        const icon = type === 'integration' ? TODOIST_ICON : document.getElementById('nm-icon').value;
         const name = (icon ? '<span class="metric-icon">' + icon + '</span>' : '') + rawName;
         const slotInputs = slotList ? slotList.querySelectorAll('.slot-label-input') : [];
         const labels = Array.from(slotInputs).map(i => i.value.trim()).filter(v => v !== '');
@@ -2340,8 +2396,9 @@ function showMetricModal(mode = 'create', existingMetric = null) {
             const slotLabels = getSlotLabels();
 
             if (isEdit) {
-                const icon = document.getElementById('nm-icon').value;
-                const updateData = { name, category, icon };
+                const icon = existingMetric.type === 'integration' ? undefined : document.getElementById('nm-icon').value;
+                const updateData = { name, category };
+                if (icon !== undefined) updateData.icon = icon;
                 if (existingMetric.type === 'computed') {
                     if (formulaTokens.length === 0) {
                         alert('Добавьте хотя бы один элемент в формулу');
@@ -2363,8 +2420,8 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     updateData.scale_max = sp.max;
                     updateData.scale_step = sp.step;
                 }
-                // Send slot_labels if user configured slots (not for computed)
-                if (existingMetric.type !== 'computed') {
+                // Send slot_labels if user configured slots (not for computed/integration)
+                if (existingMetric.type !== 'computed' && existingMetric.type !== 'integration') {
                     if (slotLabels.length >= 2) {
                         updateData.slot_labels = slotLabels;
                     } else if (slotLabels.length === 0 && (!existingMetric.slots || existingMetric.slots.length === 0)) {
@@ -2418,7 +2475,17 @@ function showMetricModal(mode = 'create', existingMetric = null) {
                     createData.result_type = document.getElementById('nm-result-type').value;
                 }
 
-                if (selectedType !== 'computed' && slotLabels.length >= 2) {
+                if (selectedType === 'integration') {
+                    const metricSelect = document.getElementById('nm-integration-metric');
+                    if (!metricSelect || !metricSelect.value) {
+                        alert('Выберите метрику Todoist');
+                        return;
+                    }
+                    createData.provider = 'todoist';
+                    createData.metric_key = metricSelect.value;
+                }
+
+                if (!['computed', 'integration'].includes(selectedType) && slotLabels.length >= 2) {
                     createData.slot_labels = slotLabels;
                 }
 
@@ -2434,12 +2501,12 @@ function showMetricModal(mode = 'create', existingMetric = null) {
     };
 }
 
-function showAddMetricModal() {
-    showMetricModal('create');
+async function showAddMetricModal() {
+    await showMetricModal('create');
 }
 
-function showEditMetricModal(metric) {
-    showMetricModal('edit', metric);
+async function showEditMetricModal(metric) {
+    await showMetricModal('edit', metric);
 }
 
 // ─── Clock Picker ───

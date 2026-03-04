@@ -177,7 +177,10 @@ async def init_db():
 
         # Add icon column to metric_definitions
         await conn.execute("""
-            ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS icon VARCHAR(10) NOT NULL DEFAULT ''
+            ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS icon VARCHAR(500) NOT NULL DEFAULT ''
+        """)
+        await conn.execute("""
+            ALTER TABLE metric_definitions ALTER COLUMN icon TYPE VARCHAR(500)
         """)
 
         # Correlation reports
@@ -251,6 +254,10 @@ async def init_db():
                 provider VARCHAR(50) NOT NULL,
                 metric_key VARCHAR(100) NOT NULL DEFAULT 'completed_tasks_count'
             )
+        """)
+
+        await conn.execute("""
+            ALTER TABLE integration_config ADD COLUMN IF NOT EXISTS value_type VARCHAR(20) NOT NULL DEFAULT 'number'
         """)
 
         # Computed metric config (formula stored as JSONB token list)

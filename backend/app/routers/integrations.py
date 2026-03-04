@@ -9,6 +9,7 @@ from app.database import get_db
 from app.auth import get_current_user, SECRET_KEY, ALGORITHM
 from app.encryption import encrypt_token
 from app.integrations.todoist.client import TodoistClient
+from app.integrations.todoist.registry import TODOIST_METRICS, TODOIST_ICON
 from app.integrations.todoist.service import fetch_and_store
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
@@ -114,39 +115,17 @@ async def todoist_callback(
         user_id, encrypted,
     )
 
-    existing_metric = await db.fetchval(
-        "SELECT id FROM metric_definitions WHERE user_id = $1 AND slug = 'todoist_completed_tasks'",
-        user_id,
-    )
-    if not existing_metric:
-        max_order = await db.fetchval(
-            "SELECT COALESCE(MAX(sort_order), -1) FROM metric_definitions WHERE user_id = $1",
-            user_id,
-        )
-        metric_id = await db.fetchval(
-            """INSERT INTO metric_definitions
-               (user_id, slug, name, category, icon, type, enabled, sort_order)
-               VALUES ($1, 'todoist_completed_tasks', 'Todoist: задачи', 'Интеграции', '✅', 'integration', TRUE, $2)
-               RETURNING id""",
-            user_id, max_order + 1,
-        )
-        await db.execute(
-            "INSERT INTO integration_config (metric_id, provider, metric_key) VALUES ($1, 'todoist', 'completed_tasks_count')",
-            metric_id,
-        )
-    else:
-        await db.execute(
-            "UPDATE metric_definitions SET enabled = TRUE WHERE id = $1",
-            existing_metric,
-        )
-        await db.execute(
-            """INSERT INTO integration_config (metric_id, provider, metric_key)
-               VALUES ($1, 'todoist', 'completed_tasks_count')
-               ON CONFLICT (metric_id) DO NOTHING""",
-            existing_metric,
-        )
-
     return RedirectResponse("/")
+
+
+@router.get("/todoist/available-metrics")
+async def todoist_available_metrics(
+    current_user: dict = Depends(get_current_user),
+):
+    return [
+        {"key": key, "name": info["name"], "value_type": info["value_type"]}
+        for key, info in TODOIST_METRICS.items()
+    ]
 
 
 @router.delete("/{provider}/disconnect")
