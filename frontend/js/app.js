@@ -1054,7 +1054,7 @@ function renderCorrPair(p) {
     const lagBadge = isLagged ? '<span class="corr-lag-badge">со сдвигом</span>' : '';
     return `<div class="corr-pair-row">
         <div>
-            <div class="corr-pair-metrics">${a} <span class="corr-arrow">↔</span> ${b}${lagBadge}</div>
+            <div class="corr-pair-metrics">${isLagged ? b : a} <span class="corr-arrow">↔</span> ${isLagged ? a : b}${lagBadge}</div>
             ${hint ? `<div class="corr-pair-hint">${hint}</div>` : ''}
         </div>
         <div style="text-align:right">
