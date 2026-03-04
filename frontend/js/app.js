@@ -1028,10 +1028,11 @@ function corrHintWords(typeA, typeB, r) {
     return [wordA, wordB];
 }
 
-function renderCorrMetricLabel(label, icon, slotLabel, hint) {
+function renderCorrMetricLabel(label, icon, slotLabel, hint, dayLabel) {
     const iconHtml = `<span class="metric-icon">${icon || ''}</span>`;
     const slotHtml = slotLabel ? `<span class="corr-slot-badge">${slotLabel}</span>` : '';
-    return `${iconHtml}<div class="corr-metric-text"><div class="corr-metric-name">${label}${slotHtml}</div><div class="corr-pair-hint">${hint}</div></div>`;
+    const dayHtml = dayLabel ? `<div class="corr-day-label">${dayLabel}</div>` : '';
+    return `${iconHtml}<div class="corr-metric-text">${dayHtml}<div class="corr-metric-name">${label}${slotHtml}</div><div class="corr-pair-hint">${hint}</div></div>`;
 }
 
 function renderCorrPair(p) {
@@ -1044,13 +1045,14 @@ function renderCorrPair(p) {
     const typeRight = isLagged ? p.type_a : p.type_b;
     const [hintA, hintB] = corrHintWords(typeLeft, typeRight, r);
 
-    const labelA = renderCorrMetricLabel(isLagged ? p.label_b : p.label_a, isLagged ? p.icon_b : p.icon_a, isLagged ? p.slot_label_b : p.slot_label_a, hintA);
-    const labelB = renderCorrMetricLabel(isLagged ? p.label_a : p.label_b, isLagged ? p.icon_a : p.icon_b, isLagged ? p.slot_label_a : p.slot_label_b, hintB);
+    const labelA = renderCorrMetricLabel(isLagged ? p.label_b : p.label_a, isLagged ? p.icon_b : p.icon_a, isLagged ? p.slot_label_b : p.slot_label_a, hintA, isLagged ? 'вчера' : '');
+    const labelB = renderCorrMetricLabel(isLagged ? p.label_a : p.label_b, isLagged ? p.icon_a : p.icon_b, isLagged ? p.slot_label_a : p.slot_label_b, hintB, isLagged ? 'сегодня' : '');
 
     const lagBadge = isLagged ? '<div class="corr-lag-badge">со сдвигом</div>' : '';
 
     return `<div class="corr-pair-row">
         <div class="corr-col-metric">${labelA}</div>
+        <div class="corr-arrow">↔</div>
         <div class="corr-col-metric">${labelB}</div>
         <div class="corr-col-info">
             <div class="corr-pair-value ${cls}">${absR.toFixed(3)}</div>

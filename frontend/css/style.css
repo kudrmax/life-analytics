@@ -971,8 +971,8 @@ input[type="month"], input[type="date"] {
 
 .corr-pair-row {
     display: grid;
-    grid-template-columns: 1fr 1fr 5.5rem;
-    gap: 8px;
+    grid-template-columns: 1fr auto 1fr 5.5rem;
+    gap: 6px;
     align-items: start;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -1050,11 +1050,26 @@ input[type="month"], input[type="date"] {
     background: rgba(100, 149, 237, 0.15);
     color: var(--accent);
 }
+.corr-day-label {
+    font-size: 10px;
+    color: var(--accent);
+    opacity: 0.7;
+}
+
 .corr-pair-hint {
     font-size: 12px;
     color: var(--text-dim);
     margin-top: 2px;
 }
+
+.corr-arrow {
+    color: var(--text-dim);
+    opacity: 0.4;
+    font-size: 13px;
+    align-self: start;
+    margin-top: 2px;
+}
+
 
 .corr-word-pos {
     color: #22c55e;
