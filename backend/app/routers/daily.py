@@ -220,20 +220,6 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
         if not m_info or m_info["type"] == "computed":
             continue
 
-        # "filled" — есть ли запись
-        if item["slots"]:
-            is_filled = any(s["entry"] is not None for s in item["slots"])
-        else:
-            is_filled = item["entry"] is not None
-
-        auto_metrics.append({
-            "name": f"{m_info['name']}: заполнено",
-            "auto_type": "filled",
-            "source_metric_id": item["metric_id"],
-            "source_metric_name": m_info["name"],
-            "value": is_filled,
-        })
-
         # "nonzero" — только для number
         if m_info["type"] == "number":
             if item["slots"]:

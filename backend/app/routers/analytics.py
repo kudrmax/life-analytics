@@ -13,6 +13,7 @@ from app import database as _db_module
 from app.database import get_db
 from app.auth import get_current_user
 from app.formula import convert_metric_value, evaluate_formula, get_referenced_metric_ids
+from app.correlation_blacklist import should_skip_pair
 
 
 def _parse_formula(raw):
@@ -613,29 +614,6 @@ async def create_correlation_report(
     return {"report_id": report_id, "status": "running"}
 
 
-def _should_skip_auto_pair(i, j, sources, auto_info):
-    """Skip correlations between a metric and its auto-derivative."""
-    ai = auto_info.get(i)
-    aj = auto_info.get(j)
-
-    if ai and aj:
-        # Both auto — skip if from same parent
-        if ai[1] is not None and ai[1] == aj[1]:
-            return True
-        return False
-
-    if ai and not aj:
-        # i is auto, j is regular — skip if j is parent of i
-        if ai[1] is not None and sources[j][0] == ai[1]:
-            return True
-
-    if aj and not ai:
-        # j is auto, i is regular — skip if i is parent of j
-        if aj[1] is not None and sources[i][0] == aj[1]:
-            return True
-
-    return False
-
 
 async def _compute_report(report_id: int, user_id: int, start: str, end: str):
     try:
@@ -726,11 +704,6 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 if mid not in aggregate_indices:
                     continue
 
-                # "filled"
-                idx = len(sources)
-                sources.append((None, None, "bool", f"{m['name']}: заполнено"))
-                auto_info[idx] = ("filled", mid)
-
                 # "nonzero" for number
                 if m["type"] == "number":
                     idx = len(sources)
@@ -747,10 +720,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             all_dates = [str(start_date + timedelta(days=i)) for i in range((end_date - start_date).days + 1)]
 
             for idx, (auto_type, parent_mid) in auto_info.items():
-                if auto_type == "filled":
-                    parent_data = source_data[aggregate_indices[parent_mid]]
-                    source_data[idx] = {d: 1.0 if d in parent_data else 0.0 for d in all_dates}
-                elif auto_type == "nonzero":
+                if auto_type == "nonzero":
                     parent_data = source_data[aggregate_indices[parent_mid]]
                     source_data[idx] = {d: (1.0 if v > 0 else 0.0) for d, v in parent_data.items()}
                 elif auto_type == "day_of_week":
@@ -764,9 +734,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             pairs_to_insert = []
             for i in range(len(sources)):
                 for j in range(i + 1, len(sources)):
-                    if sources[i][0] == sources[j][0] and sources[i][0] is not None:
-                        continue  # same metric — skip
-                    if _should_skip_auto_pair(i, j, sources, auto_info):
+                    if should_skip_pair(i, j, sources, auto_info):
                         continue
                     si, sj = sources[i], sources[j]
 

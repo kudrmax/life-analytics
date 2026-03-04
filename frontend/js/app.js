@@ -328,7 +328,7 @@ async function renderTodayForm() {
         html += '<h3 class="category-title">Автоматические</h3>';
         html += '<div class="auto-metrics-note">Вычисляются автоматически. Нельзя отключить.</div>';
         for (const am of autoMetrics) {
-            const isBool = ['filled', 'nonzero'].includes(am.auto_type);
+            const isBool = am.auto_type === 'nonzero';
             let displayVal;
             if (isBool) {
                 displayVal = am.value ? 'Да' : 'Нет';
@@ -341,7 +341,7 @@ async function renderTodayForm() {
             } else {
                 displayVal = String(am.value);
             }
-            const filledClass = (isBool && am.auto_type === 'filled' && am.value) || (isBool && am.auto_type === 'nonzero') || !isBool ? 'filled' : '';
+            const filledClass = 'filled';
             html += `<div class="metric-card auto-metric ${filledClass}">
                 <div class="metric-header">
                     <label class="metric-label">${am.name}</label>
