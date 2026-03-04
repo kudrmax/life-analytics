@@ -3,7 +3,7 @@ import json
 import logging
 import math
 from collections import defaultdict
-from datetime import date as date_type
+from datetime import date as date_type, timedelta
 from statistics import mean, median, stdev
 
 from fastapi import APIRouter, Depends, Query
@@ -237,6 +237,11 @@ def _compute_pearson(
     cov = sum((xs[i] - mean_x) * (ys[i] - mean_y) for i in range(n)) / (n - 1)
     r = cov / (std_x * std_y)
     return round(r, 3), n
+
+
+def _shift_dates(data: dict[str, float], days: int) -> dict[str, float]:
+    """Shift date keys forward by N days."""
+    return {str(date_type.fromisoformat(d) + timedelta(days=days)): v for d, v in data.items()}
 
 
 def _betacf(a: float, b: float, x: float) -> float:
@@ -686,16 +691,36 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 for j in range(i + 1, len(sources)):
                     if sources[i][0] == sources[j][0]:
                         continue  # same metric — skip
+                    si, sj = sources[i], sources[j]
+
+                    # lag=0: same-day correlation
                     r, n = _compute_pearson(source_data[i], source_data[j])
                     if r is not None:
-                        si, sj = sources[i], sources[j]
                         pairs_to_insert.append((
                             report_id,
-                            si[0], sj[0],       # metric_a_id, metric_b_id
-                            si[1], sj[1],       # slot_a_id, slot_b_id
-                            si[3], sj[3],       # label_a, label_b
-                            si[2], sj[2],       # type_a, type_b
-                            r, n,
+                            si[0], sj[0], si[1], sj[1],
+                            si[3], sj[3], si[2], sj[2],
+                            r, n, 0,
+                        ))
+
+                    # lag=1: yesterday's j → today's i
+                    r_lag, n_lag = _compute_pearson(source_data[i], _shift_dates(source_data[j], 1))
+                    if r_lag is not None:
+                        pairs_to_insert.append((
+                            report_id,
+                            si[0], sj[0], si[1], sj[1],
+                            si[3], sj[3], si[2], sj[2],
+                            r_lag, n_lag, 1,
+                        ))
+
+                    # lag=1: yesterday's i → today's j
+                    r_lag2, n_lag2 = _compute_pearson(source_data[j], _shift_dates(source_data[i], 1))
+                    if r_lag2 is not None:
+                        pairs_to_insert.append((
+                            report_id,
+                            sj[0], si[0], sj[1], si[1],
+                            sj[3], si[3], sj[2], si[2],
+                            r_lag2, n_lag2, 1,
                         ))
 
             # Batch insert
@@ -703,8 +728,8 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 await conn.executemany(
                     """INSERT INTO correlation_pairs
                        (report_id, metric_a_id, metric_b_id, slot_a_id, slot_b_id,
-                        label_a, label_b, type_a, type_b, correlation, data_points)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)""",
+                        label_a, label_b, type_a, type_b, correlation, data_points, lag_days)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)""",
                     pairs_to_insert,
                 )
 
@@ -765,7 +790,7 @@ async def get_correlation_report(
         return {"error": "Report not found"}
 
     pairs = await db.fetch(
-        """SELECT cp.type_a, cp.type_b, cp.correlation, cp.data_points,
+        """SELECT cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days,
                   cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
                   ma.name AS name_a, ma.icon AS icon_a,
                   mb.name AS name_b, mb.icon AS icon_b,
@@ -799,6 +824,7 @@ async def get_correlation_report(
                 "slot_label_b": p["slot_label_b"] or "",
                 "correlation": p["correlation"],
                 "data_points": p["data_points"],
+                "lag_days": p["lag_days"],
                 "p_value": round(_p_value(p["correlation"], p["data_points"]), 4) if p["correlation"] is not None else None,
             }
             for p in pairs

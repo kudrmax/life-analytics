@@ -866,12 +866,14 @@ async function loadDashboard(start, end) {
     // Correlation section
     const corrEl = document.getElementById('correlation-section');
     corrEl.innerHTML = `
-        <h3>Корреляции</h3>
+        <h3>Корреляции <button class="corr-help-btn" id="corr-help-btn">?</button></h3>
         <div class="corr-report-controls">
             <button class="btn-primary" id="corr-calc-all">Рассчитать все корреляции</button>
         </div>
         <div id="corr-reports"></div>
     `;
+
+    document.getElementById('corr-help-btn').addEventListener('click', showCorrelationHelp);
 
     document.getElementById('corr-calc-all').addEventListener('click', async () => {
         await api.createCorrelationReport(start, end);
@@ -948,6 +950,31 @@ async function loadCorrelationReports(start, end) {
     await loadReport(doneReports[0].id);
 }
 
+function showCorrelationHelp() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:520px">
+            <h2>О корреляциях</h2>
+            <div style="text-align:left;font-size:14px;line-height:1.6">
+                <p><b>Корреляция</b> — числовая мера связи между двумя метриками, от −1 до +1. Положительная: метрики растут вместе. Отрицательная: одна растёт — другая падает.</p>
+                <p><b>P-value</b> — вероятность получить такую корреляцию случайно. p&nbsp;&lt;&nbsp;0.05 — статистически значимо (менее 5% вероятность случайности).</p>
+                <p><b>Категории силы:</b> сильная (&gt;0.7), средняя (0.3–0.7), слабая (&lt;0.3).</p>
+                <p><b>Со сдвигом</b> — проверяем, влияет ли вчерашнее значение одной метрики на сегодняшнее значение другой.</p>
+                <p><b>Что в отчёте</b> — все пары метрик, отсортированные по силе связи. Значимые пары отделены от незначимых.</p>
+                <p><b>Про данные</b> — нужно минимум 10 дней совпадающих данных для значимых результатов. Чем больше данных, тем надёжнее.</p>
+                <p><b>Корреляция ≠ причинность</b> — связь не означает, что одна метрика вызывает изменение другой.</p>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-primary" id="corr-help-close">Понятно</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.getElementById('corr-help-close').addEventListener('click', () => overlay.remove());
+}
+
 function corrTypeWords(type) {
     switch (type) {
         case 'bool': return ['Да', 'Нет'];
@@ -966,6 +993,15 @@ function corrInterpretation(typeA, typeB, r) {
     return `${wordA} — ${wordB}`;
 }
 
+function corrInterpretationLagged(typeYesterday, typeToday, r) {
+    if (!typeYesterday || !typeToday) return '';
+    const [posY] = corrTypeWords(typeYesterday);
+    const [posT, negT] = corrTypeWords(typeToday);
+    const wordY = typeYesterday === 'bool' ? `= ${posY}` : posY;
+    const wordT = r > 0 ? (typeToday === 'bool' ? `= ${posT}` : posT) : (typeToday === 'bool' ? `= ${negT}` : negT);
+    return `вчера ${wordY} → сегодня ${wordT}`;
+}
+
 function renderCorrMetricLabel(label, icon, slotLabel) {
     const iconHtml = icon ? `<span class="metric-icon">${icon}</span>` : '';
     const slotHtml = slotLabel ? `<span class="corr-slot-badge">${slotLabel}</span>` : '';
@@ -976,12 +1012,16 @@ function renderCorrPair(p) {
     const r = p.correlation;
     const absR = Math.abs(r);
     const cls = absR > 0.7 ? 'strong' : absR > 0.3 ? 'medium' : 'weak';
-    const hint = corrInterpretation(p.type_a, p.type_b, r);
+    const isLagged = p.lag_days && p.lag_days > 0;
+    const hint = isLagged
+        ? corrInterpretationLagged(p.type_b, p.type_a, r)
+        : corrInterpretation(p.type_a, p.type_b, r);
     const a = renderCorrMetricLabel(p.label_a, p.icon_a, p.slot_label_a);
     const b = renderCorrMetricLabel(p.label_b, p.icon_b, p.slot_label_b);
+    const lagBadge = isLagged ? '<span class="corr-lag-badge">со сдвигом</span>' : '';
     return `<div class="corr-pair-row">
         <div>
-            <div class="corr-pair-metrics">${a} <span class="corr-arrow">↔</span> ${b}</div>
+            <div class="corr-pair-metrics">${a} <span class="corr-arrow">↔</span> ${b}${lagBadge}</div>
             ${hint ? `<div class="corr-pair-hint">${hint}</div>` : ''}
         </div>
         <div style="text-align:right">

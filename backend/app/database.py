@@ -217,6 +217,9 @@ async def init_db():
         await conn.execute("""
             ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS type_b VARCHAR(20) NOT NULL DEFAULT ''
         """)
+        await conn.execute("""
+            ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS lag_days INTEGER NOT NULL DEFAULT 0
+        """)
 
         # Computed metric config (formula stored as JSONB token list)
         await conn.execute("""

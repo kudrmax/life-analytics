@@ -1009,6 +1009,18 @@ input[type="month"], input[type="date"] {
     margin-left: 4px;
     vertical-align: middle;
 }
+
+.corr-lag-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(100, 149, 237, 0.15);
+    color: var(--accent);
+    margin-left: 6px;
+    vertical-align: middle;
+}
 .corr-arrow {
     color: var(--text-dim);
     margin: 0 2px;
@@ -1180,6 +1192,24 @@ input[type="month"], input[type="date"] {
 .archived-row {
     opacity: 0.6;
 }
+
+/* ─── Correlation help ─── */
+.corr-help-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: none;
+    color: var(--text-dim);
+    font-size: 12px;
+    cursor: pointer;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+.corr-help-btn:hover { color: var(--text); border-color: var(--text-dim); }
 
 /* ─── Modal ─── */
 .modal-overlay {
