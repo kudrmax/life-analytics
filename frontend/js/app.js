@@ -417,7 +417,7 @@ function renderMetricInput(m) {
         return `<div class="metric-card ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="computed">
             <div class="metric-header">
                 <label class="metric-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</label>
-                <span class="computed-badge">авто</span>
+                <span class="computed-badge">формула</span>
             </div>
             <div class="computed-value ${isFilled ? '' : 'empty'}">${displayVal}</div>
         </div>`;
