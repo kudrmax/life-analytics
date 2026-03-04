@@ -36,5 +36,23 @@ services:
     ports:
       - "3000:80"
 
+  backup:
+    build: ./backup
+    restart: unless-stopped
+    profiles:
+      - backup
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-la_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-la_password}
+      POSTGRES_DB: ${POSTGRES_DB:-life_analytics}
+      POSTGRES_HOST: db
+      YADISK_TOKEN: ${YADISK_TOKEN}
+      YADISK_BACKUP_PATH: ${YADISK_BACKUP_PATH:-/life-analytics-backups/}
+      BACKUP_INTERVAL_MINUTES: ${BACKUP_INTERVAL_MINUTES:-360}
+      BACKUP_RETAIN_DAYS: ${BACKUP_RETAIN_DAYS:-30}
+
 volumes:
   pgdata:

@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: up down logs logs-backend migrate restart update status nginx-test nginx-restart
+.PHONY: up down logs logs-backend migrate restart update status nginx-test nginx-restart backup-up backup-down backup-logs backup-now
 
 # ─── Docker ───
 
@@ -37,3 +37,18 @@ nginx-test:
 nginx-restart:
 	systemctl restart nginx
 	@echo "Nginx restarted!"
+
+# ─── Backup ───
+
+backup-up:
+	docker compose --profile backup up -d --build backup
+
+backup-down:
+	docker compose --profile backup stop backup
+
+backup-logs:
+	docker compose --profile backup logs -f backup
+
+backup-now:
+	docker compose --profile backup run --rm backup python -c \
+		"from backup import run_backup_cycle; run_backup_cycle()"
