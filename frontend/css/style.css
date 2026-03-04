@@ -1872,6 +1872,23 @@ emoji-picker {
     font-weight: 400;
 }
 
+/* ─── Auto Metrics ─── */
+.auto-metrics-section {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+
+.auto-metrics-note {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+}
+
+.auto-metric {
+    opacity: 0.85;
+}
+
 /* ─── Formula Builder ─── */
 .formula-tokens {
     display: flex;

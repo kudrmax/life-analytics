@@ -320,6 +320,39 @@ async function renderTodayForm() {
         }
         html += '</div>';
     }
+
+    // Auto metrics section
+    const autoMetrics = summary.auto_metrics || [];
+    if (autoMetrics.length > 0) {
+        html += '<div class="auto-metrics-section">';
+        html += '<h3 class="category-title">Автоматические</h3>';
+        html += '<div class="auto-metrics-note">Вычисляются автоматически. Нельзя отключить.</div>';
+        for (const am of autoMetrics) {
+            const isBool = ['filled', 'nonzero'].includes(am.auto_type);
+            let displayVal;
+            if (isBool) {
+                displayVal = am.value ? 'Да' : 'Нет';
+            } else if (am.auto_type === 'day_of_week') {
+                const days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+                displayVal = days[am.value - 1];
+            } else if (am.auto_type === 'month') {
+                const months = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+                displayVal = months[am.value - 1];
+            } else {
+                displayVal = String(am.value);
+            }
+            const filledClass = (isBool && am.auto_type === 'filled' && am.value) || (isBool && am.auto_type === 'nonzero') || !isBool ? 'filled' : '';
+            html += `<div class="metric-card auto-metric ${filledClass}">
+                <div class="metric-header">
+                    <label class="metric-label">${am.name}</label>
+                    <span class="computed-badge">авто</span>
+                </div>
+                <div class="computed-value">${displayVal}</div>
+            </div>`;
+        }
+        html += '</div>';
+    }
+
     form.innerHTML = html;
     attachInputHandlers();
 

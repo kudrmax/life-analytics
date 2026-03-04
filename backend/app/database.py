@@ -197,8 +197,8 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS correlation_pairs (
                 id SERIAL PRIMARY KEY,
                 report_id INTEGER NOT NULL REFERENCES correlation_reports(id) ON DELETE CASCADE,
-                metric_a_id INTEGER NOT NULL,
-                metric_b_id INTEGER NOT NULL,
+                metric_a_id INTEGER,
+                metric_b_id INTEGER,
                 slot_a_id INTEGER,
                 slot_b_id INTEGER,
                 label_a VARCHAR(200) NOT NULL,
@@ -219,6 +219,12 @@ async def init_db():
         """)
         await conn.execute("""
             ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS lag_days INTEGER NOT NULL DEFAULT 0
+        """)
+        await conn.execute("""
+            ALTER TABLE correlation_pairs ALTER COLUMN metric_a_id DROP NOT NULL
+        """)
+        await conn.execute("""
+            ALTER TABLE correlation_pairs ALTER COLUMN metric_b_id DROP NOT NULL
         """)
 
         # Computed metric config (formula stored as JSONB token list)

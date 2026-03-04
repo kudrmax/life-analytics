@@ -213,4 +213,54 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                 "value": computed_val,
             }
 
-    return {"date": date, "metrics": result}
+    # Auto metrics
+    auto_metrics = []
+    for item in result:
+        m_info = metrics_by_id.get(item["metric_id"])
+        if not m_info or m_info["type"] == "computed":
+            continue
+
+        # "filled" — есть ли запись
+        if item["slots"]:
+            is_filled = any(s["entry"] is not None for s in item["slots"])
+        else:
+            is_filled = item["entry"] is not None
+
+        auto_metrics.append({
+            "name": f"{m_info['name']}: заполнено",
+            "auto_type": "filled",
+            "source_metric_id": item["metric_id"],
+            "source_metric_name": m_info["name"],
+            "value": is_filled,
+        })
+
+        # "nonzero" — только для number
+        if m_info["type"] == "number":
+            if item["slots"]:
+                vals = [s["entry"]["value"] for s in item["slots"] if s["entry"] is not None]
+                is_nonzero = any(v != 0 for v in vals) if vals else False
+            else:
+                is_nonzero = (item["entry"] is not None and item["entry"]["value"] != 0)
+
+            auto_metrics.append({
+                "name": f"{m_info['name']}: не ноль",
+                "auto_type": "nonzero",
+                "source_metric_id": item["metric_id"],
+                "source_metric_name": m_info["name"],
+                "value": is_nonzero,
+            })
+
+    # Calendar auto metrics
+    auto_metrics.extend([
+        {"name": "День недели", "auto_type": "day_of_week",
+         "source_metric_id": None, "source_metric_name": None,
+         "value": d.isoweekday()},
+        {"name": "Месяц", "auto_type": "month",
+         "source_metric_id": None, "source_metric_name": None,
+         "value": d.month},
+        {"name": "Неделя года", "auto_type": "week_number",
+         "source_metric_id": None, "source_metric_name": None,
+         "value": d.isocalendar()[1]},
+    ])
+
+    return {"date": date, "metrics": result, "auto_metrics": auto_metrics}

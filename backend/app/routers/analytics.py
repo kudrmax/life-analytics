@@ -613,6 +613,30 @@ async def create_correlation_report(
     return {"report_id": report_id, "status": "running"}
 
 
+def _should_skip_auto_pair(i, j, sources, auto_info):
+    """Skip correlations between a metric and its auto-derivative."""
+    ai = auto_info.get(i)
+    aj = auto_info.get(j)
+
+    if ai and aj:
+        # Both auto — skip if from same parent
+        if ai[1] is not None and ai[1] == aj[1]:
+            return True
+        return False
+
+    if ai and not aj:
+        # i is auto, j is regular — skip if j is parent of i
+        if ai[1] is not None and sources[j][0] == ai[1]:
+            return True
+
+    if aj and not ai:
+        # j is auto, i is regular — skip if i is parent of j
+        if aj[1] is not None and sources[i][0] == aj[1]:
+            return True
+
+    return False
+
+
 async def _compute_report(report_id: int, user_id: int, start: str, end: str):
     try:
         async with _db_module.pool.acquire() as conn:
@@ -685,12 +709,65 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                         conn, mid, mt, start_date, end_date, user_id, slot_id=sid,
                     )
 
+            # --- Auto sources ---
+            auto_info = {}  # source_index -> (auto_type, parent_metric_id)
+
+            # Find aggregate source indices (slot_id=None, not computed)
+            aggregate_indices = {}  # metric_id -> source_index
+            for i, (mid, sid, mt, _label) in enumerate(sources):
+                if sid is None and mt != "computed":
+                    aggregate_indices[mid] = i
+
+            # Per-metric auto sources
+            for m in metrics_rows:
+                if m["type"] == "computed":
+                    continue
+                mid = m["id"]
+                if mid not in aggregate_indices:
+                    continue
+
+                # "filled"
+                idx = len(sources)
+                sources.append((None, None, "bool", f"{m['name']}: заполнено"))
+                auto_info[idx] = ("filled", mid)
+
+                # "nonzero" for number
+                if m["type"] == "number":
+                    idx = len(sources)
+                    sources.append((None, None, "bool", f"{m['name']}: не ноль"))
+                    auto_info[idx] = ("nonzero", mid)
+
+            # Calendar auto sources
+            for cal_name, cal_type in [("День недели", "day_of_week"), ("Месяц", "month"), ("Неделя года", "week_number")]:
+                idx = len(sources)
+                sources.append((None, None, "number", cal_name))
+                auto_info[idx] = (cal_type, None)
+
+            # Compute auto source data
+            all_dates = [str(start_date + timedelta(days=i)) for i in range((end_date - start_date).days + 1)]
+
+            for idx, (auto_type, parent_mid) in auto_info.items():
+                if auto_type == "filled":
+                    parent_data = source_data[aggregate_indices[parent_mid]]
+                    source_data[idx] = {d: 1.0 if d in parent_data else 0.0 for d in all_dates}
+                elif auto_type == "nonzero":
+                    parent_data = source_data[aggregate_indices[parent_mid]]
+                    source_data[idx] = {d: (1.0 if v > 0 else 0.0) for d, v in parent_data.items()}
+                elif auto_type == "day_of_week":
+                    source_data[idx] = {d: float(date_type.fromisoformat(d).isoweekday()) for d in all_dates}
+                elif auto_type == "month":
+                    source_data[idx] = {d: float(date_type.fromisoformat(d).month) for d in all_dates}
+                elif auto_type == "week_number":
+                    source_data[idx] = {d: float(date_type.fromisoformat(d).isocalendar()[1]) for d in all_dates}
+
             # Compute all pairs (i < j, different metrics only)
             pairs_to_insert = []
             for i in range(len(sources)):
                 for j in range(i + 1, len(sources)):
-                    if sources[i][0] == sources[j][0]:
+                    if sources[i][0] == sources[j][0] and sources[i][0] is not None:
                         continue  # same metric — skip
+                    if _should_skip_auto_pair(i, j, sources, auto_info):
+                        continue
                     si, sj = sources[i], sources[j]
 
                     # lag=0: same-day correlation
@@ -792,6 +869,7 @@ async def get_correlation_report(
     pairs = await db.fetch(
         """SELECT cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days,
                   cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
+                  cp.label_a, cp.label_b,
                   ma.name AS name_a, ma.icon AS icon_a,
                   mb.name AS name_b, mb.icon AS icon_b,
                   sa.label AS slot_label_a,
@@ -814,8 +892,8 @@ async def get_correlation_report(
         "created_at": report["created_at"].isoformat(),
         "pairs": [
             {
-                "label_a": p["name_a"] or "Удалённая метрика",
-                "label_b": p["name_b"] or "Удалённая метрика",
+                "label_a": p["name_a"] or p["label_a"] or "Удалённая метрика",
+                "label_b": p["name_b"] or p["label_b"] or "Удалённая метрика",
                 "type_a": p["type_a"],
                 "type_b": p["type_b"],
                 "icon_a": p["icon_a"] or "",
