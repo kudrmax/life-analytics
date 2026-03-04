@@ -1012,35 +1012,26 @@ function corrTypeWords(type) {
     const g = w => `<span class="corr-word-pos">${w}</span>`;
     const r = w => `<span class="corr-word-neg">${w}</span>`;
     switch (type) {
-        case 'bool': return [g('Да'), r('Нет')];
+        case 'bool': return [g('да'), r('нет')];
         case 'time': return ['позже', 'раньше'];
         case 'scale': return [g('выше'), r('ниже')];
         default: return [g('больше'), r('меньше')];
     }
 }
 
-function corrInterpretation(typeA, typeB, r) {
-    if (!typeA || !typeB) return '';
+function corrHintWords(typeA, typeB, r) {
+    if (!typeA || !typeB) return ['', ''];
     const [posA] = corrTypeWords(typeA);
     const [posB, negB] = corrTypeWords(typeB);
-    const wordA = typeA === 'bool' ? `= ${posA}` : posA;
-    const wordB = r > 0 ? (typeB === 'bool' ? `= ${posB}` : posB) : (typeB === 'bool' ? `= ${negB}` : negB);
-    return `${wordA} — ${wordB}`;
+    const wordA = posA;
+    const wordB = r > 0 ? posB : negB;
+    return [wordA, wordB];
 }
 
-function corrInterpretationLagged(typeYesterday, typeToday, r) {
-    if (!typeYesterday || !typeToday) return '';
-    const [posY] = corrTypeWords(typeYesterday);
-    const [posT, negT] = corrTypeWords(typeToday);
-    const wordY = typeYesterday === 'bool' ? `= ${posY}` : posY;
-    const wordT = r > 0 ? (typeToday === 'bool' ? `= ${posT}` : posT) : (typeToday === 'bool' ? `= ${negT}` : negT);
-    return `вчера ${wordY} → сегодня ${wordT}`;
-}
-
-function renderCorrMetricLabel(label, icon, slotLabel) {
-    const iconHtml = icon ? `<span class="metric-icon">${icon}</span>` : '';
+function renderCorrMetricLabel(label, icon, slotLabel, hint) {
+    const iconHtml = `<span class="metric-icon">${icon || ''}</span>`;
     const slotHtml = slotLabel ? `<span class="corr-slot-badge">${slotLabel}</span>` : '';
-    return `${iconHtml}${label}${slotHtml}`;
+    return `${iconHtml}<div class="corr-metric-text"><div class="corr-metric-name">${label}${slotHtml}</div><div class="corr-pair-hint">${hint}</div></div>`;
 }
 
 function renderCorrPair(p) {
@@ -1048,20 +1039,22 @@ function renderCorrPair(p) {
     const absR = Math.abs(r);
     const cls = absR > 0.7 ? 'strong' : absR > 0.3 ? 'medium' : 'weak';
     const isLagged = p.lag_days && p.lag_days > 0;
-    const hint = isLagged
-        ? corrInterpretationLagged(p.type_b, p.type_a, r)
-        : corrInterpretation(p.type_a, p.type_b, r);
-    const a = renderCorrMetricLabel(p.label_a, p.icon_a, p.slot_label_a);
-    const b = renderCorrMetricLabel(p.label_b, p.icon_b, p.slot_label_b);
-    const lagBadge = isLagged ? '<span class="corr-lag-badge">со сдвигом</span>' : '';
+
+    const typeLeft = isLagged ? p.type_b : p.type_a;
+    const typeRight = isLagged ? p.type_a : p.type_b;
+    const [hintA, hintB] = corrHintWords(typeLeft, typeRight, r);
+
+    const labelA = renderCorrMetricLabel(isLagged ? p.label_b : p.label_a, isLagged ? p.icon_b : p.icon_a, isLagged ? p.slot_label_b : p.slot_label_a, hintA);
+    const labelB = renderCorrMetricLabel(isLagged ? p.label_a : p.label_b, isLagged ? p.icon_a : p.icon_b, isLagged ? p.slot_label_a : p.slot_label_b, hintB);
+
+    const lagBadge = isLagged ? '<div class="corr-lag-badge">со сдвигом</div>' : '';
+
     return `<div class="corr-pair-row">
-        <div>
-            <div class="corr-pair-metrics">${isLagged ? b : a} <span class="corr-arrow">↔</span> ${isLagged ? a : b}${lagBadge}</div>
-            ${hint ? `<div class="corr-pair-hint">${hint}</div>` : ''}
-        </div>
-        <div style="text-align:right">
+        <div class="corr-col-metric">${labelA}</div>
+        <div class="corr-col-metric">${labelB}</div>
+        <div class="corr-col-info">
             <div class="corr-pair-value ${cls}">${absR.toFixed(3)}</div>
-            <div style="font-size:12px;margin-top:2px;color:var(--text-dim)">${p.data_points} дн.</div>
+            <div class="corr-info-sub">${lagBadge}${p.data_points} дн.</div>
         </div>
     </div>`;
 }

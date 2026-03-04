@@ -970,9 +970,10 @@ input[type="month"], input[type="date"] {
 }
 
 .corr-pair-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    display: grid;
+    grid-template-columns: 1fr 1fr 5.5rem;
+    gap: 8px;
+    align-items: start;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -980,11 +981,42 @@ input[type="month"], input[type="date"] {
     margin-bottom: 4px;
 }
 
-.corr-pair-metrics {
+.corr-col-metric {
+    display: flex;
+    align-items: start;
+    gap: 4px;
+    min-width: 0;
+}
+
+.corr-metric-text {
+    min-width: 0;
+}
+
+.corr-metric-name {
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.corr-metric-name:hover {
+    white-space: normal;
+    word-break: break-word;
+}
+
+.corr-col-info {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.corr-info-sub {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 2px;
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 4px;
-    font-size: 14px;
 }
 
 .corr-pair-value {
@@ -1011,19 +1043,12 @@ input[type="month"], input[type="date"] {
 }
 
 .corr-lag-badge {
-    display: inline-block;
     font-size: 10px;
     font-weight: 500;
     padding: 1px 5px;
     border-radius: 4px;
     background: rgba(100, 149, 237, 0.15);
     color: var(--accent);
-    margin-left: 6px;
-    vertical-align: middle;
-}
-.corr-arrow {
-    color: var(--text-dim);
-    margin: 0 2px;
 }
 .corr-pair-hint {
     font-size: 12px;

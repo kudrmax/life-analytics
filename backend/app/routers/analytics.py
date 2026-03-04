@@ -852,6 +852,27 @@ async def get_correlation_report(
         report_id,
     )
 
+    # Resolve icons for auto metrics (metric_id is NULL)
+    AUTO_CALENDAR_ICONS = {"День недели": "📅", "Месяц": "🗓️", "Неделя года": "📆"}
+    # Build name->icon map for "X: не ноль" parent lookup
+    metric_icons = {}
+    if any(p["metric_a_id"] is None or p["metric_b_id"] is None for p in pairs):
+        user_metrics = await db.fetch(
+            "SELECT name, icon FROM metric_definitions WHERE user_id = $1",
+            current_user["id"],
+        )
+        metric_icons = {m["name"]: m["icon"] for m in user_metrics if m["icon"]}
+
+    def _resolve_icon(icon, label):
+        if icon:
+            return icon
+        if label in AUTO_CALENDAR_ICONS:
+            return AUTO_CALENDAR_ICONS[label]
+        if label and label.endswith(": не ноль"):
+            parent_name = label[:-len(": не ноль")]
+            return metric_icons.get(parent_name, "")
+        return ""
+
     return {
         "id": report["id"],
         "status": report["status"],
@@ -864,8 +885,8 @@ async def get_correlation_report(
                 "label_b": p["name_b"] or p["label_b"] or "Удалённая метрика",
                 "type_a": p["type_a"],
                 "type_b": p["type_b"],
-                "icon_a": p["icon_a"] or "",
-                "icon_b": p["icon_b"] or "",
+                "icon_a": _resolve_icon(p["icon_a"], p["label_a"]),
+                "icon_b": _resolve_icon(p["icon_b"], p["label_b"]),
                 "slot_label_a": p["slot_label_a"] or "",
                 "slot_label_b": p["slot_label_b"] or "",
                 "correlation": p["correlation"],
