@@ -135,8 +135,9 @@ const api = {
     disconnectIntegration(provider) {
         return this.request('DELETE', `/api/integrations/${provider}/disconnect`);
     },
-    fetchIntegration(provider) {
-        return this.request('POST', `/api/integrations/${provider}/fetch`);
+    fetchIntegration(provider, date = null) {
+        const q = date ? `?date=${date}` : '';
+        return this.request('POST', `/api/integrations/${provider}/fetch${q}`);
     },
     getTodoistAvailableMetrics() {
         return this.request('GET', '/api/integrations/todoist/available-metrics');

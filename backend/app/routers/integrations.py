@@ -153,18 +153,19 @@ async def disconnect_integration(
 @router.post("/{provider}/fetch")
 async def fetch_integration_data(
     provider: str,
+    date: str = Query(None),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     if provider != "todoist":
         raise HTTPException(400, f"Unknown provider: {provider}")
 
-    today = date_type.today()
+    target_date = date_type.fromisoformat(date) if date else date_type.today()
     try:
-        count = await fetch_and_store(db, current_user["id"], today)
+        count = await fetch_and_store(db, current_user["id"], target_date)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(502, f"Todoist API error: {e}")
 
-    return {"provider": provider, "date": str(today), "value": count}
+    return {"provider": provider, "date": str(target_date), "value": count}

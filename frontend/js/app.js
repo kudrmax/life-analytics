@@ -8,6 +8,7 @@ let currentPage = 'today';
 let currentUser = null;
 let isAuthenticated = false;
 let corrPollInterval = null;
+const corrPairData = new Map();
 
 function todayStr() {
     return new Date().toISOString().slice(0, 10);
@@ -606,7 +607,7 @@ async function handleFormClick(e) {
         btn.disabled = true;
         btn.textContent = 'Загрузка...';
         try {
-            await api.fetchIntegration(provider);
+            await api.fetchIntegration(provider, currentDate);
             await renderTodayForm();
         } catch (error) {
             alert('Ошибка: ' + error.message);
@@ -1187,14 +1188,16 @@ function renderCorrPair(p, report) {
     const labelB = renderCorrMetricLabel(isLagged ? p.label_a : p.label_b, isLagged ? p.icon_a : p.icon_b, isLagged ? p.slot_label_a : p.slot_label_b, hintB, isLagged ? 'сегодня' : '');
 
     const pairId = `corr-detail-${Math.random().toString(36).slice(2, 8)}`;
-    const mAId = isLagged ? p.metric_b_id : p.metric_a_id;
-    const mBId = isLagged ? p.metric_a_id : p.metric_b_id;
-    const lA = (isLagged ? p.label_b : p.label_a).replace(/'/g, "\\'");
-    const lB = (isLagged ? p.label_a : p.label_b).replace(/'/g, "\\'");
-    const iA = ((isLagged ? p.icon_b : p.icon_a) || '').replace(/'/g, "\\'");
-    const iB = ((isLagged ? p.icon_a : p.icon_b) || '').replace(/'/g, "\\'");
-    const pStart = report.period_start;
-    const pEnd = report.period_end;
+    corrPairData.set(pairId, {
+        mAId: isLagged ? p.metric_b_id : p.metric_a_id,
+        mBId: isLagged ? p.metric_a_id : p.metric_b_id,
+        lA: isLagged ? p.label_b : p.label_a,
+        lB: isLagged ? p.label_a : p.label_b,
+        iA: (isLagged ? p.icon_b : p.icon_a) || '',
+        iB: (isLagged ? p.icon_a : p.icon_b) || '',
+        pStart: report.period_start,
+        pEnd: report.period_end,
+    });
 
     return `<div class="corr-pair-wrapper">
         <div class="corr-pair-row">
@@ -1202,7 +1205,7 @@ function renderCorrPair(p, report) {
         <div class="corr-arrow">↔</div>
         <div class="corr-col-metric">${labelB}</div>
         <div class="corr-col-info">
-            <div class="corr-pair-value ${cls}">${absR.toFixed(3)} <button class="corr-detail-btn" onclick="event.stopPropagation();toggleCorrDetail('${pairId}',${mAId ?? 'null'},${mBId ?? 'null'},'${lA}','${iA}','${lB}','${iB}','${pStart}','${pEnd}')">i</button></div>
+            <div class="corr-pair-value ${cls}">${absR.toFixed(3)} <button class="corr-detail-btn" data-pair-id="${pairId}">i</button></div>
             <div class="corr-info-sub">${p.data_points} дн.</div>
         </div>
     </div>
@@ -1259,6 +1262,15 @@ function renderCorrelationReport(report, container) {
     }
 
     container.innerHTML = html;
+
+    // Attach corr detail button handlers (avoid inline onclick with SVG icons)
+    container.querySelectorAll('.corr-detail-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const d = corrPairData.get(btn.dataset.pairId);
+            if (d) toggleCorrDetail(btn.dataset.pairId, d.mAId, d.mBId, d.lA, d.iA, d.lB, d.iB, d.pStart, d.pEnd);
+        });
+    });
 }
 
 // ─── Charts ───
