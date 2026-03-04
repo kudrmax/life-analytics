@@ -1071,7 +1071,54 @@ function renderCorrMetricLabel(label, icon, slotLabel, hint, dayLabel) {
     return `${iconHtml}<div class="corr-metric-text">${dayHtml}<div class="corr-metric-name">${label}${slotHtml}</div><div class="corr-pair-hint">${hint}</div></div>`;
 }
 
-function renderCorrPair(p) {
+const _metricStatsCache = {};
+
+async function fetchMetricStats(metricId, start, end) {
+    const key = `${metricId}_${start}_${end}`;
+    if (_metricStatsCache[key]) return _metricStatsCache[key];
+    const data = await api.request('GET', `/api/analytics/metric-stats?metric_id=${metricId}&start=${start}&end=${end}`);
+    _metricStatsCache[key] = data;
+    return data;
+}
+
+function formatMetricStatsHtml(stats) {
+    if (!stats || stats.error) return '<span class="corr-stats-na">нет данных</span>';
+    const rows = [];
+    rows.push(`<div class="corr-stats-row"><span>Заполнение</span><span>${stats.fill_rate}%</span></div>`);
+    const mt = stats.metric_type;
+    const rt = stats.result_type;
+    if (mt === 'bool' || (mt === 'computed' && rt === 'bool')) {
+        rows.push(`<div class="corr-stats-row"><span>Да</span><span>${stats.yes_percent}%</span></div>`);
+    } else if (mt === 'time' || (mt === 'computed' && rt === 'time')) {
+        if (stats.average) rows.push(`<div class="corr-stats-row"><span>Среднее</span><span>${stats.average}</span></div>`);
+    } else if (mt === 'number' || (mt === 'computed' && !rt) || (mt === 'computed' && rt === 'float')) {
+        if (stats.average != null) rows.push(`<div class="corr-stats-row"><span>Среднее</span><span>${stats.average}</span></div>`);
+        if (stats.min != null && stats.max != null) rows.push(`<div class="corr-stats-row"><span>Диапазон</span><span>${stats.min} – ${stats.max}</span></div>`);
+    } else if (mt === 'scale') {
+        if (stats.average != null) rows.push(`<div class="corr-stats-row"><span>Среднее</span><span>${stats.average}%</span></div>`);
+    }
+    return rows.join('');
+}
+
+async function toggleCorrDetail(pairId, metricAId, metricBId, labelA, iconA, labelB, iconB, periodStart, periodEnd) {
+    const panel = document.getElementById(pairId);
+    panel.classList.toggle('open');
+    if (!panel.classList.contains('open')) return;
+    const statsEl = document.getElementById(pairId + '-stats');
+    if (statsEl.dataset.loaded) return;
+    statsEl.innerHTML = '<div style="color:var(--text-dim);font-size:12px;">Загрузка...</div>';
+    const promises = [
+        metricAId ? fetchMetricStats(metricAId, periodStart, periodEnd).catch(() => null) : Promise.resolve(null),
+        metricBId ? fetchMetricStats(metricBId, periodStart, periodEnd).catch(() => null) : Promise.resolve(null),
+    ];
+    const [statsA, statsB] = await Promise.all(promises);
+    const colA = `<div class="corr-stats-col"><div class="corr-stats-label">${iconA || ''} ${labelA}</div>${formatMetricStatsHtml(statsA)}</div>`;
+    const colB = `<div class="corr-stats-col"><div class="corr-stats-label">${iconB || ''} ${labelB}</div>${formatMetricStatsHtml(statsB)}</div>`;
+    statsEl.innerHTML = `<div class="corr-stats-columns">${colA}${colB}</div>`;
+    statsEl.dataset.loaded = '1';
+}
+
+function renderCorrPair(p, report) {
     const r = p.correlation;
     const absR = Math.abs(r);
     const cls = absR > 0.7 ? 'strong' : absR > 0.3 ? 'medium' : 'weak';
@@ -1084,14 +1131,35 @@ function renderCorrPair(p) {
     const labelA = renderCorrMetricLabel(isLagged ? p.label_b : p.label_a, isLagged ? p.icon_b : p.icon_a, isLagged ? p.slot_label_b : p.slot_label_a, hintA, isLagged ? 'вчера' : '');
     const labelB = renderCorrMetricLabel(isLagged ? p.label_a : p.label_b, isLagged ? p.icon_a : p.icon_b, isLagged ? p.slot_label_a : p.slot_label_b, hintB, isLagged ? 'сегодня' : '');
 
-    return `<div class="corr-pair-row">
+    const pairId = `corr-detail-${Math.random().toString(36).slice(2, 8)}`;
+    const mAId = isLagged ? p.metric_b_id : p.metric_a_id;
+    const mBId = isLagged ? p.metric_a_id : p.metric_b_id;
+    const lA = (isLagged ? p.label_b : p.label_a).replace(/'/g, "\\'");
+    const lB = (isLagged ? p.label_a : p.label_b).replace(/'/g, "\\'");
+    const iA = ((isLagged ? p.icon_b : p.icon_a) || '').replace(/'/g, "\\'");
+    const iB = ((isLagged ? p.icon_a : p.icon_b) || '').replace(/'/g, "\\'");
+    const pStart = report.period_start;
+    const pEnd = report.period_end;
+
+    return `<div class="corr-pair-wrapper">
+        <div class="corr-pair-row">
         <div class="corr-col-metric">${labelA}</div>
         <div class="corr-arrow">↔</div>
         <div class="corr-col-metric">${labelB}</div>
         <div class="corr-col-info">
-            <div class="corr-pair-value ${cls}">${absR.toFixed(3)}</div>
+            <div class="corr-pair-value ${cls}">${absR.toFixed(3)} <button class="corr-detail-btn" onclick="event.stopPropagation();toggleCorrDetail('${pairId}',${mAId ?? 'null'},${mBId ?? 'null'},'${lA}','${iA}','${lB}','${iB}','${pStart}','${pEnd}')">i</button></div>
             <div class="corr-info-sub">${p.data_points} дн.</div>
         </div>
+    </div>
+    <div class="corr-detail-panel" id="${pairId}">
+        <div class="corr-detail-grid">
+            <span>Корреляция</span><span>${r > 0 ? '+' : ''}${r.toFixed(4)}</span>
+            <span>p-value</span><span>${p.p_value !== null && p.p_value !== undefined ? p.p_value.toFixed(4) : '—'}</span>
+            <span>Дней данных</span><span>${p.data_points}</span>
+            <span>Сдвиг</span><span>${isLagged ? p.lag_days + ' дн.' : 'нет'}</span>
+        </div>
+        <div class="corr-detail-stats" id="${pairId}-stats"></div>
+    </div>
     </div>`;
 }
 
@@ -1115,15 +1183,15 @@ function renderCorrelationReport(report, container) {
         html += '<h4>Статистически значимо <span class="corr-sig corr-sig-yes">p&lt;0.05</span></h4>';
         if (strong.length > 0) {
             html += '<div class="corr-subsection-header">Сильная корреляция</div>';
-            for (const p of strong) html += renderCorrPair(p);
+            for (const p of strong) html += renderCorrPair(p, report);
         }
         if (medium.length > 0) {
             html += '<div class="corr-subsection-header">Средняя корреляция</div>';
-            for (const p of medium) html += renderCorrPair(p);
+            for (const p of medium) html += renderCorrPair(p, report);
         }
         if (weak.length > 0) {
             html += '<div class="corr-subsection-header">Слабая корреляция</div>';
-            for (const p of weak) html += renderCorrPair(p);
+            for (const p of weak) html += renderCorrPair(p, report);
         }
         html += '</div>';
     }
@@ -1131,7 +1199,7 @@ function renderCorrelationReport(report, container) {
     if (insig.length > 0) {
         html += '<div class="corr-section corr-section-low">';
         html += '<h4>Незначимо или мало данных</h4>';
-        for (const p of insig) html += renderCorrPair(p);
+        for (const p of insig) html += renderCorrPair(p, report);
         html += '</div>';
     }
 

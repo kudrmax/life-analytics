@@ -886,6 +886,8 @@ async def get_latest_correlation_report(
                     "data_points": p["data_points"],
                     "lag_days": p["lag_days"],
                     "p_value": round(_p_value(p["correlation"], p["data_points"]), 4) if p["correlation"] is not None else None,
+                    "metric_a_id": p["metric_a_id"],
+                    "metric_b_id": p["metric_b_id"],
                 }
                 for p in pairs
             ],
