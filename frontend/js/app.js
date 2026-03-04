@@ -1009,11 +1009,13 @@ function showCorrelationHelp() {
 }
 
 function corrTypeWords(type) {
+    const g = w => `<span class="corr-word-pos">${w}</span>`;
+    const r = w => `<span class="corr-word-neg">${w}</span>`;
     switch (type) {
-        case 'bool': return ['Да', 'Нет'];
+        case 'bool': return [g('Да'), r('Нет')];
         case 'time': return ['позже', 'раньше'];
-        case 'scale': return ['выше', 'ниже'];
-        default: return ['больше', 'меньше'];
+        case 'scale': return [g('выше'), r('ниже')];
+        default: return [g('больше'), r('меньше')];
     }
 }
 

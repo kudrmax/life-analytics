@@ -1031,6 +1031,16 @@ input[type="month"], input[type="date"] {
     margin-top: 2px;
 }
 
+.corr-word-pos {
+    color: #22c55e;
+    font-weight: 600;
+}
+
+.corr-word-neg {
+    color: #ef4444;
+    font-weight: 600;
+}
+
 .corr-sig {
     font-size: 11px;
     padding: 1px 5px;
