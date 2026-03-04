@@ -41,7 +41,7 @@ def _extract_numeric(value_row, metric_type: str = "bool") -> float | None:
     if metric_type == "time":
         # v is a datetime (TIMESTAMPTZ)
         return v.hour * 60 + v.minute
-    elif metric_type == "number":
+    elif metric_type in ("number", "integration"):
         return float(v)
     elif metric_type == "scale":
         v_min = value_row["scale_min"]
@@ -77,7 +77,7 @@ def _get_value_table(mt: str) -> tuple[str, str]:
     """Return (table_name, extra_cols) for a metric type."""
     if mt == "time":
         return "values_time", ""
-    elif mt == "number":
+    elif mt in ("number", "integration"):
         return "values_number", ""
     elif mt == "scale":
         return "values_scale", ", v.scale_min, v.scale_max, v.scale_step"
@@ -336,16 +336,7 @@ async def trends(
             db, formula, result_type, ref_ids, start_d, end_d, current_user["id"],
         )
     else:
-        if mt == "time":
-            value_table = "values_time"
-        elif mt == "number":
-            value_table = "values_number"
-        elif mt == "scale":
-            value_table = "values_scale"
-        else:
-            value_table = "values_bool"
-
-        extra_cols = ", v.scale_min, v.scale_max, v.scale_step" if mt == "scale" else ""
+        value_table, extra_cols = _get_value_table(mt)
         rows = await db.fetch(
             f"""SELECT e.date, v.value{extra_cols}
                 FROM entries e
@@ -488,16 +479,7 @@ async def metric_stats(
                 })
         return result
 
-    if mt == "time":
-        value_table = "values_time"
-    elif mt == "number":
-        value_table = "values_number"
-    elif mt == "scale":
-        value_table = "values_scale"
-    else:
-        value_table = "values_bool"
-
-    extra_cols = ", v.scale_min, v.scale_max, v.scale_step" if mt == "scale" else ""
+    value_table, extra_cols = _get_value_table(mt)
     rows = await db.fetch(
         f"""SELECT e.date, v.value{extra_cols}
             FROM entries e
@@ -568,7 +550,7 @@ async def metric_stats(
         else:
             result.update({"average": "--:--", "earliest": "--:--", "latest": "--:--"})
 
-    elif mt == "number":
+    elif mt in ("number", "integration"):
         if values:
             result.update({
                 "average": round(mean(values), 1),

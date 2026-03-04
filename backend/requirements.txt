@@ -5,3 +5,5 @@ pydantic
 python-jose[cryptography]
 bcrypt
 python-multipart
+todoist-api-python>=3.0.0
+cryptography

@@ -18,10 +18,12 @@ async def list_metrics(
     current_user: dict = Depends(get_current_user),
 ):
     query = """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
-                      cc.formula, cc.result_type
+                      cc.formula, cc.result_type,
+                      ic.provider, ic.metric_key
                FROM metric_definitions md
                LEFT JOIN scale_config sc ON sc.metric_id = md.id
                LEFT JOIN computed_config cc ON cc.metric_id = md.id
+               LEFT JOIN integration_config ic ON ic.metric_id = md.id
                WHERE md.user_id = $1"""
     params = [current_user["id"]]
     if enabled_only:
@@ -43,10 +45,12 @@ async def get_metric(
 ):
     row = await db.fetchrow(
         """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
-                  cc.formula, cc.result_type
+                  cc.formula, cc.result_type,
+                  ic.provider, ic.metric_key
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
            LEFT JOIN computed_config cc ON cc.metric_id = md.id
+           LEFT JOIN integration_config ic ON ic.metric_id = md.id
            WHERE md.id = $1 AND md.user_id = $2""",
         metric_id, current_user["id"],
     )
@@ -63,6 +67,9 @@ async def create_metric(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    if data.type == MetricType.integration:
+        raise HTTPException(400, "Integration metrics are created automatically via OAuth")
+
     existing = await db.fetchval(
         "SELECT id FROM metric_definitions WHERE slug = $1 AND user_id = $2",
         data.slug, current_user["id"],

@@ -29,13 +29,15 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         metrics_writer.writerow([
             'id', 'slug', 'name', 'category', 'icon', 'type',
             'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step',
-            'slot_labels', 'formula', 'result_type',
+            'slot_labels', 'formula', 'result_type', 'provider', 'metric_key',
         ])
 
         metrics = await db.fetch(
-            """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step
+            """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
+                      ic.provider, ic.metric_key
                FROM metric_definitions md
                LEFT JOIN scale_config sc ON sc.metric_id = md.id
+               LEFT JOIN integration_config ic ON ic.metric_id = md.id
                WHERE md.user_id = $1 ORDER BY md.sort_order, md.id""",
             current_user["id"],
         )
@@ -84,6 +86,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
                 m["scale_step"] if m["scale_step"] is not None else '',
                 json.dumps(slot_labels) if slot_labels else '',
                 formula_export, result_type_export,
+                m.get("provider") or '', m.get("metric_key") or '',
             ])
 
         zip_file.writestr('metrics.csv', metrics_csv.getvalue())
@@ -181,7 +184,7 @@ async def import_data(
                     )
 
                     metric_type = row.get('type', 'bool')
-                    if metric_type not in ('bool', 'time', 'number', 'scale', 'computed'):
+                    if metric_type not in ('bool', 'time', 'number', 'scale', 'computed', 'integration'):
                         metric_type = 'bool'
 
                     # Parse scale config from CSV
@@ -376,7 +379,7 @@ async def import_data(
                         if not isinstance(value, str):
                             entries_skipped += 1
                             continue
-                    elif mt == "number":
+                    elif mt in ("number", "integration"):
                         try:
                             value = int(value)
                         except (ValueError, TypeError):

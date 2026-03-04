@@ -227,6 +227,32 @@ async def init_db():
             ALTER TABLE correlation_pairs ALTER COLUMN metric_b_id DROP NOT NULL
         """)
 
+        await conn.execute("""
+            ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'integration'
+        """)
+
+        # User integrations (OAuth tokens for external services)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_integrations (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                provider VARCHAR(50) NOT NULL,
+                encrypted_token TEXT NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE(user_id, provider)
+            )
+        """)
+
+        # Integration config (links metric to external provider)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS integration_config (
+                metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
+                provider VARCHAR(50) NOT NULL,
+                metric_key VARCHAR(100) NOT NULL DEFAULT 'completed_tasks_count'
+            )
+        """)
+
         # Computed metric config (formula stored as JSONB token list)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS computed_config (

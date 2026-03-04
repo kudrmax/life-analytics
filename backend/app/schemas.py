@@ -8,6 +8,7 @@ class MetricType(str, Enum):
     number = "number"
     scale = "scale"
     computed = "computed"
+    integration = "integration"
 
 
 class MeasurementSlotOut(BaseModel):
@@ -61,6 +62,8 @@ class MetricDefinitionOut(BaseModel):
     slots: list[MeasurementSlotOut] = []
     formula: list[dict] | None = None
     result_type: str | None = None
+    provider: str | None = None
+    metric_key: str | None = None
 
 
 class EntryCreate(BaseModel):

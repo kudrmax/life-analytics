@@ -25,10 +25,12 @@ router = APIRouter(prefix="/api/daily", tags=["daily"])
 async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     metrics = await db.fetch(
         """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
-                  cc.formula, cc.result_type
+                  cc.formula, cc.result_type,
+                  ic.provider, ic.metric_key
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
            LEFT JOIN computed_config cc ON cc.metric_id = md.id
+           LEFT JOIN integration_config ic ON ic.metric_id = md.id
            WHERE md.enabled = TRUE AND md.user_id = $1
            ORDER BY md.sort_order, md.id""",
         current_user["id"],
@@ -97,6 +99,8 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "slots": None,
             "formula": _parse_formula(m.get("formula")) or None,
             "result_type": m.get("result_type"),
+            "provider": m.get("provider"),
+            "metric_key": m.get("metric_key"),
         }
 
         if slots or extra_disabled:

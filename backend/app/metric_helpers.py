@@ -29,6 +29,8 @@ async def build_metric_out(row: asyncpg.Record, slots: list | None = None) -> Me
         slots=[MeasurementSlotOut(**s) for s in slots] if slots else [],
         formula=formula_raw,
         result_type=row.get("result_type"),
+        provider=row.get("provider"),
+        metric_key=row.get("metric_key"),
     )
 
 
@@ -65,7 +67,7 @@ async def get_entry_value(
             return None
         ts = row["value"]
         return f"{ts.hour:02d}:{ts.minute:02d}"
-    elif metric_type == "number":
+    elif metric_type in ("number", "integration"):
         row = await conn.fetchrow(
             "SELECT value FROM values_number WHERE entry_id = $1", entry_id
         )
@@ -100,7 +102,7 @@ async def insert_value(
             "INSERT INTO values_time (entry_id, value) VALUES ($1, $2)",
             entry_id, ts,
         )
-    elif metric_type == "number":
+    elif metric_type in ("number", "integration"):
         await conn.execute(
             "INSERT INTO values_number (entry_id, value) VALUES ($1, $2)",
             entry_id, int(value),
@@ -138,7 +140,7 @@ async def update_value(
             "UPDATE values_time SET value = $1 WHERE entry_id = $2",
             ts, entry_id,
         )
-    elif metric_type == "number":
+    elif metric_type in ("number", "integration"):
         await conn.execute(
             "UPDATE values_number SET value = $1 WHERE entry_id = $2",
             int(value), entry_id,

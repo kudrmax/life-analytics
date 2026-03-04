@@ -360,7 +360,7 @@ async function renderTodayForm() {
     let total = 0;
     let filled = 0;
     for (const m of summary.metrics) {
-        if (m.type === 'computed') continue;
+        if (m.type === 'computed' || m.type === 'integration') continue;
         if (m.slots && m.slots.length > 0) {
             total += m.slots.length;
             filled += m.slots.filter(s => s.entry !== null).length;
@@ -377,6 +377,25 @@ async function renderTodayForm() {
 }
 
 function renderMetricInput(m) {
+    // Integration metric — fetch button
+    if (m.type === 'integration') {
+        const entry = m.entry;
+        const val = entry ? entry.value : null;
+        const isFilled = val !== null && val !== undefined;
+        const displayVal = isFilled ? String(val) : '—';
+        const btnLabel = isFilled ? 'Обновить' : 'Получить данные';
+        return `<div class="metric-card integration-card ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="integration" data-provider="${m.provider || ''}">
+            <div class="metric-header">
+                <label class="metric-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</label>
+                <span class="computed-badge">интеграция</span>
+            </div>
+            <div class="integration-row">
+                <span class="integration-value ${isFilled ? '' : 'empty'}">${displayVal}</span>
+                <button class="integration-fetch-btn" data-action="fetch-integration" data-provider="${m.provider || 'todoist'}">${btnLabel}</button>
+            </div>
+        </div>`;
+    }
+
     // Computed metric — read-only display
     if (m.type === 'computed') {
         const entry = m.entry;
@@ -566,6 +585,22 @@ async function handleFormClick(e) {
     const entryId = slotEl ? slotEl.dataset.entryId : card.dataset.entryId;
     const slotId = slotEl ? slotEl.dataset.slotId : null;
 
+    // Integration fetch
+    if (btn.dataset.action === 'fetch-integration') {
+        const provider = btn.dataset.provider || 'todoist';
+        btn.disabled = true;
+        btn.textContent = 'Загрузка...';
+        try {
+            await api.fetchIntegration(provider);
+            await renderTodayForm();
+        } catch (error) {
+            alert('Ошибка: ' + error.message);
+            btn.disabled = false;
+            btn.textContent = 'Получить данные';
+        }
+        return;
+    }
+
     // Clear metric entry
     if (btn.dataset.clearEntry) {
         try {
@@ -749,7 +784,7 @@ async function showDayDetail(date) {
     let total = 0;
     let filled = 0;
     for (const m of summary.metrics) {
-        if (m.type === 'computed') continue;
+        if (m.type === 'computed' || m.type === 'integration') continue;
         if (m.slots && m.slots.length > 0) {
             total += m.slots.length;
             filled += m.slots.filter(s => s.entry !== null).length;
@@ -805,6 +840,9 @@ function _formatEntryValue(entry, type, resultType) {
         if (rt === 'time') return String(v);
         if (rt === 'int') return String(Math.round(v));
         return typeof v === 'number' ? v.toFixed(2) : String(v);
+    }
+    if (type === 'integration') {
+        return entry.value !== null && entry.value !== undefined ? String(entry.value) : '—';
     }
     if (type === 'time') {
         return entry.value || '—';
@@ -882,7 +920,7 @@ async function loadDashboard(start, end) {
     for (const { metric, points } of trendData) {
         const canvas = document.getElementById(`trend-chart-${metric.id}`);
         if (!canvas) continue;
-        const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type;
+        const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? 'number' : metric.type;
         const config = buildChartConfig(points, mt, colors, { compact: true });
         trendChartInstances.push(new Chart(canvas.getContext('2d'), config));
     }
@@ -1091,7 +1129,7 @@ function formatMetricStatsHtml(stats) {
         rows.push(`<div class="corr-stats-row"><span>Да</span><span>${stats.yes_percent}%</span></div>`);
     } else if (mt === 'time' || (mt === 'computed' && rt === 'time')) {
         if (stats.average) rows.push(`<div class="corr-stats-row"><span>Среднее</span><span>${stats.average}</span></div>`);
-    } else if (mt === 'number' || (mt === 'computed' && !rt) || (mt === 'computed' && rt === 'float')) {
+    } else if (mt === 'number' || mt === 'integration' || (mt === 'computed' && !rt) || (mt === 'computed' && rt === 'float')) {
         if (stats.average != null) rows.push(`<div class="corr-stats-row"><span>Среднее</span><span>${stats.average}</span></div>`);
         if (stats.min != null && stats.max != null) rows.push(`<div class="corr-stats-row"><span>Диапазон</span><span>${stats.min} – ${stats.max}</span></div>`);
     } else if (mt === 'scale') {
@@ -1459,13 +1497,13 @@ async function loadMetricDetail(metricId, metric, start, end) {
     };
 
     const points = trend.points || [];
-    const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type;
+    const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? 'number' : metric.type;
     const chartConfig = buildChartConfig(points, mt, colors);
 
     detailChartInstance = new Chart(canvas.getContext('2d'), chartConfig);
 
     // Render stats (use result_type for computed)
-    const statsType = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type;
+    const statsType = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? 'number' : metric.type;
     renderDetailStats(stats, statsType);
 }
 
@@ -1541,6 +1579,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                 : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
+                : m.type === 'integration' ? '<i data-lucide="plug"></i> Интеграция'
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
             html += `<div class="setting-row">
                 <div class="setting-info">
@@ -1571,6 +1610,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                 : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
+                : m.type === 'integration' ? '<i data-lucide="plug"></i> Интеграция'
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
             html += `<div class="setting-row archived-row">
                 <div class="setting-info">
@@ -1585,8 +1625,16 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         }
         html += '</div></div>';
     }
+    // Integrations section
+    html += '<div class="integrations-section"><h2>Интеграции</h2>';
+    html += '<div id="integrations-list"><div class="integration-status"><span class="text-dim">Загрузка...</span></div></div>';
+    html += '</div>';
+
     container.innerHTML = html;
     if (window.lucide) lucide.createIcons();
+
+    // Load integrations status
+    _loadIntegrationsSection();
 
     document.getElementById('logout-btn').addEventListener('click', () => {
         api.logout();
@@ -1742,6 +1790,55 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             }
         });
     });
+}
+
+async function _loadIntegrationsSection() {
+    const listEl = document.getElementById('integrations-list');
+    if (!listEl) return;
+    try {
+        const integrations = await api.listIntegrations();
+        if (integrations.length === 0) {
+            // Нет доступных интеграций на сервере — скрываем секцию
+            const section = listEl.closest('.integrations-section');
+            if (section) section.style.display = 'none';
+            return;
+        }
+
+        const todoist = integrations.find(i => i.provider === 'todoist');
+        if (!todoist) return;
+
+        if (todoist.enabled) {
+            listEl.innerHTML = `
+                <div class="integration-status">
+                    <span class="integration-provider"><i data-lucide="check-circle"></i> Todoist подключён</span>
+                    <button class="btn-small btn-danger" id="disconnect-todoist"><i data-lucide="unplug"></i> Отключить</button>
+                </div>`;
+            if (window.lucide) lucide.createIcons();
+            document.getElementById('disconnect-todoist').addEventListener('click', async () => {
+                if (!confirm('Отключить Todoist? Метрика будет архивирована, данные сохранятся.')) return;
+                try {
+                    await api.disconnectIntegration('todoist');
+                    await loadMetrics();
+                    navigateTo('settings');
+                } catch (error) { alert('Ошибка: ' + error.message); }
+            });
+        } else {
+            listEl.innerHTML = `
+                <div class="integration-status">
+                    <span class="integration-provider">Todoist</span>
+                    <button class="btn-primary btn-small" id="connect-todoist"><i data-lucide="plug"></i> Подключить</button>
+                </div>`;
+            if (window.lucide) lucide.createIcons();
+            document.getElementById('connect-todoist').addEventListener('click', async () => {
+                try {
+                    const { url } = await api.getTodoistAuthUrl();
+                    window.location.href = url;
+                } catch (error) { alert('Ошибка: ' + error.message); }
+            });
+        }
+    } catch (error) {
+        listEl.innerHTML = '<div class="integration-status"><span class="text-dim">Не удалось загрузить</span></div>';
+    }
 }
 
 function showMetricModal(mode = 'create', existingMetric = null) {

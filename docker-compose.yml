@@ -25,6 +25,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://la_user:la_password@db:5432/life_analytics}
       LA_SECRET_KEY: ${LA_SECRET_KEY:-dev-secret-key-change-in-production}
+      TODOIST_CLIENT_ID: ${TODOIST_CLIENT_ID:-}
+      TODOIST_CLIENT_SECRET: ${TODOIST_CLIENT_SECRET:-}
     ports:
       - "8000:8000"
 

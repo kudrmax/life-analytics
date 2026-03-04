@@ -124,4 +124,18 @@ const api = {
     getCorrelationReport() {
         return this.request('GET', '/api/analytics/correlation-report');
     },
+
+    // Integrations
+    listIntegrations() {
+        return this.request('GET', '/api/integrations');
+    },
+    getTodoistAuthUrl() {
+        return this.request('GET', '/api/integrations/todoist/auth-url');
+    },
+    disconnectIntegration(provider) {
+        return this.request('DELETE', `/api/integrations/${provider}/disconnect`);
+    },
+    fetchIntegration(provider) {
+        return this.request('POST', `/api/integrations/${provider}/fetch`);
+    },
 };

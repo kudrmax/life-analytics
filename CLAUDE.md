@@ -53,11 +53,11 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `schemas.py` — Pydantic models for all request/response types
 - `metric_helpers.py` — shared value read/write logic across routers; `build_metric_out` converts DB rows to response models with slots
 
-**Routers** (all under `/api/`): `auth`, `metrics`, `entries`, `daily`, `analytics`, `export_import`
+**Routers** (all under `/api/`): `auth`, `metrics`, `entries`, `daily`, `analytics`, `export_import`, `integrations`
 
 ### Database Schema (PostgreSQL)
 
-**Enum:** `metric_type` = 'bool' | 'time' | 'number' | 'scale'
+**Enum:** `metric_type` = 'bool' | 'time' | 'number' | 'scale' | 'computed' | 'integration'
 
 **Tables:**
 - `users` — id, username (unique), password_hash, created_at
@@ -71,6 +71,8 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `scale_config` — metric_id (PK/FK), scale_min, scale_max, scale_step (current config for rendering)
 - `correlation_reports` — id, user_id (FK), status ('running'/'done'/'error'), period_start, period_end, created_at, finished_at
 - `correlation_pairs` — id, report_id (FK), metric_a_id, metric_b_id, slot_a_id, slot_b_id, label_a, label_b, type_a, type_b, correlation (FLOAT), data_points (INTEGER)
+- `user_integrations` — id, user_id (FK), provider (VARCHAR), encrypted_token (TEXT), enabled, created_at; UNIQUE(user_id, provider)
+- `integration_config` — metric_id (PK/FK), provider (VARCHAR), metric_key (VARCHAR, default 'completed_tasks_count')
 
 **Entry uniqueness (partial indexes):** Metrics without slots: `UNIQUE(metric_id, user_id, date) WHERE slot_id IS NULL`. Metrics with slots: `UNIQUE(metric_id, user_id, date, slot_id) WHERE slot_id IS NOT NULL`.
 
@@ -96,7 +98,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - Сегодня (today): ввод метрик за текущий день; `today-actions` кнопки «Добавить метрику» / «Редактировать метрики»
 - Статистика (dashboard): `stats-header` с выбором периода, тренды с мини-чартами, корреляционные отчёты
 - Детализация метрики (metric-detail): Chart.js графики (bar для bool, line для остальных); переход через `navigateTo('metric-detail', { metricId })`; `detailChartInstance` глобальная переменная для cleanup
-- Настройки (settings): принимает `{ openAddModal: true }` для автооткрытия модалки добавления метрики
+- Настройки (settings): принимает `{ openAddModal: true }` для автооткрытия модалки добавления метрики; раздел "Интеграции" внизу с кнопками подключения/отключения Todoist
 
 **Event delegation pattern:** `#metrics-form` element persists across re-renders (innerHTML replaced). Event listeners (click, change) are attached once via `data-handlersAttached` guard in `attachInputHandlers()` to prevent duplicate async handlers.
 
@@ -126,6 +128,12 @@ BACKUP_INTERVAL_MINUTES=360
 BACKUP_RETAIN_DAYS=30
 ```
 
+```
+# Todoist integration (optional)
+TODOIST_CLIENT_ID=           # from https://developer.todoist.com/appconsole.html
+TODOIST_CLIENT_SECRET=       # from the same page
+```
+
 See `.env.example`. Defaults work for local Docker Compose dev.
 
 ## Key Implementation Details
@@ -139,6 +147,14 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 6. `routers/analytics.py` — `_extract_numeric` + value_table selection in `trends` and `values_by_date`; include extra columns (e.g. scale context) in SELECT
 7. `routers/export_import.py` — type validation on import + value parsing + config export/import
 8. `frontend/js/app.js` — render function, input handlers, history display, settings type label, modal (preview + radio + type hint + config fields)
+
+**Integration pattern (Todoist):**
+- OAuth flow: `GET /api/integrations/todoist/auth-url` (JWT-protected) → redirect to Todoist → `GET /api/integrations/todoist/callback` (no JWT, uses state JWT) → auto-creates metric (type=integration) + integration_config
+- Data fetch: `POST /api/integrations/{provider}/fetch` → service layer decrypts token, calls Todoist API, upserts entry in values_number
+- Architecture: `integrations/todoist/client.py` (pure API client) → `integrations/todoist/service.py` (DB + client orchestration) → `routers/integrations.py` (HTTP layer)
+- Token encryption: Fernet symmetric encryption via `encryption.py`, key derived from LA_SECRET_KEY
+- Integration metrics store values in `values_number` (same as number type), display as read-only with fetch button on frontend
+- Env vars: `TODOIST_CLIENT_ID`, `TODOIST_CLIENT_SECRET`
 
 **Analytics endpoints:**
 - `GET /api/analytics/trends` — тренды метрик за период

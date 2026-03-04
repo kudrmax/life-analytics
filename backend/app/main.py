@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import create_pool, close_pool, init_db
-from app.routers import metrics, entries, daily, analytics, auth, export_import
+from app.routers import metrics, entries, daily, analytics, auth, export_import, integrations
 
 
 @asynccontextmanager
@@ -30,6 +30,7 @@ app.include_router(entries.router)
 app.include_router(daily.router)
 app.include_router(analytics.router)
 app.include_router(export_import.router)
+app.include_router(integrations.router)
 
 
 @app.get("/api/health")

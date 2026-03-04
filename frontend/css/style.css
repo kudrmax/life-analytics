@@ -2206,3 +2206,82 @@ emoji-picker {
     font-size: 12px;
     margin-top: 4px;
 }
+
+/* ─── Integrations ─── */
+.integration-card {
+    border-left: 3px solid var(--accent);
+}
+
+.integration-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 4px 0;
+}
+
+.integration-value {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.integration-value.empty {
+    color: var(--text-dim);
+}
+
+.integration-fetch-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.2s;
+}
+
+.integration-fetch-btn:hover {
+    background: var(--accent-hover);
+}
+
+.integration-fetch-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.integrations-section {
+    margin-top: 24px;
+}
+
+.integrations-section h2 {
+    font-size: 18px;
+    margin-bottom: 12px;
+}
+
+.integration-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+}
+
+.integration-provider {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+}
+
+.btn-danger {
+    background: var(--red) !important;
+}
+
+.btn-danger:hover {
+    opacity: 0.9;
+}
+
