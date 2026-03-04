@@ -782,6 +782,11 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 "UPDATE correlation_reports SET status = 'done', finished_at = now() WHERE id = $1",
                 report_id,
             )
+            # Keep only this report, delete all others for the user
+            await conn.execute(
+                "DELETE FROM correlation_reports WHERE user_id = $1 AND id != $2",
+                user_id, report_id,
+            )
     except Exception:
         logger.exception("Error computing correlation report %s", report_id)
         try:
@@ -794,109 +799,99 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             logger.exception("Failed to update report status to error")
 
 
-@router.get("/correlation-reports")
-async def list_correlation_reports(
+@router.get("/correlation-report")
+async def get_latest_correlation_report(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     rows = await db.fetch(
-        """SELECT id, status, period_start, period_end, created_at, finished_at
+        """SELECT id, status, period_start, period_end, created_at
            FROM correlation_reports
            WHERE user_id = $1
            ORDER BY created_at DESC""",
         current_user["id"],
     )
-    return {
-        "reports": [
-            {
+    if not rows:
+        return {"running": None, "report": None}
+
+    running = None
+    done_row = None
+    for r in rows:
+        if r["status"] == "running" and running is None:
+            running = {
                 "id": r["id"],
-                "status": r["status"],
-                "period_start": str(r["period_start"]),
-                "period_end": str(r["period_end"]),
+                "status": "running",
                 "created_at": r["created_at"].isoformat(),
-                "finished_at": r["finished_at"].isoformat() if r["finished_at"] else None,
             }
-            for r in rows
-        ]
-    }
+        elif r["status"] == "done" and done_row is None:
+            done_row = r
 
-
-@router.get("/correlation-report/{report_id}")
-async def get_correlation_report(
-    report_id: int,
-    db=Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    report = await db.fetchrow(
-        "SELECT * FROM correlation_reports WHERE id = $1 AND user_id = $2",
-        report_id, current_user["id"],
-    )
-    if not report:
-        return {"error": "Report not found"}
-
-    pairs = await db.fetch(
-        """SELECT cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days,
-                  cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
-                  cp.label_a, cp.label_b,
-                  ma.name AS name_a, ma.icon AS icon_a,
-                  mb.name AS name_b, mb.icon AS icon_b,
-                  sa.label AS slot_label_a,
-                  sb.label AS slot_label_b
-           FROM correlation_pairs cp
-           LEFT JOIN metric_definitions ma ON ma.id = cp.metric_a_id
-           LEFT JOIN metric_definitions mb ON mb.id = cp.metric_b_id
-           LEFT JOIN measurement_slots sa ON sa.id = cp.slot_a_id
-           LEFT JOIN measurement_slots sb ON sb.id = cp.slot_b_id
-           WHERE cp.report_id = $1
-           ORDER BY abs(cp.correlation) DESC""",
-        report_id,
-    )
-
-    # Resolve icons for auto metrics (metric_id is NULL)
-    AUTO_CALENDAR_ICONS = {"День недели": "📅", "Месяц": "🗓️", "Неделя года": "📆"}
-    # Build name->icon map for "X: не ноль" parent lookup
-    metric_icons = {}
-    if any(p["metric_a_id"] is None or p["metric_b_id"] is None for p in pairs):
-        user_metrics = await db.fetch(
-            "SELECT name, icon FROM metric_definitions WHERE user_id = $1",
-            current_user["id"],
+    report = None
+    if done_row:
+        pairs = await db.fetch(
+            """SELECT cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days,
+                      cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
+                      cp.label_a, cp.label_b,
+                      ma.name AS name_a, ma.icon AS icon_a,
+                      mb.name AS name_b, mb.icon AS icon_b,
+                      sa.label AS slot_label_a,
+                      sb.label AS slot_label_b
+               FROM correlation_pairs cp
+               LEFT JOIN metric_definitions ma ON ma.id = cp.metric_a_id
+               LEFT JOIN metric_definitions mb ON mb.id = cp.metric_b_id
+               LEFT JOIN measurement_slots sa ON sa.id = cp.slot_a_id
+               LEFT JOIN measurement_slots sb ON sb.id = cp.slot_b_id
+               WHERE cp.report_id = $1
+               ORDER BY abs(cp.correlation) DESC""",
+            done_row["id"],
         )
-        metric_icons = {m["name"]: m["icon"] for m in user_metrics if m["icon"]}
 
-    def _resolve_icon(icon, label):
-        if icon:
-            return icon
-        if label in AUTO_CALENDAR_ICONS:
-            return AUTO_CALENDAR_ICONS[label]
-        if label and label.endswith(": не ноль"):
-            parent_name = label[:-len(": не ноль")]
-            return metric_icons.get(parent_name, "")
-        return ""
+        # Resolve icons for auto metrics (metric_id is NULL)
+        AUTO_CALENDAR_ICONS = {"День недели": "📅", "Месяц": "🗓️", "Неделя года": "📆"}
+        metric_icons = {}
+        if any(p["metric_a_id"] is None or p["metric_b_id"] is None for p in pairs):
+            user_metrics = await db.fetch(
+                "SELECT name, icon FROM metric_definitions WHERE user_id = $1",
+                current_user["id"],
+            )
+            metric_icons = {m["name"]: m["icon"] for m in user_metrics if m["icon"]}
 
-    return {
-        "id": report["id"],
-        "status": report["status"],
-        "period_start": str(report["period_start"]),
-        "period_end": str(report["period_end"]),
-        "created_at": report["created_at"].isoformat(),
-        "pairs": [
-            {
-                "label_a": p["name_a"] or p["label_a"] or "Удалённая метрика",
-                "label_b": p["name_b"] or p["label_b"] or "Удалённая метрика",
-                "type_a": p["type_a"],
-                "type_b": p["type_b"],
-                "icon_a": _resolve_icon(p["icon_a"], p["label_a"]),
-                "icon_b": _resolve_icon(p["icon_b"], p["label_b"]),
-                "slot_label_a": p["slot_label_a"] or "",
-                "slot_label_b": p["slot_label_b"] or "",
-                "correlation": p["correlation"],
-                "data_points": p["data_points"],
-                "lag_days": p["lag_days"],
-                "p_value": round(_p_value(p["correlation"], p["data_points"]), 4) if p["correlation"] is not None else None,
-            }
-            for p in pairs
-        ],
-    }
+        def _resolve_icon(icon, label):
+            if icon:
+                return icon
+            if label in AUTO_CALENDAR_ICONS:
+                return AUTO_CALENDAR_ICONS[label]
+            if label and label.endswith(": не ноль"):
+                parent_name = label[:-len(": не ноль")]
+                return metric_icons.get(parent_name, "")
+            return ""
+
+        report = {
+            "id": done_row["id"],
+            "status": "done",
+            "period_start": str(done_row["period_start"]),
+            "period_end": str(done_row["period_end"]),
+            "created_at": done_row["created_at"].isoformat(),
+            "pairs": [
+                {
+                    "label_a": p["name_a"] or p["label_a"] or "Удалённая метрика",
+                    "label_b": p["name_b"] or p["label_b"] or "Удалённая метрика",
+                    "type_a": p["type_a"],
+                    "type_b": p["type_b"],
+                    "icon_a": _resolve_icon(p["icon_a"], p["label_a"]),
+                    "icon_b": _resolve_icon(p["icon_b"], p["label_b"]),
+                    "slot_label_a": p["slot_label_a"] or "",
+                    "slot_label_b": p["slot_label_b"] or "",
+                    "correlation": p["correlation"],
+                    "data_points": p["data_points"],
+                    "lag_days": p["lag_days"],
+                    "p_value": round(_p_value(p["correlation"], p["data_points"]), 4) if p["correlation"] is not None else None,
+                }
+                for p in pairs
+            ],
+        }
+
+    return {"running": running, "report": report}
 
 
 @router.get("/streaks")

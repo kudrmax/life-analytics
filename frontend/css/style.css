@@ -958,15 +958,31 @@ input[type="month"], input[type="date"] {
 }
 
 
-.corr-report-controls {
+.corr-header {
     display: flex;
-    gap: 8px;
     align-items: center;
-    margin: 12px 0;
+    justify-content: space-between;
+    margin-bottom: 12px;
 }
 
-.corr-report-controls .btn-primary {
-    margin-bottom: 0;
+.corr-header-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.corr-header h3 {
+    margin: 0;
+}
+
+.corr-count {
+    font-size: 13px;
+    color: var(--text-dim);
+}
+
+.btn-sm {
+    padding: 4px 12px;
+    font-size: 13px;
 }
 
 .corr-pair-row {
@@ -1042,14 +1058,6 @@ input[type="month"], input[type="date"] {
     vertical-align: middle;
 }
 
-.corr-lag-badge {
-    font-size: 10px;
-    font-weight: 500;
-    padding: 1px 5px;
-    border-radius: 4px;
-    background: rgba(100, 149, 237, 0.15);
-    color: var(--accent);
-}
 .corr-day-label {
     font-size: 10px;
     color: var(--accent);

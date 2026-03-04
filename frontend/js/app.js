@@ -899,9 +899,13 @@ async function loadDashboard(start, end) {
     // Correlation section
     const corrEl = document.getElementById('correlation-section');
     corrEl.innerHTML = `
-        <h3>Корреляции <button class="corr-help-btn" id="corr-help-btn">?</button></h3>
-        <div class="corr-report-controls">
-            <button class="btn-primary" id="corr-calc-all">Рассчитать все корреляции</button>
+        <div class="corr-header">
+            <div class="corr-header-left">
+                <h3>Корреляции</h3>
+                <span class="corr-count" id="corr-count"></span>
+                <button class="corr-help-btn" id="corr-help-btn">?</button>
+            </div>
+            <button class="btn-primary btn-sm" id="corr-calc-all">Рассчитать</button>
         </div>
         <div id="corr-reports"></div>
     `;
@@ -910,28 +914,27 @@ async function loadDashboard(start, end) {
 
     document.getElementById('corr-calc-all').addEventListener('click', async () => {
         await api.createCorrelationReport(start, end);
-        loadCorrelationReports(start, end);
+        loadCorrelationReport(start, end);
     });
 
-    loadCorrelationReports(start, end);
+    loadCorrelationReport(start, end);
 }
 
-async function loadCorrelationReports(start, end) {
+async function loadCorrelationReport(start, end) {
     const container = document.getElementById('corr-reports');
     if (!container) return;
 
-    const data = await api.getCorrelationReports();
-    const reports = data.reports || [];
+    const data = await api.getCorrelationReport();
 
-    if (reports.length === 0) {
+    if (!data.running && !data.report) {
         container.innerHTML = '<p style="color:var(--text-dim);font-size:13px;">Нет отчётов. Нажмите «Рассчитать все корреляции».</p>';
         return;
     }
 
-    // Check if any report is running
-    const running = reports.find(r => r.status === 'running');
-    if (running) {
-        container.innerHTML = '<div class="corr-running">В процессе...</div>';
+    let html = '';
+
+    if (data.running) {
+        html += '<div class="corr-running">Рассчитываем корреляции...</div>';
         if (!corrPollInterval) {
             corrPollInterval = setInterval(async () => {
                 if (currentPage !== 'dashboard') {
@@ -939,48 +942,30 @@ async function loadCorrelationReports(start, end) {
                     corrPollInterval = null;
                     return;
                 }
-                const check = await api.getCorrelationReports();
-                const still = (check.reports || []).find(r => r.status === 'running');
-                if (!still) {
+                const check = await api.getCorrelationReport();
+                if (!check.running) {
                     clearInterval(corrPollInterval);
                     corrPollInterval = null;
-                    loadCorrelationReports(start, end);
+                    loadCorrelationReport(start, end);
                 }
             }, 3000);
         }
-        return;
+    } else if (corrPollInterval) {
+        clearInterval(corrPollInterval);
+        corrPollInterval = null;
     }
 
-    // Stop polling if was running
-    if (corrPollInterval) { clearInterval(corrPollInterval); corrPollInterval = null; }
-
-    const doneReports = reports.filter(r => r.status === 'done');
-    if (doneReports.length === 0) {
-        container.innerHTML = '<p style="color:var(--text-dim);font-size:13px;">Нет готовых отчётов.</p>';
-        return;
-    }
-
-    let html = '<div class="corr-report-controls">';
-    html += '<select id="corr-report-select" class="styled-select">';
-    for (const r of doneReports) {
-        const d = new Date(r.created_at);
-        const label = d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
-        html += `<option value="${r.id}">${label} (${r.period_start} — ${r.period_end})</option>`;
-    }
-    html += '</select></div>';
     html += '<div id="corr-report-detail"></div>';
     container.innerHTML = html;
 
-    const select = document.getElementById('corr-report-select');
-    const loadReport = async (reportId) => {
-        const detail = document.getElementById('corr-report-detail');
-        if (!detail) return;
-        const report = await api.getCorrelationReport(reportId);
-        renderCorrelationReport(report, detail);
-    };
+    const countEl = document.getElementById('corr-count');
+    if (countEl && data.report) {
+        countEl.textContent = data.report.pairs.length;
+    }
 
-    select.addEventListener('change', () => loadReport(select.value));
-    await loadReport(doneReports[0].id);
+    if (data.report) {
+        renderCorrelationReport(data.report, document.getElementById('corr-report-detail'));
+    }
 }
 
 function showCorrelationHelp() {
@@ -988,15 +973,60 @@ function showCorrelationHelp() {
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
         <div class="modal" style="max-width:520px">
-            <h2>О корреляциях</h2>
-            <div style="text-align:left;font-size:14px;line-height:1.6">
-                <p><b>Корреляция</b> — числовая мера связи между двумя метриками, от −1 до +1. Положительная: метрики растут вместе. Отрицательная: одна растёт — другая падает.</p>
-                <p><b>P-value</b> — вероятность получить такую корреляцию случайно. p&nbsp;&lt;&nbsp;0.05 — статистически значимо (менее 5% вероятность случайности).</p>
-                <p><b>Категории силы:</b> сильная (&gt;0.7), средняя (0.3–0.7), слабая (&lt;0.3).</p>
-                <p><b>Со сдвигом</b> — проверяем, влияет ли вчерашнее значение одной метрики на сегодняшнее значение другой.</p>
-                <p><b>Что в отчёте</b> — все пары метрик, отсортированные по силе связи. Значимые пары отделены от незначимых.</p>
-                <p><b>Про данные</b> — нужно минимум 10 дней совпадающих данных для значимых результатов. Чем больше данных, тем надёжнее.</p>
-                <p><b>Корреляция ≠ причинность</b> — связь не означает, что одна метрика вызывает изменение другой.</p>
+            <h2>Как это читать</h2>
+            <div style="text-align:left;font-size:14px;line-height:1.7">
+                <p>Мы сравнили все ваши метрики попарно и нашли, какие из них ходят вместе.</p>
+                <p>Каждая карточка — одна пара. Вот пример:</p>
+                <div class="corr-pair-row" style="pointer-events:none;margin:8px 0 12px">
+                    <div class="corr-col-metric">
+                        <span class="metric-icon">💪</span>
+                        <div class="corr-metric-text">
+                            <div class="corr-metric-name">Зарядка утром</div>
+                            <div class="corr-pair-hint"><span class="corr-word-pos">да</span></div>
+                        </div>
+                    </div>
+                    <div class="corr-arrow">↔</div>
+                    <div class="corr-col-metric">
+                        <span class="metric-icon">😇</span>
+                        <div class="corr-metric-text">
+                            <div class="corr-metric-name">Настроение</div>
+                            <div class="corr-pair-hint"><span class="corr-word-pos">выше</span></div>
+                        </div>
+                    </div>
+                    <div class="corr-col-info">
+                        <div class="corr-pair-value strong">0.987</div>
+                        <div class="corr-info-sub">12 дн.</div>
+                    </div>
+                </div>
+                <p><b>0.987</b> — сила связи от 0 до 1. Чем ближе к единице, тем закономерность заметнее. <b>12 дн.</b> — по скольким дням считали.</p>
+                <p><b>да / выше</b> — подсказки направления. Читается так: «в дни, когда зарядка — <i>да</i>, настроение обычно — <i>выше</i>».</p>
+                <p><b>Верхний блок</b> (p&lt;0.05) — пары, где связь статистически надёжная: вероятность, что совпадение случайно, меньше 5%. <b>Нижний блок</b> — связь не доказана или пока мало данных.</p>
+                <p><b>Пары «вчера → сегодня»</b> — мы также проверяем, влияет ли вчерашнее значение одной метрики на сегодняшнее значение другой:</p>
+                <div class="corr-pair-row" style="pointer-events:none;margin:8px 0 12px">
+                    <div class="corr-col-metric">
+                        <span class="metric-icon">☕</span>
+                        <div class="corr-metric-text">
+                            <div class="corr-day-label">вчера</div>
+                            <div class="corr-metric-name">Кофе</div>
+                            <div class="corr-pair-hint"><span class="corr-word-pos">больше</span></div>
+                        </div>
+                    </div>
+                    <div class="corr-arrow">↔</div>
+                    <div class="corr-col-metric">
+                        <span class="metric-icon">😴</span>
+                        <div class="corr-metric-text">
+                            <div class="corr-day-label">сегодня</div>
+                            <div class="corr-metric-name">Качество сна</div>
+                            <div class="corr-pair-hint"><span class="corr-word-neg">ниже</span></div>
+                        </div>
+                    </div>
+                    <div class="corr-col-info">
+                        <div class="corr-pair-value medium">0.540</div>
+                        <div class="corr-info-sub">18 дн.</div>
+                    </div>
+                </div>
+                <p>Результатам можно верить от ~10 дней общих данных. Чем больше дней — тем точнее.</p>
+                <p style="color:var(--text-dim);font-style:italic">Важно: связь — это ещё не причина. Зарядка и настроение могут совпадать не потому, что одно вызывает другое, а потому что оба зависят, например, от качества сна.</p>
             </div>
             <div class="modal-actions">
                 <button class="btn-primary" id="corr-help-close">Понятно</button>
@@ -1048,15 +1078,13 @@ function renderCorrPair(p) {
     const labelA = renderCorrMetricLabel(isLagged ? p.label_b : p.label_a, isLagged ? p.icon_b : p.icon_a, isLagged ? p.slot_label_b : p.slot_label_a, hintA, isLagged ? 'вчера' : '');
     const labelB = renderCorrMetricLabel(isLagged ? p.label_a : p.label_b, isLagged ? p.icon_a : p.icon_b, isLagged ? p.slot_label_a : p.slot_label_b, hintB, isLagged ? 'сегодня' : '');
 
-    const lagBadge = isLagged ? '<div class="corr-lag-badge">со сдвигом</div>' : '';
-
     return `<div class="corr-pair-row">
         <div class="corr-col-metric">${labelA}</div>
         <div class="corr-arrow">↔</div>
         <div class="corr-col-metric">${labelB}</div>
         <div class="corr-col-info">
             <div class="corr-pair-value ${cls}">${absR.toFixed(3)}</div>
-            <div class="corr-info-sub">${lagBadge}${p.data_points} дн.</div>
+            <div class="corr-info-sub">${p.data_points} дн.</div>
         </div>
     </div>`;
 }
