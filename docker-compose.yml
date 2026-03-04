@@ -53,6 +53,8 @@ services:
       YADISK_BACKUP_PATH: ${YADISK_BACKUP_PATH:-/life-analytics-backups/}
       BACKUP_INTERVAL_MINUTES: ${BACKUP_INTERVAL_MINUTES:-360}
       BACKUP_RETAIN_DAYS: ${BACKUP_RETAIN_DAYS:-30}
+    volumes:
+      - ./backups:/backups
 
 volumes:
   pgdata:

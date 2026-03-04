@@ -30,6 +30,7 @@ Thumbs.db
 
 # Docker
 pgdata/
+backups/
 
 # Environment
 .env

@@ -29,6 +29,12 @@ docker exec -it life-analytics-db-1 psql -U la_user -d life_analytics
 make restart                # restart backend only
 make update                 # git pull + rebuild
 make down                   # stop all
+
+# Backup (requires YADISK_TOKEN in .env)
+make backup-up              # start backup service
+make backup-down            # stop backup service
+make backup-logs            # view backup logs
+make backup-now             # run one-off backup immediately
 ```
 
 **URLs:** Frontend :3000, Backend :8000, API docs :8000/docs, Health check: GET /api/health
@@ -100,6 +106,8 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 
 Three services: `db` (postgres:16-alpine), `backend` (Python 3.12-slim + uvicorn), `frontend` (nginx:alpine proxies `/api/` to backend).
 
+Optional service (profile `backup`): `backup` (Python 3.12-alpine + pg_dump + yadisk) — periodic PostgreSQL dumps uploaded to Yandex Disk. Not started by default; activate with `docker compose --profile backup up` or `make backup-up`.
+
 ## Environment Variables
 
 ```
@@ -108,6 +116,14 @@ LA_SECRET_KEY=change-me-in-production
 POSTGRES_USER=la_user
 POSTGRES_PASSWORD=la_password
 POSTGRES_DB=life_analytics
+```
+
+```
+# Backup (only used with --profile backup)
+YADISK_TOKEN=your-yandex-disk-oauth-token
+YADISK_BACKUP_PATH=/life-analytics-backups/
+BACKUP_INTERVAL_MINUTES=360
+BACKUP_RETAIN_DAYS=30
 ```
 
 See `.env.example`. Defaults work for local Docker Compose dev.
@@ -153,3 +169,14 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 **Export/Import format:**
 - ZIP with `metrics.csv` (id, slug, name, category, type, enabled, sort_order, scale_min, scale_max, scale_step, icon, slot_labels as JSON) + `entries.csv` (date, metric_slug, value as JSON, slot_sort_order, slot_label)
 - Import: creates/updates metrics by slug, recreates slots, skips duplicate entries
+
+**Backup setup (production):**
+1. Get Yandex Disk OAuth token at https://yandex.ru/dev/disk/poligon/
+2. Add `YADISK_TOKEN=<token>` to `.env`
+3. `make backup-up` — starts backup service (first backup runs immediately, then every 6 hours)
+4. `make backup-logs` — verify "Backup cycle complete" in logs
+5. Old backups auto-deleted after 30 days (configurable via `BACKUP_RETAIN_DAYS`)
+
+Backup service uses Docker Compose profile `backup` — it does NOT start with regular `docker compose up` / `make up`.
+
+**Makefile `make help`:** When adding or removing Makefile targets, always update the `help` target to keep it in sync. `make help` is the default goal (runs on bare `make`).

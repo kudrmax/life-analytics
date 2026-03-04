@@ -27,12 +27,15 @@ YADISK_BACKUP_PATH = os.environ.get("YADISK_BACKUP_PATH", "/life-analytics-backu
 BACKUP_INTERVAL_MINUTES = int(os.environ.get("BACKUP_INTERVAL_MINUTES", "360"))
 BACKUP_RETAIN_DAYS = int(os.environ.get("BACKUP_RETAIN_DAYS", "30"))
 
+LOCAL_BACKUP_DIR = "/backups"
+
 
 def create_dump() -> str:
     """Run pg_dump | gzip, return path to .sql.gz file."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
     filename = f"life_analytics_{ts}.sql.gz"
-    filepath = f"/tmp/{filename}"
+    os.makedirs(LOCAL_BACKUP_DIR, exist_ok=True)
+    filepath = f"{LOCAL_BACKUP_DIR}/{filename}"
 
     env = os.environ.copy()
     env["PGPASSWORD"] = POSTGRES_PASSWORD
@@ -99,14 +102,37 @@ def run_backup_cycle() -> None:
         local_path = create_dump()
 
         with yadisk.Client(token=YADISK_TOKEN) as client:
-            client.check_token()
-            ensure_yadisk_folder(client)
-            upload_to_yadisk(client, local_path)
-            rotate_old_backups(client)
+            try:
+                client.check_token()
+            except yadisk.exceptions.UnauthorizedError:
+                log.error(
+                    "YADISK_TOKEN is invalid or expired. "
+                    "Get a new token at https://yandex.ru/dev/disk/poligon/ "
+                    "and set it in .env"
+                )
+                return
+
+            try:
+                ensure_yadisk_folder(client)
+                upload_to_yadisk(client, local_path)
+            except yadisk.exceptions.YaDiskError as e:
+                log.error("Yandex Disk API error during upload: %s", e)
+                log.info("Dump saved locally: %s", local_path)
+                local_path = None  # keep local file as fallback
+                return
+
+            try:
+                rotate_old_backups(client)
+            except yadisk.exceptions.YaDiskError as e:
+                log.warning("Failed to rotate old backups (non-critical): %s", e)
 
         log.info("Backup cycle complete")
+    except subprocess.CalledProcessError:
+        log.exception("pg_dump failed")
+    except RuntimeError as e:
+        log.error("%s", e)
     except Exception:
-        log.exception("Backup cycle failed")
+        log.exception("Backup cycle failed unexpectedly")
     finally:
         if local_path:
             cleanup_local(local_path)

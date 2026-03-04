@@ -1,6 +1,34 @@
 SHELL := /bin/bash
 
-.PHONY: up down logs logs-backend migrate restart update status nginx-test nginx-restart backup-up backup-down backup-logs backup-now
+.PHONY: help up down logs logs-backend migrate restart update status nginx-test nginx-restart backup-up backup-down backup-logs backup-now
+
+.DEFAULT_GOAL := help
+
+# ─── Help ───
+
+help: ## Показать эту справку
+	@echo ""
+	@echo "  Life Analytics — доступные команды:"
+	@echo ""
+	@echo "  Docker:"
+	@echo "    make up              Запустить все сервисы (build + detached)"
+	@echo "    make down            Остановить все сервисы"
+	@echo "    make logs            Логи всех сервисов"
+	@echo "    make logs-backend    Логи только backend"
+	@echo "    make status          Статус контейнеров"
+	@echo ""
+	@echo "  Production:"
+	@echo "    make update          git pull + пересобрать и перезапустить"
+	@echo "    make restart         Перезапустить backend"
+	@echo "    make nginx-test      Проверить конфиг nginx"
+	@echo "    make nginx-restart   Перезапустить nginx"
+	@echo ""
+	@echo "  Backup (нужен YADISK_TOKEN в .env):"
+	@echo "    make backup-up       Запустить сервис бэкапов"
+	@echo "    make backup-down     Остановить сервис бэкапов"
+	@echo "    make backup-logs     Логи бэкапов"
+	@echo "    make backup-now      Сделать бэкап прямо сейчас (разово)"
+	@echo ""
 
 # ─── Docker ───
 
@@ -16,7 +44,7 @@ logs:
 logs-backend:
 	docker compose logs -f backend
 
-# ─── Production (systemd) ───
+# ─── Production ───
 
 update:
 	@echo "Updating Life Analytics..."
