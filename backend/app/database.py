@@ -12,7 +12,7 @@ pool: asyncpg.Pool | None = None
 
 async def create_pool():
     global pool
-    pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
+    pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=8)
 
 
 async def close_pool():
