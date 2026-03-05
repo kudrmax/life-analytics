@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up down logs logs-backend migrate restart update status nginx-test nginx-restart backup-up backup-down backup-logs backup-now deploy ssh prod-logs prod-status prod-db
+.PHONY: help up down logs logs-backend migrate restart update status nginx-test nginx-restart backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db
 
 .DEFAULT_GOAL := help
 
@@ -34,7 +34,8 @@ help: ## Показать эту справку
 	@echo "    make backup-up       Запустить сервис бэкапов"
 	@echo "    make backup-down     Остановить сервис бэкапов"
 	@echo "    make backup-logs     Логи бэкапов"
-	@echo "    make backup-now      Сделать бэкап прямо сейчас (разово)"
+	@echo "    make backup-now      Сделать бэкап прямо сейчас (разово)
+	@echo "    make backup-restore  Восстановить БД из бэкапа (FILE=path.sql.gz)""
 	@echo ""
 
 # ─── Docker ───
@@ -109,3 +110,18 @@ backup-logs:
 backup-now:
 	docker compose --profile backup run --rm backup python -c \
 		"from backup import run_backup_cycle; run_backup_cycle()"
+
+backup-restore:
+	@test -n "$(FILE)" || (echo "Ошибка: укажите FILE. Пример: make backup-restore FILE=backups/file.sql.gz" && echo "" && echo "Доступные бэкапы:" && ls -lh backups/*.sql.gz 2>/dev/null || echo "  (папка backups/ пуста)" && exit 1)
+	@test -f "$(FILE)" || (echo "Ошибка: файл $(FILE) не найден" && exit 1)
+	@echo "⚠ ВНИМАНИЕ: база life_analytics будет пересоздана из бэкапа $(FILE)"
+	@read -p "Продолжить? (y/N) " confirm && [ "$$confirm" = "y" ] || (echo "Отменено." && exit 1)
+	@echo "Останавливаю backend..."
+	docker compose stop backend
+	@echo "Пересоздаю базу..."
+	docker exec life-analytics-db-1 psql -U la_user -d postgres -c "DROP DATABASE life_analytics;" -c "CREATE DATABASE life_analytics;"
+	@echo "Восстанавливаю из $(FILE)..."
+	gunzip -c $(FILE) | docker exec -i life-analytics-db-1 psql -U la_user -d life_analytics
+	@echo "Запускаю backend..."
+	docker compose start backend
+	@echo "Готово! БД восстановлена из $(FILE)"
