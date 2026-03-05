@@ -10,6 +10,8 @@ let currentUser = null;
 let isAuthenticated = false;
 let corrPollInterval = null;
 const corrPairData = new Map();
+let _todayRenderVersion = 0;
+let _historyRenderVersion = 0;
 
 function todayStr() {
     return new Date().toISOString().slice(0, 10);
@@ -308,6 +310,7 @@ function changeDay(delta) {
 }
 
 async function renderTodayForm() {
+    const myVersion = ++_todayRenderVersion;
     document.getElementById('current-date-label').textContent = formatDate(currentDate);
     const goTodayBtn = document.getElementById('go-today');
     if (goTodayBtn) {
@@ -332,6 +335,7 @@ async function renderTodayForm() {
             return '';
         })(),
     ]);
+    if (myVersion !== _todayRenderVersion) return;
 
     // Group by category
     const categories = {};
@@ -1041,9 +1045,11 @@ function renderCalendar(yearMonth) {
 }
 
 async function showDayDetail(date) {
+    const myVersion = ++_historyRenderVersion;
     const detail = document.getElementById('day-detail');
     detail.innerHTML = '<div class="loading-spinner"></div>';
     const summary = await api.getDailySummary(date);
+    if (myVersion !== _historyRenderVersion) return;
 
     // Update progress bar (skip computed metrics)
     let total = 0;
