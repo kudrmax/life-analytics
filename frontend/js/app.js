@@ -271,7 +271,7 @@ async function renderToday(container) {
             </div>
         </div>
         <div id="metrics-form"></div>
-        <div class="today-actions">
+        <div class="today-actions" style="display:none">
             <button class="btn-small" id="today-edit-metrics">
                 <i data-lucide="settings"></i> Редактировать метрики
             </button>
@@ -334,20 +334,38 @@ async function renderTodayForm() {
     }
 
     let html = '';
-    for (const [cat, items] of Object.entries(categories)) {
-        html += `<div class="category"><h3>${cat}</h3>`;
-        for (const m of items) {
-            html += renderMetricInput(m);
+    const hasUserMetrics = summary.metrics.length > 0;
+
+    if (!hasUserMetrics) {
+        html += `<div class="empty-state">
+            <div class="empty-state-icon"><i data-lucide="calendar-check"></i></div>
+            <div class="empty-state-text">Вы пока не создали метрики, поэтому тут пусто</div>
+            <button class="btn-primary" id="empty-create-metric">
+                <i data-lucide="plus"></i> Создать метрику
+            </button>
+        </div>`;
+    } else {
+        html += '<h3 class="section-header">Ваши метрики</h3>';
+        for (const [cat, items] of Object.entries(categories)) {
+            html += `<div class="category"><h3>${cat}</h3>`;
+            for (const m of items) {
+                html += renderMetricInput(m);
+            }
+            html += '</div>';
         }
-        html += '</div>';
     }
 
-    // Auto metrics section
+    // Auto metrics section (collapsible)
     const autoMetrics = summary.auto_metrics || [];
     if (autoMetrics.length > 0) {
+        const autoVisible = localStorage.getItem('la_auto_metrics_visible') === 'true';
         html += '<div class="auto-metrics-section">';
-        html += '<h3 class="category-title">Автоматические</h3>';
-        html += '<div class="auto-metrics-note">Вычисляются автоматически. Нельзя отключить.</div>';
+        html += `<div class="auto-metrics-header ${autoVisible ? 'expanded' : ''}" id="auto-metrics-toggle">
+            <h3 class="section-header">Автоматические метрики</h3>
+            <i data-lucide="chevron-down" class="auto-metrics-chevron"></i>
+        </div>`;
+        html += `<div class="auto-metrics-content" id="auto-metrics-content" style="display:${autoVisible ? 'block' : 'none'}">`;
+        html += '<div class="auto-metrics-note">Вычисляются автоматически</div>';
         for (const am of autoMetrics) {
             const isBool = am.auto_type === 'nonzero';
             let displayVal;
@@ -371,13 +389,41 @@ async function renderTodayForm() {
                 <div class="computed-value">${displayVal}</div>
             </div>`;
         }
-        html += '</div>';
+        html += '</div>'; // auto-metrics-content
+        html += '</div>'; // auto-metrics-section
     }
 
     html += awCard;
 
     form.innerHTML = html;
+    if (window.lucide) lucide.createIcons();
     attachInputHandlers();
+
+    // Empty state create button
+    const emptyCreateBtn = document.getElementById('empty-create-metric');
+    if (emptyCreateBtn) {
+        emptyCreateBtn.addEventListener('click', () => {
+            navigateTo('settings', { openAddModal: true });
+        });
+    }
+
+    // Auto metrics toggle
+    const autoToggle = document.getElementById('auto-metrics-toggle');
+    if (autoToggle) {
+        autoToggle.addEventListener('click', () => {
+            const content = document.getElementById('auto-metrics-content');
+            const isVisible = content.style.display !== 'none';
+            content.style.display = isVisible ? 'none' : 'block';
+            autoToggle.classList.toggle('expanded', !isVisible);
+            localStorage.setItem('la_auto_metrics_visible', String(!isVisible));
+        });
+    }
+
+    // Show/hide action buttons
+    const actionsEl = document.querySelector('.today-actions');
+    if (actionsEl) {
+        actionsEl.style.display = hasUserMetrics ? '' : 'none';
+    }
 
     // Update progress bar (skip computed metrics)
     let total = 0;
@@ -952,6 +998,22 @@ function updateProgress() {
 let historyDate = todayStr();
 
 async function renderHistory(container) {
+    if (metrics.length === 0) {
+        container.innerHTML = `
+            <div class="stats-header"><h2 class="stats-title">История</h2></div>
+            <div class="empty-state">
+                <div class="empty-state-icon"><i data-lucide="history"></i></div>
+                <div class="empty-state-text">Вы пока не создали метрики, поэтому тут пусто</div>
+                <button class="btn-primary" id="history-create-metric"><i data-lucide="plus"></i> Создать метрику</button>
+            </div>
+        `;
+        if (window.lucide) lucide.createIcons();
+        document.getElementById('history-create-metric').addEventListener('click', () => {
+            navigateTo('settings', { openAddModal: true });
+        });
+        return;
+    }
+
     historyDate = todayStr();
     container.innerHTML = `
         <div class="day-header">
@@ -1120,6 +1182,22 @@ function _formatEntryValue(entry, type, resultType) {
 
 // ─── Charts Page (Статистика) ───
 async function renderCharts(container) {
+    if (metrics.length === 0) {
+        container.innerHTML = `
+            <div class="stats-header"><h2 class="stats-title">Статистика</h2></div>
+            <div class="empty-state">
+                <div class="empty-state-icon"><i data-lucide="bar-chart-3"></i></div>
+                <div class="empty-state-text">Вы пока не создали метрики, поэтому тут пусто</div>
+                <button class="btn-primary" id="charts-create-metric"><i data-lucide="plus"></i> Создать метрику</button>
+            </div>
+        `;
+        if (window.lucide) lucide.createIcons();
+        document.getElementById('charts-create-metric').addEventListener('click', () => {
+            navigateTo('settings', { openAddModal: true });
+        });
+        return;
+    }
+
     const end = todayStr();
     const start = daysAgo(30);
 
@@ -1262,6 +1340,22 @@ async function loadChartsTrends(start, end) {
 
 // ─── Analysis Page (Анализ) ───
 async function renderAnalysis(container) {
+    if (metrics.length === 0) {
+        container.innerHTML = `
+            <div class="stats-header"><h2 class="stats-title">Анализ</h2></div>
+            <div class="empty-state">
+                <div class="empty-state-icon"><i data-lucide="scatter-chart"></i></div>
+                <div class="empty-state-text">Вы пока не создали метрики, поэтому тут пусто</div>
+                <button class="btn-primary" id="analysis-create-metric"><i data-lucide="plus"></i> Создать метрику</button>
+            </div>
+        `;
+        if (window.lucide) lucide.createIcons();
+        document.getElementById('analysis-create-metric').addEventListener('click', () => {
+            navigateTo('settings', { openAddModal: true });
+        });
+        return;
+    }
+
     const end = todayStr();
     const start = daysAgo(30);
 
@@ -1965,36 +2059,43 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     const activeMetrics = allMetrics.filter(m => m.enabled);
     const archivedMetrics = allMetrics.filter(m => !m.enabled);
 
-    const categories = {};
-    for (const m of activeMetrics) {
-        categories[m.category] = categories[m.category] || [];
-        categories[m.category].push(m);
-    }
-
-    for (const [cat, items] of Object.entries(categories)) {
-        html += `<div class="category"><h3>${cat}</h3>`;
-        for (const m of items) {
-            const slotsBadge = m.slots && m.slots.length > 0
-                ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
-            const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
-                : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
-                : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
-                : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
-                : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
-                : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
-            html += `<div class="setting-row">
-                <div class="setting-info">
-                    <span class="setting-name">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span>
-                    <span class="setting-type">${typeIcon}</span>
-                </div>
-                <div class="setting-actions">
-                    <button class="btn-icon edit-btn" data-metric="${m.id}"><i data-lucide="pencil"></i></button>
-                    <button class="btn-icon archive-btn" data-metric="${m.id}"><i data-lucide="archive"></i></button>
-                    <button class="btn-icon delete-btn btn-icon-danger" data-metric="${m.id}"><i data-lucide="trash-2"></i></button>
-                </div>
-            </div>`;
+    if (allMetrics.length === 0) {
+        html += `<div class="empty-state">
+            <div class="empty-state-icon"><i data-lucide="settings"></i></div>
+            <div class="empty-state-text">Вы пока не создали метрики, поэтому тут пусто</div>
+        </div>`;
+    } else {
+        const categories = {};
+        for (const m of activeMetrics) {
+            categories[m.category] = categories[m.category] || [];
+            categories[m.category].push(m);
         }
-        html += '</div>';
+
+        for (const [cat, items] of Object.entries(categories)) {
+            html += `<div class="category"><h3>${cat}</h3>`;
+            for (const m of items) {
+                const slotsBadge = m.slots && m.slots.length > 0
+                    ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
+                const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
+                    : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
+                    : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
+                    : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
+                    : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
+                    : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
+                html += `<div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-name">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span>
+                        <span class="setting-type">${typeIcon}</span>
+                    </div>
+                    <div class="setting-actions">
+                        <button class="btn-icon edit-btn" data-metric="${m.id}"><i data-lucide="pencil"></i></button>
+                        <button class="btn-icon archive-btn" data-metric="${m.id}"><i data-lucide="archive"></i></button>
+                        <button class="btn-icon delete-btn btn-icon-danger" data-metric="${m.id}"><i data-lucide="trash-2"></i></button>
+                    </div>
+                </div>`;
+            }
+            html += '</div>';
+        }
     }
 
     if (archivedMetrics.length > 0) {
@@ -2028,6 +2129,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     }
     // Integrations section
     html += '<div class="integrations-section"><h2>Интеграции</h2>';
+    html += '<p class="integrations-description">Сторонние интеграции позволяют автоматически получать данные из других приложений</p>';
     html += '<div id="integrations-list"><div class="integration-status"><span class="text-dim">Загрузка...</span></div></div>';
     html += '</div>';
 
@@ -2223,6 +2325,7 @@ async function _loadIntegrationsSection() {
                         <span class="integration-provider"><span class="metric-icon">${TODOIST_ICON}</span> Todoist подключён</span>
                         <button class="btn-small btn-danger" id="disconnect-todoist"><i data-lucide="unplug"></i> Отключить</button>
                     </div>
+                    <div class="integration-note">Отслеживание выполненных и отфильтрованных задач из Todoist</div>
                 </div>`;
             } else {
                 html += `<div class="integration-card">
@@ -2230,6 +2333,7 @@ async function _loadIntegrationsSection() {
                         <span class="integration-provider"><span class="metric-icon">${TODOIST_ICON}</span> Todoist</span>
                         <button class="btn-primary btn-small" id="connect-todoist"><i data-lucide="plug"></i> Подключить</button>
                     </div>
+                    <div class="integration-note">Отслеживание выполненных и отфильтрованных задач из Todoist</div>
                 </div>`;
             }
         }
@@ -2243,6 +2347,7 @@ async function _loadIntegrationsSection() {
                         <span class="integration-provider"><span class="metric-icon">${AW_ICON}</span> ActivityWatch подключён</span>
                         <button class="btn-small btn-danger" id="disconnect-aw"><i data-lucide="unplug"></i> Отключить</button>
                     </div>
+                    <div class="integration-note">Экранное время с вашего компьютера</div>
                     <div id="aw-connection-check" class="aw-connection-check"><span class="text-dim">Проверяю доступность...</span></div>
                     <div id="aw-categories-section" class="aw-categories-section">
                         <div class="aw-categories-header">

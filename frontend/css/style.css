@@ -2128,11 +2128,74 @@ emoji-picker {
     font-weight: 400;
 }
 
+/* ─── Empty State ─── */
+.empty-state {
+    text-align: center;
+    padding: 48px 24px;
+    color: var(--text-dim);
+}
+
+.empty-state-icon {
+    margin-bottom: 12px;
+    opacity: 0.4;
+    color: var(--text-dim);
+}
+
+.empty-state-icon svg {
+    width: 48px;
+    height: 48px;
+}
+
+.empty-state-text {
+    font-size: 15px;
+    margin-bottom: 20px;
+    line-height: 1.5;
+}
+
+.empty-state .btn-primary {
+    margin: 0 auto;
+}
+
+/* ─── Section Headers ─── */
+.section-header {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+    padding-top: 8px;
+}
+
 /* ─── Auto Metrics ─── */
 .auto-metrics-section {
     margin-top: 24px;
     padding-top: 16px;
     border-top: 1px solid var(--border);
+}
+
+.auto-metrics-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    padding: 4px 0;
+}
+
+.auto-metrics-header .section-header {
+    margin-bottom: 0;
+    padding-top: 0;
+}
+
+.auto-metrics-chevron {
+    width: 18px;
+    height: 18px;
+    color: var(--text-dim);
+    transition: transform 0.2s;
+}
+
+.auto-metrics-header.expanded .auto-metrics-chevron {
+    transform: rotate(180deg);
 }
 
 .auto-metrics-note {
@@ -2143,6 +2206,14 @@ emoji-picker {
 
 .auto-metric {
     opacity: 0.85;
+}
+
+/* ─── Integrations Description ─── */
+.integrations-description {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+    margin-top: -4px;
 }
 
 /* ─── Formula Builder ─── */
