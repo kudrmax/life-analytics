@@ -32,7 +32,7 @@
     --yellow: #f9a825;
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
+* { margin: 0; padding: 0; box-sizing: border-box; touch-action: manipulation; }
 
 input, select, textarea { font-size: 16px; }
 
@@ -811,8 +811,8 @@ input[type="month"], input[type="date"] {
     display: flex;
     align-items: center;
     gap: 6px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
+    flex: 1;
+    min-width: 0;
 }
 .stats-controls input[type="date"] {
     background: var(--surface2);
@@ -823,7 +823,8 @@ input[type="month"], input[type="date"] {
     border-radius: 6px;
     font-size: 16px;
     line-height: 30px;
-    width: 125px;
+    flex: 1;
+    min-width: 0;
     margin-bottom: 0;
 }
 .stats-dash {
