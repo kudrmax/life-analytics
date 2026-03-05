@@ -35,6 +35,8 @@ class MetricDefinitionCreate(BaseModel):
     metric_key: str | None = None
     filter_name: str | None = None
     filter_query: str | None = None
+    category_id: int | None = None
+    app_name: str | None = None
 
 
 class MetricDefinitionUpdate(BaseModel):
@@ -71,6 +73,8 @@ class MetricDefinitionOut(BaseModel):
     value_type: str | None = None
     filter_name: str | None = None
     filter_query: str | None = None
+    category_id: int | None = None
+    config_app_name: str | None = None
 
 
 class EntryCreate(BaseModel):

@@ -167,4 +167,30 @@ const api = {
     awGetTrends(start, end) {
         return this.request('GET', `/api/integrations/activitywatch/trends?start=${start}&end=${end}`);
     },
+
+    // ActivityWatch Categories
+    awGetCategories() {
+        return this.request('GET', '/api/integrations/activitywatch/categories');
+    },
+    awCreateCategory(name, color) {
+        return this.request('POST', '/api/integrations/activitywatch/categories', { name, color });
+    },
+    awUpdateCategory(id, data) {
+        return this.request('PUT', `/api/integrations/activitywatch/categories/${id}`, data);
+    },
+    awDeleteCategory(id) {
+        return this.request('DELETE', `/api/integrations/activitywatch/categories/${id}`);
+    },
+    awGetApps() {
+        return this.request('GET', '/api/integrations/activitywatch/apps');
+    },
+    awSetAppCategory(appName, categoryId) {
+        return this.request('PUT', `/api/integrations/activitywatch/apps/${encodeURIComponent(appName)}/category`, { category_id: categoryId });
+    },
+    awBatchSetCategory(appNames, categoryId) {
+        return this.request('PUT', '/api/integrations/activitywatch/apps/batch-category', { app_names: appNames, category_id: categoryId });
+    },
+    awGetAvailableMetrics() {
+        return this.request('GET', '/api/integrations/activitywatch/available-metrics');
+    },
 };

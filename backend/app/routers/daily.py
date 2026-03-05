@@ -27,13 +27,16 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
         """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
                   cc.formula, cc.result_type,
                   ic.provider, ic.metric_key, ic.value_type,
-                  ifc.filter_name, iqc.filter_query
+                  ifc.filter_name, iqc.filter_query,
+                  icatc.category_id, iapc.app_name AS config_app_name
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
            LEFT JOIN computed_config cc ON cc.metric_id = md.id
            LEFT JOIN integration_config ic ON ic.metric_id = md.id
            LEFT JOIN integration_filter_config ifc ON ifc.metric_id = md.id
            LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
+           LEFT JOIN integration_category_config icatc ON icatc.metric_id = md.id
+           LEFT JOIN integration_app_config iapc ON iapc.metric_id = md.id
            WHERE md.enabled = TRUE AND md.user_id = $1
            ORDER BY md.sort_order, md.id""",
         current_user["id"],

@@ -2023,7 +2023,14 @@ async function _loadIntegrationsSection() {
                     <span class="integration-provider"><i data-lucide="check-circle"></i> ActivityWatch подключён</span>
                     <button class="btn-small btn-danger" id="disconnect-aw"><i data-lucide="unplug"></i> Отключить</button>
                 </div>
-                <div id="aw-connection-check" class="aw-connection-check"><span class="text-dim">Проверяю доступность...</span></div>`;
+                <div id="aw-connection-check" class="aw-connection-check"><span class="text-dim">Проверяю доступность...</span></div>
+                <div id="aw-categories-section" class="aw-categories-section">
+                    <div class="aw-categories-header">
+                        <span class="label-text">Категории приложений</span>
+                        <button class="btn-small" id="aw-add-category"><i data-lucide="plus"></i> Категория</button>
+                    </div>
+                    <div id="aw-categories-list" class="aw-categories-list"><span class="text-dim">Загрузка...</span></div>
+                </div>`;
             } else {
                 html += `<div class="integration-status">
                     <span class="integration-provider"><span class="metric-icon">${AW_ICON}</span> ActivityWatch</span>
@@ -2073,6 +2080,17 @@ async function _loadIntegrationsSection() {
                     : '<span style="color:var(--red)"><i data-lucide="wifi-off"></i> ActivityWatch недоступен — убедитесь, что он запущен</span>';
                 if (window.lucide) lucide.createIcons();
             }
+            // Load categories UI
+            _loadAWCategories();
+            document.getElementById('aw-add-category')?.addEventListener('click', async () => {
+                const name = prompt('Название категории:');
+                if (!name || !name.trim()) return;
+                const color = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
+                try {
+                    await api.awCreateCategory(name.trim(), color);
+                    _loadAWCategories();
+                } catch (error) { alert('Ошибка: ' + error.message); }
+            });
         } else if (aw) {
             document.getElementById('connect-aw')?.addEventListener('click', async () => {
                 await api.awEnable();
@@ -2081,6 +2099,149 @@ async function _loadIntegrationsSection() {
         }
     } catch (error) {
         listEl.innerHTML = '<div class="integration-status"><span class="text-dim">Не удалось загрузить</span></div>';
+    }
+}
+
+// Track which category sections are expanded
+const _awExpandedSections = new Set();
+
+async function _loadAWCategories() {
+    const container = document.getElementById('aw-categories-list');
+    if (!container) return;
+    try {
+        const [categories, apps] = await Promise.all([
+            api.awGetCategories(),
+            api.awGetApps(),
+        ]);
+
+        const appsByCategory = {};
+        const uncategorized = [];
+        for (const app of apps) {
+            if (app.category_id) {
+                if (!appsByCategory[app.category_id]) appsByCategory[app.category_id] = [];
+                appsByCategory[app.category_id].push(app);
+            } else {
+                uncategorized.push(app);
+            }
+        }
+
+        let html = '';
+        for (const cat of categories) {
+            const catApps = appsByCategory[cat.id] || [];
+            const sectionKey = `aw-cat-${cat.id}`;
+            const isOpen = _awExpandedSections.has(sectionKey);
+            html += `<div class="aw-category-item" data-cat-id="${cat.id}">
+                <div class="aw-category-header" data-toggle="${sectionKey}">
+                    <span class="aw-category-color" style="background:${cat.color}"></span>
+                    <span class="aw-category-name">${cat.name}</span>
+                    <span class="aw-category-count">${catApps.length}</span>
+                    <button class="btn-icon aw-cat-edit" data-cat-id="${cat.id}" title="Редактировать"><i data-lucide="pencil"></i></button>
+                    <button class="btn-icon aw-cat-delete" data-cat-id="${cat.id}" title="Удалить"><i data-lucide="trash-2"></i></button>
+                    <i data-lucide="chevron-down" class="aw-cat-chevron"></i>
+                </div>
+                <div class="aw-category-apps" id="${sectionKey}" style="display:${isOpen ? 'block' : 'none'}">
+                    ${catApps.length === 0 ? '<span class="text-dim">Нет приложений</span>' :
+                        catApps.map(a => `<div class="aw-app-item">
+                            <span>${a.app_name}</span>
+                            <button class="btn-icon aw-app-remove" data-app="${encodeURIComponent(a.app_name)}" title="Убрать из категории"><i data-lucide="x"></i></button>
+                        </div>`).join('')}
+                </div>
+            </div>`;
+        }
+
+        if (uncategorized.length > 0) {
+            const isOpen = _awExpandedSections.has('aw-cat-uncat');
+            html += `<div class="aw-category-item aw-uncategorized">
+                <div class="aw-category-header" data-toggle="aw-cat-uncat">
+                    <span class="aw-category-color" style="background:var(--text-dim)"></span>
+                    <span class="aw-category-name">Без категории</span>
+                    <span class="aw-category-count">${uncategorized.length}</span>
+                    <i data-lucide="chevron-down" class="aw-cat-chevron"></i>
+                </div>
+                <div class="aw-category-apps" id="aw-cat-uncat" style="display:${isOpen ? 'block' : 'none'}">
+                    ${uncategorized.map(a => `<div class="aw-app-item">
+                        <span>${a.app_name}</span>
+                        <select class="aw-app-assign" data-app="${encodeURIComponent(a.app_name)}">
+                            <option value="">Назначить...</option>
+                            ${categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+                        </select>
+                    </div>`).join('')}
+                </div>
+            </div>`;
+        }
+
+        if (!html) {
+            html = '<span class="text-dim">Нет категорий. Синхронизируйте данные и создайте категории.</span>';
+        }
+
+        container.innerHTML = html;
+        if (window.lucide) lucide.createIcons();
+
+        // Toggle category expand
+        container.querySelectorAll('[data-toggle]').forEach(header => {
+            header.addEventListener('click', (e) => {
+                if (e.target.closest('button') || e.target.closest('select')) return;
+                const sectionKey = header.dataset.toggle;
+                const target = document.getElementById(sectionKey);
+                if (!target) return;
+                const nowOpen = target.style.display === 'none';
+                target.style.display = nowOpen ? 'block' : 'none';
+                if (nowOpen) _awExpandedSections.add(sectionKey);
+                else _awExpandedSections.delete(sectionKey);
+            });
+        });
+
+        // Delete category
+        container.querySelectorAll('.aw-cat-delete').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                if (!confirm('Удалить категорию? Приложения станут некатегоризированными.')) return;
+                try {
+                    await api.awDeleteCategory(parseInt(btn.dataset.catId));
+                    _loadAWCategories();
+                } catch (error) { alert('Ошибка: ' + error.message); }
+            });
+        });
+
+        // Edit category
+        container.querySelectorAll('.aw-cat-edit').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const catId = parseInt(btn.dataset.catId);
+                const cat = categories.find(c => c.id === catId);
+                if (!cat) return;
+                const newName = prompt('Новое название:', cat.name);
+                if (!newName || !newName.trim() || newName.trim() === cat.name) return;
+                try {
+                    await api.awUpdateCategory(catId, { name: newName.trim() });
+                    _loadAWCategories();
+                } catch (error) { alert('Ошибка: ' + error.message); }
+            });
+        });
+
+        // Remove app from category
+        container.querySelectorAll('.aw-app-remove').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const appName = decodeURIComponent(btn.dataset.app);
+                try {
+                    await api.awSetAppCategory(appName, null);
+                    _loadAWCategories();
+                } catch (error) { alert('Ошибка: ' + error.message); }
+            });
+        });
+
+        // Assign app to category
+        container.querySelectorAll('.aw-app-assign').forEach(select => {
+            select.addEventListener('change', async () => {
+                const appName = decodeURIComponent(select.dataset.app);
+                const categoryId = select.value ? parseInt(select.value) : null;
+                if (!categoryId) return;
+                try {
+                    await api.awSetAppCategory(appName, categoryId);
+                    _loadAWCategories();
+                } catch (error) { alert('Ошибка: ' + error.message); }
+            });
+        });
+    } catch (error) {
+        container.innerHTML = '<span class="text-dim">Не удалось загрузить категории</span>';
     }
 }
 
@@ -2093,15 +2254,29 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     // Fetch integration data for create mode
     let todoistConnected = false;
     let todoistAvailableMetrics = [];
+    let awConnected = false;
+    let awAvailableMetrics = [];
+    let awCategories = [];
+    let awApps = [];
     if (!isEdit) {
         try {
-            const [integrations, availMetrics] = await Promise.all([
+            const [integrations, todoistMetrics, awMetrics] = await Promise.all([
                 api.listIntegrations().catch(() => []),
                 api.getTodoistAvailableMetrics().catch(() => []),
+                api.awGetAvailableMetrics().catch(() => []),
             ]);
             const todoist = integrations.find(i => i.provider === 'todoist');
             todoistConnected = !!(todoist && todoist.enabled);
-            todoistAvailableMetrics = availMetrics;
+            todoistAvailableMetrics = todoistMetrics;
+            const aw = integrations.find(i => i.provider === 'activitywatch');
+            awConnected = !!(aw && aw.enabled);
+            awAvailableMetrics = awMetrics;
+            if (awConnected) {
+                [awCategories, awApps] = await Promise.all([
+                    api.awGetCategories().catch(() => []),
+                    api.awGetApps().catch(() => []),
+                ]);
+            }
         } catch { /* ignore */ }
     }
 
@@ -2167,8 +2342,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     <span class="label-hint">Вычисляется автоматически из других метрик</span>`;
         }
         if (type === 'integration') {
-            return `<span class="label-text">Тип: Todoist</span>
-                    <span class="label-hint">Данные получаются из Todoist</span>`;
+            return `<span class="label-text">Тип: Интеграция</span>
+                    <span class="label-hint">Данные получаются из внешнего сервиса</span>`;
         }
         return `<span class="label-text">Тип: Да/Нет</span>
                 <span class="label-hint">Простой переключатель (было / не было)</span>`;
@@ -2294,8 +2469,12 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <span>Формула</span>
                         </label>
                         ${todoistConnected ? `<label class="radio-inline">
-                            <input type="radio" name="nm-type" value="integration">
+                            <input type="radio" name="nm-type" value="integration-todoist">
                             <span>Todoist</span>
+                        </label>` : ''}
+                        ${awConnected ? `<label class="radio-inline">
+                            <input type="radio" name="nm-type" value="integration-activitywatch">
+                            <span>ActivityWatch</span>
                         </label>` : ''}
                     </div>
                 </div>
@@ -2305,6 +2484,13 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                         ${todoistAvailableMetrics.map(m => `<option value="${m.key}" data-config-fields="${(m.config_fields || []).join(',')}">${m.name}</option>`).join('')}
                     </select>
                     <div id="nm-integration-fields"></div>
+                </div>
+                <div class="form-section" id="nm-aw-config" style="display: none">
+                    <span class="label-text">Метрика ActivityWatch</span>
+                    <select id="nm-aw-metric" class="form-input">
+                        ${awAvailableMetrics.map(m => `<option value="${m.key}" data-config-fields="${(m.config_fields || []).join(',')}">${m.name}${m.description ? ' — ' + m.description : ''}</option>`).join('')}
+                    </select>
+                    <div id="nm-aw-fields"></div>
                 </div>
                 <div class="form-section" id="nm-scale-config" style="display: ${currentType === 'scale' ? 'flex' : 'none'}">
                     <span class="label-text">Настройки шкалы</span>
@@ -2463,15 +2649,18 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     if (!isEdit) {
         overlay.querySelectorAll('input[name="nm-type"]').forEach(radio => {
             radio.addEventListener('change', () => {
-                const selectedType = overlay.querySelector('input[name="nm-type"]:checked').value;
+                const selectedType = getCurrentType();
+                const selectedProvider = getCurrentProvider();
                 const scaleConfig = document.getElementById('nm-scale-config');
                 const computedConfig = document.getElementById('nm-computed-config');
                 const integrationConfig = document.getElementById('nm-integration-config');
+                const awConfig = document.getElementById('nm-aw-config');
                 const slotsSection = document.getElementById('nm-slots-section');
                 const emojiWrapper = overlay.querySelector('.emoji-picker-wrapper');
                 if (scaleConfig) scaleConfig.style.display = selectedType === 'scale' ? 'flex' : 'none';
                 if (computedConfig) computedConfig.style.display = selectedType === 'computed' ? 'block' : 'none';
-                if (integrationConfig) integrationConfig.style.display = selectedType === 'integration' ? 'block' : 'none';
+                if (integrationConfig) integrationConfig.style.display = (selectedType === 'integration' && selectedProvider === 'todoist') ? 'block' : 'none';
+                if (awConfig) awConfig.style.display = (selectedType === 'integration' && selectedProvider === 'activitywatch') ? 'block' : 'none';
                 if (slotsSection) slotsSection.style.display = (selectedType === 'computed' || selectedType === 'integration') ? 'none' : '';
                 if (emojiWrapper) emojiWrapper.style.display = selectedType === 'integration' ? 'none' : '';
                 if (selectedType === 'computed') {
@@ -2511,6 +2700,36 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             };
             integrationMetricSelect.addEventListener('change', renderIntegrationFields);
             renderIntegrationFields();
+        }
+
+        // AW metric select — show config fields
+        const awMetricSelect = overlay.querySelector('#nm-aw-metric');
+        if (awMetricSelect) {
+            const renderAwFields = () => {
+                const fieldsContainer = document.getElementById('nm-aw-fields');
+                if (!fieldsContainer) return;
+                const selected = awMetricSelect.selectedOptions[0];
+                const configFields = (selected?.dataset.configFields || '').split(',').filter(Boolean);
+                let html = '';
+                if (configFields.includes('category_id')) {
+                    html = `<label class="form-label">
+                        <span class="label-text">Категория</span>
+                        <select id="nm-aw-category-id" class="form-input">
+                            ${awCategories.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+                        </select>
+                    </label>`;
+                } else if (configFields.includes('app_name')) {
+                    html = `<label class="form-label">
+                        <span class="label-text">Приложение</span>
+                        <select id="nm-aw-app-name" class="form-input">
+                            ${awApps.map(a => `<option value="${a.app_name}">${a.app_name}</option>`).join('')}
+                        </select>
+                    </label>`;
+                }
+                fieldsContainer.innerHTML = html;
+            };
+            awMetricSelect.addEventListener('change', renderAwFields);
+            renderAwFields();
         }
 
         // Scale config input listeners — update preview in real time
@@ -2565,13 +2784,28 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
     function getCurrentType() {
         if (isEdit) return currentType;
-        return overlay.querySelector('input[name="nm-type"]:checked')?.value || 'bool';
+        const raw = overlay.querySelector('input[name="nm-type"]:checked')?.value || 'bool';
+        return raw.startsWith('integration') ? 'integration' : raw;
+    }
+
+    function getCurrentProvider() {
+        if (isEdit) return existingMetric?.provider || '';
+        const raw = overlay.querySelector('input[name="nm-type"]:checked')?.value || '';
+        if (raw === 'integration-todoist') return 'todoist';
+        if (raw === 'integration-activitywatch') return 'activitywatch';
+        return '';
     }
 
     function updatePreview() {
         const type = getCurrentType();
         const rawName = document.getElementById('nm-name').value || 'Название метрики';
-        const icon = type === 'integration' ? TODOIST_ICON : document.getElementById('nm-icon').value;
+        const provider = getCurrentProvider();
+        let icon;
+        if (type === 'integration') {
+            icon = provider === 'activitywatch' ? AW_ICON : TODOIST_ICON;
+        } else {
+            icon = document.getElementById('nm-icon').value;
+        }
         const name = (icon ? '<span class="metric-icon">' + icon + '</span>' : '') + rawName;
         const slotInputs = slotList ? slotList.querySelectorAll('.slot-label-input') : [];
         const labels = Array.from(slotInputs).map(i => i.value.trim()).filter(v => v !== '');
@@ -2688,8 +2922,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 }
                 await api.updateMetric(existingMetric.id, updateData);
             } else {
-                const typeRadio = overlay.querySelector('input[name="nm-type"]:checked');
-                const selectedType = typeRadio ? typeRadio.value : 'bool';
+                const selectedType = getCurrentType();
 
                 const slug = name.toLowerCase()
                     .replace(/\s+/g, '_')
@@ -2731,28 +2964,56 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 }
 
                 if (selectedType === 'integration') {
-                    const metricSelect = document.getElementById('nm-integration-metric');
-                    if (!metricSelect || !metricSelect.value) {
-                        alert('Выберите метрику Todoist');
-                        return;
-                    }
-                    createData.provider = 'todoist';
-                    createData.metric_key = metricSelect.value;
-                    if (metricSelect.value === 'filter_tasks_count') {
-                        const filterNameEl = document.getElementById('nm-filter-name');
-                        if (!filterNameEl || !filterNameEl.value.trim()) {
-                            alert('Укажите название фильтра');
+                    const intProvider = getCurrentProvider();
+
+                    if (intProvider === 'todoist') {
+                        const metricSelect = document.getElementById('nm-integration-metric');
+                        if (!metricSelect || !metricSelect.value) {
+                            alert('Выберите метрику Todoist');
                             return;
                         }
-                        createData.filter_name = filterNameEl.value.trim();
-                    }
-                    if (metricSelect.value === 'query_tasks_count') {
-                        const filterQueryEl = document.getElementById('nm-filter-query');
-                        if (!filterQueryEl || !filterQueryEl.value.trim()) {
-                            alert('Укажите поисковый запрос');
+                        createData.provider = 'todoist';
+                        createData.metric_key = metricSelect.value;
+                        if (metricSelect.value === 'filter_tasks_count') {
+                            const filterNameEl = document.getElementById('nm-filter-name');
+                            if (!filterNameEl || !filterNameEl.value.trim()) {
+                                alert('Укажите название фильтра');
+                                return;
+                            }
+                            createData.filter_name = filterNameEl.value.trim();
+                        }
+                        if (metricSelect.value === 'query_tasks_count') {
+                            const filterQueryEl = document.getElementById('nm-filter-query');
+                            if (!filterQueryEl || !filterQueryEl.value.trim()) {
+                                alert('Укажите поисковый запрос');
+                                return;
+                            }
+                            createData.filter_query = filterQueryEl.value.trim();
+                        }
+                    } else if (intProvider === 'activitywatch') {
+                        const awSelect = document.getElementById('nm-aw-metric');
+                        if (!awSelect || !awSelect.value) {
+                            alert('Выберите метрику ActivityWatch');
                             return;
                         }
-                        createData.filter_query = filterQueryEl.value.trim();
+                        createData.provider = 'activitywatch';
+                        createData.metric_key = awSelect.value;
+                        if (awSelect.value === 'category_time') {
+                            const catEl = document.getElementById('nm-aw-category-id');
+                            if (!catEl || !catEl.value) {
+                                alert('Выберите категорию');
+                                return;
+                            }
+                            createData.category_id = parseInt(catEl.value);
+                        }
+                        if (awSelect.value === 'app_time') {
+                            const appEl = document.getElementById('nm-aw-app-name');
+                            if (!appEl || !appEl.value) {
+                                alert('Выберите приложение');
+                                return;
+                            }
+                            createData.app_name = appEl.value;
+                        }
                     }
                 }
 

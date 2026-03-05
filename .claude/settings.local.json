@@ -46,7 +46,23 @@
       "WebFetch(domain:groups.google.com)",
       "WebFetch(domain:pypi.org)",
       "WebFetch(domain:docs.activitywatch.net)",
-      "Bash(make logs-backend:*)"
+      "Bash(make logs-backend:*)",
+      "WebFetch(domain:www.linux.org.ru)",
+      "WebFetch(domain:habr.com)",
+      "WebFetch(domain:qna.habr.com)",
+      "WebFetch(domain:vc.ru)",
+      "WebFetch(domain:4pda.to)",
+      "WebFetch(domain:pikabu.ru)",
+      "Bash(grep:*)",
+      "WebFetch(domain:www.cherryservers.com)",
+      "WebFetch(domain:vdsina.ru)",
+      "WebFetch(domain:www.trustpilot.com)",
+      "WebFetch(domain:www.tbank.ru)",
+      "WebFetch(domain:sweb.ru)",
+      "WebFetch(domain:ru.tophosts.net)",
+      "WebFetch(domain:hosting101.ru)",
+      "WebFetch(domain:firstbyte.ru)",
+      "WebFetch(domain:timeweb.com)"
     ]
   }
 }

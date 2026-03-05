@@ -8,6 +8,7 @@ from app.auth import get_current_user
 from app.metric_helpers import build_metric_out, get_metric_slots
 from app.formula import validate_formula, get_referenced_metric_ids
 from app.integrations.todoist.registry import TODOIST_METRICS, TODOIST_ICON
+from app.integrations.activitywatch.registry import ACTIVITYWATCH_METRICS, ACTIVITYWATCH_ICON
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
@@ -21,13 +22,16 @@ async def list_metrics(
     query = """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
                       cc.formula, cc.result_type,
                       ic.provider, ic.metric_key, ic.value_type,
-                      ifc.filter_name, iqc.filter_query
+                      ifc.filter_name, iqc.filter_query,
+                      icatc.category_id, iapc.app_name AS config_app_name
                FROM metric_definitions md
                LEFT JOIN scale_config sc ON sc.metric_id = md.id
                LEFT JOIN computed_config cc ON cc.metric_id = md.id
                LEFT JOIN integration_config ic ON ic.metric_id = md.id
                LEFT JOIN integration_filter_config ifc ON ifc.metric_id = md.id
                LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
+               LEFT JOIN integration_category_config icatc ON icatc.metric_id = md.id
+               LEFT JOIN integration_app_config iapc ON iapc.metric_id = md.id
                WHERE md.user_id = $1"""
     params = [current_user["id"]]
     if enabled_only:
@@ -51,13 +55,16 @@ async def get_metric(
         """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
                   cc.formula, cc.result_type,
                   ic.provider, ic.metric_key, ic.value_type,
-                  ifc.filter_name, iqc.filter_query
+                  ifc.filter_name, iqc.filter_query,
+                  icatc.category_id, iapc.app_name AS config_app_name
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
            LEFT JOIN computed_config cc ON cc.metric_id = md.id
            LEFT JOIN integration_config ic ON ic.metric_id = md.id
            LEFT JOIN integration_filter_config ifc ON ifc.metric_id = md.id
            LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
+           LEFT JOIN integration_category_config icatc ON icatc.metric_id = md.id
+           LEFT JOIN integration_app_config iapc ON iapc.metric_id = md.id
            WHERE md.id = $1 AND md.user_id = $2""",
         metric_id, current_user["id"],
     )
@@ -95,6 +102,27 @@ async def create_metric(
             elif data.metric_key == "query_tasks_count":
                 if not data.filter_query or not data.filter_query.strip():
                     raise HTTPException(400, "filter_query is required for query_tasks_count")
+        elif data.provider == "activitywatch":
+            if data.metric_key not in ACTIVITYWATCH_METRICS:
+                raise HTTPException(400, f"Unknown metric_key: {data.metric_key}")
+            aw_enabled = await db.fetchval(
+                "SELECT enabled FROM activitywatch_settings WHERE user_id = $1",
+                current_user["id"],
+            )
+            if not aw_enabled:
+                raise HTTPException(400, "ActivityWatch is not enabled")
+            if data.metric_key == "category_time":
+                if not data.category_id:
+                    raise HTTPException(400, "category_id is required for category_time")
+                cat = await db.fetchrow(
+                    "SELECT id FROM activitywatch_categories WHERE id = $1 AND user_id = $2",
+                    data.category_id, current_user["id"],
+                )
+                if not cat:
+                    raise HTTPException(400, "Category not found")
+            elif data.metric_key == "app_time":
+                if not data.app_name or not data.app_name.strip():
+                    raise HTTPException(400, "app_name is required for app_time")
         else:
             raise HTTPException(400, f"Unknown provider: {data.provider}")
 
@@ -114,7 +142,10 @@ async def create_metric(
         if s_step < 1 or s_step > (s_max - s_min):
             raise HTTPException(400, "scale_step must be >= 1 and <= (max - min)")
 
-    icon = TODOIST_ICON if data.type == MetricType.integration else data.icon
+    if data.type == MetricType.integration:
+        icon = ACTIVITYWATCH_ICON if data.provider == "activitywatch" else TODOIST_ICON
+    else:
+        icon = data.icon
 
     metric_id = await db.fetchval(
         """INSERT INTO metric_definitions
@@ -132,7 +163,10 @@ async def create_metric(
     )
 
     if data.type == MetricType.integration:
-        value_type = TODOIST_METRICS[data.metric_key]["value_type"]
+        if data.provider == "activitywatch":
+            value_type = ACTIVITYWATCH_METRICS[data.metric_key]["value_type"]
+        else:
+            value_type = TODOIST_METRICS[data.metric_key]["value_type"]
         await db.execute(
             "INSERT INTO integration_config (metric_id, provider, metric_key, value_type) VALUES ($1, $2, $3, $4)",
             metric_id, data.provider, data.metric_key, value_type,
@@ -146,6 +180,16 @@ async def create_metric(
             await db.execute(
                 "INSERT INTO integration_query_config (metric_id, filter_query) VALUES ($1, $2)",
                 metric_id, data.filter_query.strip(),
+            )
+        elif data.metric_key == "category_time":
+            await db.execute(
+                "INSERT INTO integration_category_config (metric_id, category_id) VALUES ($1, $2)",
+                metric_id, data.category_id,
+            )
+        elif data.metric_key == "app_time":
+            await db.execute(
+                "INSERT INTO integration_app_config (metric_id, app_name) VALUES ($1, $2)",
+                metric_id, data.app_name.strip(),
             )
 
     if data.type == MetricType.scale:

@@ -321,6 +321,59 @@ async def init_db():
             )
         """)
 
+        # Extend daily summary with computed fields
+        for col, typedef in [
+            ("first_activity_time", "TIMESTAMPTZ"),
+            ("last_activity_time", "TIMESTAMPTZ"),
+            ("afk_seconds", "INTEGER DEFAULT 0"),
+            ("longest_session_seconds", "INTEGER DEFAULT 0"),
+            ("context_switches", "INTEGER DEFAULT 0"),
+            ("break_count", "INTEGER DEFAULT 0"),
+        ]:
+            await conn.execute(f"""
+                ALTER TABLE activitywatch_daily_summary
+                ADD COLUMN IF NOT EXISTS {col} {typedef}
+            """)
+
+        # ActivityWatch app categories
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS activitywatch_categories (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name VARCHAR(200) NOT NULL,
+                color VARCHAR(7) DEFAULT '#6c5ce7',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(user_id, name)
+            )
+        """)
+
+        # App-to-category mapping
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS activitywatch_app_category_map (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                app_name VARCHAR(500) NOT NULL,
+                category_id INTEGER NOT NULL REFERENCES activitywatch_categories(id) ON DELETE CASCADE,
+                UNIQUE(user_id, app_name)
+            )
+        """)
+
+        # Integration config: category_time metric -> category
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS integration_category_config (
+                metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
+                category_id INTEGER NOT NULL REFERENCES activitywatch_categories(id) ON DELETE CASCADE
+            )
+        """)
+
+        # Integration config: app_time metric -> app_name
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS integration_app_config (
+                metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
+                app_name VARCHAR(500) NOT NULL
+            )
+        """)
+
         # Indexes
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_correlation_reports_user
@@ -354,3 +407,69 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_activitywatch_app_usage_user_date
             ON activitywatch_app_usage(user_id, date)
         """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_activitywatch_categories_user
+            ON activitywatch_categories(user_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_activitywatch_app_category_map_user
+            ON activitywatch_app_category_map(user_id)
+        """)
+
+
+DEFAULT_AW_CATEGORIES = [
+    {
+        "name": "Разработка",
+        "color": "#6c5ce7",
+        "apps": [
+            "PyCharm", "IntelliJ IDEA", "GoLand", "WebStorm", "CLion", "Rider",
+            "VS Code", "Visual Studio Code", "Code",
+            "Xcode", "Terminal", "iTerm2", "Warp",
+        ],
+    },
+    {
+        "name": "Коммуникации",
+        "color": "#00b894",
+        "apps": [
+            "Telegram", "Slack", "Mattermost", "Discord",
+            "Microsoft Teams", "Mail", "Outlook",
+        ],
+    },
+    {
+        "name": "Браузер",
+        "color": "#0984e3",
+        "apps": [
+            "Arc", "Google Chrome", "Firefox", "Safari",
+            "Microsoft Edge", "Brave Browser",
+        ],
+    },
+    {
+        "name": "Встречи",
+        "color": "#e17055",
+        "apps": ["zoom.us", "FaceTime", "Webex"],
+    },
+]
+
+
+async def seed_default_categories(conn, user_id: int):
+    """Create default AW categories + app mappings if user has none."""
+    existing = await conn.fetchval(
+        "SELECT COUNT(*) FROM activitywatch_categories WHERE user_id = $1",
+        user_id,
+    )
+    if existing > 0:
+        return
+
+    for i, cat in enumerate(DEFAULT_AW_CATEGORIES):
+        cat_id = await conn.fetchval(
+            """INSERT INTO activitywatch_categories (user_id, name, color, sort_order)
+               VALUES ($1, $2, $3, $4) RETURNING id""",
+            user_id, cat["name"], cat["color"], i,
+        )
+        for app_name in cat["apps"]:
+            await conn.execute(
+                """INSERT INTO activitywatch_app_category_map (user_id, app_name, category_id)
+                   VALUES ($1, $2, $3)
+                   ON CONFLICT (user_id, app_name) DO NOTHING""",
+                user_id, app_name, cat_id,
+            )

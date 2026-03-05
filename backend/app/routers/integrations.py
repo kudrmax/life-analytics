@@ -5,13 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from jose import jwt, JWTError
 
-from app.database import get_db
+from app.database import get_db, seed_default_categories
 from app.auth import get_current_user, SECRET_KEY, ALGORITHM
 from app.encryption import encrypt_token
 from app.integrations.todoist.client import TodoistClient
 from app.integrations.todoist.registry import TODOIST_METRICS, TODOIST_ICON
 from app.integrations.todoist.service import fetch_and_store
 from app.integrations.activitywatch.service import process_and_store as aw_process_and_store
+from app.integrations.activitywatch.registry import ACTIVITYWATCH_METRICS, ACTIVITYWATCH_ICON
 from app.schemas import AWSyncRequest
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
@@ -176,23 +177,36 @@ async def fetch_integration_data(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    if provider != "todoist":
-        raise HTTPException(400, f"Unknown provider: {provider}")
-
     target_date = date_type.fromisoformat(date) if date else date_type.today()
-    try:
-        result = await fetch_and_store(db, current_user["id"], target_date, metric_id=metric_id)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except Exception as e:
-        raise HTTPException(502, f"Todoist API error: {e}")
 
-    return {
-        "provider": provider,
-        "date": str(target_date),
-        "results": result.get("results", []),
-        "errors": result.get("errors", []),
-    }
+    if provider == "todoist":
+        try:
+            result = await fetch_and_store(db, current_user["id"], target_date, metric_id=metric_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            raise HTTPException(502, f"Todoist API error: {e}")
+        return {
+            "provider": provider,
+            "date": str(target_date),
+            "results": result.get("results", []),
+            "errors": result.get("errors", []),
+        }
+
+    if provider == "activitywatch":
+        from app.integrations.activitywatch.service import compute_integration_metrics
+        try:
+            await compute_integration_metrics(db, current_user["id"], target_date)
+        except Exception as e:
+            raise HTTPException(500, f"AW metrics error: {e}")
+        return {
+            "provider": provider,
+            "date": str(target_date),
+            "results": [{"status": "updated"}],
+            "errors": [],
+        }
+
+    raise HTTPException(400, f"Unknown provider: {provider}")
 
 
 # ─── ActivityWatch ───────────────────────────────────────────────
@@ -227,6 +241,7 @@ async def aw_enable(
            ON CONFLICT (user_id) DO UPDATE SET enabled = TRUE""",
         current_user["id"],
     )
+    await seed_default_categories(db, current_user["id"])
     return {"status": "enabled"}
 
 
@@ -330,3 +345,209 @@ async def aw_trends(
             for r in rows
         ],
     }
+
+
+# ─── ActivityWatch Categories ───────────────────────────────────
+
+
+@router.get("/activitywatch/categories")
+async def aw_list_categories(
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    # Auto-seed categories for users who enabled AW before this feature
+    await seed_default_categories(db, current_user["id"])
+
+    rows = await db.fetch(
+        """SELECT id, name, color, sort_order
+           FROM activitywatch_categories
+           WHERE user_id = $1
+           ORDER BY sort_order, id""",
+        current_user["id"],
+    )
+    return [dict(r) for r in rows]
+
+
+@router.post("/activitywatch/categories", status_code=201)
+async def aw_create_category(
+    body: dict,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name is required")
+    color = body.get("color", "#6c5ce7")
+    max_order = await db.fetchval(
+        "SELECT COALESCE(MAX(sort_order), -1) FROM activitywatch_categories WHERE user_id = $1",
+        current_user["id"],
+    )
+    try:
+        cat_id = await db.fetchval(
+            """INSERT INTO activitywatch_categories (user_id, name, color, sort_order)
+               VALUES ($1, $2, $3, $4) RETURNING id""",
+            current_user["id"], name, color, max_order + 1,
+        )
+    except Exception:
+        raise HTTPException(409, "Category with this name already exists")
+    return {"id": cat_id, "name": name, "color": color, "sort_order": max_order + 1}
+
+
+@router.put("/activitywatch/categories/{cat_id}")
+async def aw_update_category(
+    cat_id: int,
+    body: dict,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    row = await db.fetchrow(
+        "SELECT id FROM activitywatch_categories WHERE id = $1 AND user_id = $2",
+        cat_id, current_user["id"],
+    )
+    if not row:
+        raise HTTPException(404, "Category not found")
+    updates, params = [], []
+    idx = 1
+    if "name" in body:
+        updates.append(f"name = ${idx}")
+        params.append(body["name"].strip())
+        idx += 1
+    if "color" in body:
+        updates.append(f"color = ${idx}")
+        params.append(body["color"])
+        idx += 1
+    if not updates:
+        raise HTTPException(400, "Nothing to update")
+    params.extend([cat_id, current_user["id"]])
+    await db.execute(
+        f"UPDATE activitywatch_categories SET {', '.join(updates)} WHERE id = ${idx} AND user_id = ${idx + 1}",
+        *params,
+    )
+    return {"status": "updated"}
+
+
+@router.delete("/activitywatch/categories/{cat_id}")
+async def aw_delete_category(
+    cat_id: int,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    result = await db.execute(
+        "DELETE FROM activitywatch_categories WHERE id = $1 AND user_id = $2",
+        cat_id, current_user["id"],
+    )
+    if result == "DELETE 0":
+        raise HTTPException(404, "Category not found")
+    return {"status": "deleted"}
+
+
+@router.get("/activitywatch/apps")
+async def aw_list_apps(
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    rows = await db.fetch(
+        """SELECT DISTINCT au.app_name,
+                  acm.category_id,
+                  ac.name AS category_name,
+                  ac.color AS category_color
+           FROM activitywatch_app_usage au
+           LEFT JOIN activitywatch_app_category_map acm
+               ON acm.user_id = au.user_id AND acm.app_name = au.app_name
+           LEFT JOIN activitywatch_categories ac ON ac.id = acm.category_id
+           WHERE au.user_id = $1 AND au.source = 'window'
+           ORDER BY au.app_name""",
+        current_user["id"],
+    )
+    return [
+        {
+            "app_name": r["app_name"],
+            "category_id": r["category_id"],
+            "category_name": r["category_name"],
+            "category_color": r["category_color"],
+        }
+        for r in rows
+    ]
+
+
+@router.put("/activitywatch/apps/{app_name}/category")
+async def aw_set_app_category(
+    app_name: str,
+    body: dict,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    category_id = body.get("category_id")
+    if category_id is None:
+        await db.execute(
+            "DELETE FROM activitywatch_app_category_map WHERE user_id = $1 AND app_name = $2",
+            current_user["id"], app_name,
+        )
+    else:
+        cat = await db.fetchrow(
+            "SELECT id FROM activitywatch_categories WHERE id = $1 AND user_id = $2",
+            category_id, current_user["id"],
+        )
+        if not cat:
+            raise HTTPException(404, "Category not found")
+        await db.execute(
+            """INSERT INTO activitywatch_app_category_map (user_id, app_name, category_id)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (user_id, app_name) DO UPDATE SET category_id = EXCLUDED.category_id""",
+            current_user["id"], app_name, category_id,
+        )
+    return {"status": "updated"}
+
+
+@router.put("/activitywatch/apps/batch-category")
+async def aw_batch_set_category(
+    body: dict,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    app_names = body.get("app_names", [])
+    category_id = body.get("category_id")
+    if not app_names:
+        raise HTTPException(400, "app_names is required")
+    if category_id is not None:
+        cat = await db.fetchrow(
+            "SELECT id FROM activitywatch_categories WHERE id = $1 AND user_id = $2",
+            category_id, current_user["id"],
+        )
+        if not cat:
+            raise HTTPException(404, "Category not found")
+    for app_name in app_names:
+        if category_id is None:
+            await db.execute(
+                "DELETE FROM activitywatch_app_category_map WHERE user_id = $1 AND app_name = $2",
+                current_user["id"], app_name,
+            )
+        else:
+            await db.execute(
+                """INSERT INTO activitywatch_app_category_map (user_id, app_name, category_id)
+                   VALUES ($1, $2, $3)
+                   ON CONFLICT (user_id, app_name) DO UPDATE SET category_id = EXCLUDED.category_id""",
+                current_user["id"], app_name, category_id,
+            )
+    return {"status": "updated", "count": len(app_names)}
+
+
+# ─── ActivityWatch Available Metrics ─────────────────────────────
+
+
+@router.get("/activitywatch/available-metrics")
+async def aw_available_metrics(
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    result = []
+    for key, info in ACTIVITYWATCH_METRICS.items():
+        item = {
+            "key": key,
+            "name": info["name"],
+            "description": info.get("description", ""),
+            "value_type": info["value_type"],
+            "config_fields": info.get("config_fields", []),
+        }
+        result.append(item)
+    return result
