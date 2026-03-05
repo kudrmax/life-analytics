@@ -87,14 +87,14 @@ nav {
     justify-content: space-around;
     max-width: 600px;
     margin: 0 auto;
-    height: 48px;
+    height: 56px;
 }
 
 nav button {
     background: none;
     border: none;
     color: var(--text-dim);
-    padding: 6px 8px 8px;
+    padding: 8px 8px 10px;
     font-size: 10px;
     white-space: nowrap;
     cursor: pointer;
@@ -102,8 +102,8 @@ nav button {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2px;
-    min-height: 48px;
+    gap: 3px;
+    min-height: 56px;
 }
 
 nav button svg { width: 20px; height: 20px; display: block; }
@@ -1410,6 +1410,33 @@ input[type="month"], input[type="date"] {
 }
 .corr-help p {
     margin: 0 0 12px;
+}
+
+@media (max-width: 480px) {
+    .corr-help .corr-pair-row {
+        grid-template-columns: 1fr auto 1fr 3.5rem;
+        padding: 8px 8px;
+        gap: 4px;
+        font-size: 12px;
+    }
+    .corr-help .corr-metric-name {
+        font-size: 12px;
+    }
+    .corr-help .corr-pair-value {
+        font-size: 13px;
+    }
+    .corr-help .metric-icon {
+        font-size: 14px;
+    }
+    .corr-help .corr-pair-hint {
+        font-size: 11px;
+    }
+    .corr-help .corr-info-sub {
+        font-size: 10px;
+    }
+    .corr-help .corr-day-label {
+        font-size: 9px;
+    }
 }
 
 /* ─── Modal ─── */
