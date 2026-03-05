@@ -10,7 +10,6 @@ let currentUser = null;
 let isAuthenticated = false;
 let corrPollInterval = null;
 const corrPairData = new Map();
-let dailySummaryCache = { date: null, data: null };
 
 function todayStr() {
     return new Date().toISOString().slice(0, 10);
@@ -65,11 +64,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (isAuthenticated) {
         const today = todayStr();
-        const [_, summaryData] = await Promise.all([
+        await Promise.all([
             loadMetrics(),
             api.getDailySummary(today),
+            api.cachedGet('/api/metrics'),
+            api.awGetStatus(),
         ]);
-        dailySummaryCache = { date: today, data: summaryData };
         navigateTo('today');
     } else {
         navigateTo('login');
@@ -315,38 +315,23 @@ async function renderTodayForm() {
     }
     const form = document.getElementById('metrics-form');
 
-    let summary, awCard;
-    if (dailySummaryCache.date === currentDate && dailySummaryCache.data) {
-        summary = dailySummaryCache.data;
-        dailySummaryCache = { date: null, data: null };
-        // AW data still needs fetching
-        try {
-            const awStatus = await api.awGetStatus();
-            if (awStatus.enabled) {
-                const awSummary = await api.awGetSummary(currentDate);
-                awCard = _renderAWSummaryCard(awSummary);
-            } else {
-                awCard = '';
-            }
-        } catch (e) { awCard = ''; }
-    } else {
-        if (!form.innerHTML || form.querySelector('.loading-spinner')) {
-            form.innerHTML = '<div class="loading-spinner"></div>';
-        }
-        [summary, awCard] = await Promise.all([
-            api.getDailySummary(currentDate),
-            (async () => {
-                try {
-                    const awStatus = await api.awGetStatus();
-                    if (awStatus.enabled) {
-                        const awSummary = await api.awGetSummary(currentDate);
-                        return _renderAWSummaryCard(awSummary);
-                    }
-                } catch (e) { /* AW not configured — skip */ }
-                return '';
-            })(),
-        ]);
+    if (!form.innerHTML || form.querySelector('.loading-spinner')) {
+        form.innerHTML = '<div class="loading-spinner"></div>';
     }
+    let summary, awCard;
+    [summary, awCard] = await Promise.all([
+        api.getDailySummary(currentDate),
+        (async () => {
+            try {
+                const awStatus = await api.awGetStatus();
+                if (awStatus.enabled) {
+                    const awSummary = await api.awGetSummary(currentDate);
+                    return _renderAWSummaryCard(awSummary);
+                }
+            } catch (e) { /* AW not configured — skip */ }
+            return '';
+        })(),
+    ]);
 
     // Group by category
     const categories = {};
@@ -419,6 +404,14 @@ async function renderTodayForm() {
     const progressFill = document.getElementById('progress-fill');
     progressFill.style.width = `${pct}%`;
     progressFill.classList.toggle('complete', filled === total && total > 0);
+
+    // Preload adjacent days in background
+    const prev = new Date(currentDate);
+    prev.setDate(prev.getDate() - 1);
+    api.getDailySummary(prev.toISOString().slice(0, 10));
+    const next = new Date(currentDate);
+    next.setDate(next.getDate() + 1);
+    api.getDailySummary(next.toISOString().slice(0, 10));
 }
 
 function renderMetricInput(m) {
@@ -1851,7 +1844,7 @@ function renderDetailStats(stats, metricType) {
 // ─── Settings Page ───
 async function renderSettings(container, { archiveOpen = false, openAddModal = false } = {}) {
     container.innerHTML = '<div class="loading-spinner"></div>';
-    const allMetrics = await api.getMetrics(false);
+    const allMetrics = await api.cachedGet('/api/metrics');
     let html = '<div class="settings-header">';
     html += `<div class="user-info"><i data-lucide="user"></i><span>${localStorage.getItem('la_username') || 'Unknown'}</span></div>`;
     html += '<button class="btn-small btn-logout" id="logout-btn"><i data-lucide="log-out"></i><span>Выйти</span></button>';
