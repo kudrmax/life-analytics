@@ -711,6 +711,21 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 sources.append((None, None, "number", cal_name))
                 auto_info[idx] = (cal_type, None)
 
+            # ActivityWatch screen time auto source
+            aw_rows = await conn.fetch(
+                """SELECT date, active_seconds FROM activitywatch_daily_summary
+                   WHERE user_id = $1 AND date >= $2 AND date <= $3""",
+                user_id, start_date, end_date,
+            )
+            if aw_rows:
+                idx = len(sources)
+                sources.append((None, None, "number", "Экранное время (активное)"))
+                auto_info[idx] = ("aw_active", None)
+                source_data[idx] = {
+                    str(r["date"]): r["active_seconds"] / 3600.0
+                    for r in aw_rows
+                }
+
             # Compute auto source data
             all_dates = [str(start_date + timedelta(days=i)) for i in range((end_date - start_date).days + 1)]
 

@@ -115,3 +115,17 @@ class UserOut(BaseModel):
     id: int
     username: str
     created_at: str
+
+
+# ActivityWatch schemas
+class AWEvent(BaseModel):
+    timestamp: str
+    duration: float
+    data: dict
+
+
+class AWSyncRequest(BaseModel):
+    date: str  # YYYY-MM-DD
+    window_events: list[AWEvent]
+    afk_events: list[AWEvent]
+    web_events: list[AWEvent] | None = None

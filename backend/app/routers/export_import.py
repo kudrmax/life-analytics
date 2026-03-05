@@ -133,6 +133,32 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
 
         zip_file.writestr('entries.csv', entries_csv.getvalue())
 
+        # Export ActivityWatch daily summary
+        aw_daily_rows = await db.fetch(
+            "SELECT date, total_seconds, active_seconds FROM activitywatch_daily_summary WHERE user_id = $1 ORDER BY date",
+            current_user["id"],
+        )
+        if aw_daily_rows:
+            aw_daily_csv = StringIO()
+            aw_daily_writer = csv.writer(aw_daily_csv)
+            aw_daily_writer.writerow(['date', 'total_seconds', 'active_seconds'])
+            for r in aw_daily_rows:
+                aw_daily_writer.writerow([str(r["date"]), r["total_seconds"], r["active_seconds"]])
+            zip_file.writestr('aw_daily.csv', aw_daily_csv.getvalue())
+
+        # Export ActivityWatch app usage
+        aw_app_rows = await db.fetch(
+            "SELECT date, app_name, source, duration_seconds FROM activitywatch_app_usage WHERE user_id = $1 ORDER BY date, duration_seconds DESC",
+            current_user["id"],
+        )
+        if aw_app_rows:
+            aw_apps_csv = StringIO()
+            aw_apps_writer = csv.writer(aw_apps_csv)
+            aw_apps_writer.writerow(['date', 'app_name', 'source', 'duration_seconds'])
+            for r in aw_app_rows:
+                aw_apps_writer.writerow([str(r["date"]), r["app_name"], r["source"], r["duration_seconds"]])
+            zip_file.writestr('aw_apps.csv', aw_apps_csv.getvalue())
+
     zip_buffer.seek(0)
     filename = f"life_analytics_{current_user['username']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
 
@@ -469,6 +495,31 @@ async def import_data(
                 except Exception as e:
                     entries_errors.append(f"Row {row_num}: {str(e)}")
                     entries_skipped += 1
+
+            # Import ActivityWatch data (optional CSVs)
+            if 'aw_daily.csv' in zip_file.namelist():
+                aw_daily_text = zip_file.read('aw_daily.csv').decode('utf-8')
+                for row in csv.DictReader(StringIO(aw_daily_text)):
+                    d = date_type.fromisoformat(row['date'])
+                    await db.execute(
+                        """INSERT INTO activitywatch_daily_summary (user_id, date, total_seconds, active_seconds)
+                           VALUES ($1, $2, $3, $4)
+                           ON CONFLICT (user_id, date) DO UPDATE
+                           SET total_seconds = EXCLUDED.total_seconds, active_seconds = EXCLUDED.active_seconds""",
+                        current_user["id"], d, int(row['total_seconds']), int(row['active_seconds']),
+                    )
+
+            if 'aw_apps.csv' in zip_file.namelist():
+                aw_apps_text = zip_file.read('aw_apps.csv').decode('utf-8')
+                for row in csv.DictReader(StringIO(aw_apps_text)):
+                    d = date_type.fromisoformat(row['date'])
+                    await db.execute(
+                        """INSERT INTO activitywatch_app_usage (user_id, date, app_name, source, duration_seconds)
+                           VALUES ($1, $2, $3, $4, $5)
+                           ON CONFLICT (user_id, date, app_name, source) DO UPDATE
+                           SET duration_seconds = EXCLUDED.duration_seconds""",
+                        current_user["id"], d, row['app_name'], row.get('source', 'window'), int(row['duration_seconds']),
+                    )
 
     except zipfile.BadZipFile:
         raise HTTPException(400, "Invalid ZIP file")

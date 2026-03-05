@@ -2260,3 +2260,89 @@ emoji-picker {
     opacity: 0.9;
 }
 
+/* ═══════════════════════════════════════════════════════ */
+/* ActivityWatch */
+/* ═══════════════════════════════════════════════════════ */
+.aw-section { margin-top: 16px; }
+
+.aw-summary-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+}
+.aw-summary-card.filled { border-color: #6c5ce7; }
+
+.aw-summary-stats {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 12px;
+}
+.aw-stat-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text);
+}
+.aw-stat-label {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+}
+
+.aw-top-apps { margin: 8px 0 12px; }
+
+.aw-app-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 0.85rem;
+}
+.aw-app-name {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+}
+.aw-app-dur {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+.aw-app-bar {
+    width: 60px;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+.aw-app-bar-fill {
+    height: 100%;
+    background: #6c5ce7;
+    border-radius: 2px;
+}
+
+.aw-empty {
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    padding: 8px 0;
+}
+.aw-sync-btn { margin-top: 8px; }
+
+.aw-connection-check {
+    margin-top: 8px;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.aw-trend-card { border-left: 3px solid #6c5ce7; }
+
+.integration-note {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-top: 6px;
+}
+.integration-note a { color: var(--accent); }
+

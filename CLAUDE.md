@@ -75,6 +75,9 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `integration_config` — metric_id (PK/FK), provider (VARCHAR), metric_key (VARCHAR), value_type (VARCHAR)
 - `integration_filter_config` — metric_id (PK/FK), filter_name VARCHAR(200) — config for filter_tasks_count metrics
 - `integration_query_config` — metric_id (PK/FK), filter_query VARCHAR(1024) — config for query_tasks_count metrics
+- `activitywatch_settings` — user_id (PK/FK), enabled, aw_url, created_at
+- `activitywatch_daily_summary` — id, user_id (FK), date, total_seconds, active_seconds, synced_at; UNIQUE(user_id, date)
+- `activitywatch_app_usage` — id, user_id (FK), date, app_name, source ('window'|'web'), duration_seconds; UNIQUE(user_id, date, app_name, source)
 
 **Entry uniqueness (partial indexes):** Metrics without slots: `UNIQUE(metric_id, user_id, date) WHERE slot_id IS NULL`. Metrics with slots: `UNIQUE(metric_id, user_id, date, slot_id) WHERE slot_id IS NOT NULL`.
 
@@ -163,6 +166,16 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 - Integration metrics store values in values_* table per value_type, display as read-only with fetch button on frontend
 - Env vars: `TODOIST_CLIENT_ID`, `TODOIST_CLIENT_SECRET`
 
+**Integration pattern (ActivityWatch):**
+- No OAuth — AW runs locally on user's machine (localhost:5600), no token needed
+- Frontend acts as bridge: fetches raw events from AW on localhost, sends to backend
+- Architecture: `frontend/js/aw-client.js` (local AW API client) → `routers/integrations.py` (receives raw events) → `integrations/activitywatch/service.py` (processes events, computes active time, stores aggregates)
+- Dedicated tables (not metrics): `activitywatch_settings`, `activitywatch_daily_summary`, `activitywatch_app_usage`
+- Processing: intersects window events with not-afk intervals to compute active time per app; extracts domains from web events
+- Endpoints: `POST .../activitywatch/sync`, `GET .../activitywatch/summary`, `GET .../activitywatch/trends`, `GET .../activitywatch/status`, `POST .../activitywatch/enable`, `DELETE .../activitywatch/disable`
+- Correlation: auto-source "Экранное время (активное)" in `_compute_report` reads from `activitywatch_daily_summary`
+- Export/Import: `aw_daily.csv` + `aw_apps.csv` in ZIP (optional files)
+
 **Analytics endpoints:**
 - `GET /api/analytics/trends` — тренды метрик за период
 - `GET /api/analytics/metric-stats` — статистика по метрике (streaks, avg, min/max)
@@ -178,7 +191,7 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 
 **Data isolation:** All queries filter by `current_user["id"]`. Return 404 (not 403) on unauthorized access.
 
-**Schema changes:** Update DDL in `database.py` `init_db()`. For new enum values, use `ALTER TYPE ... ADD VALUE IF NOT EXISTS` (safe for existing DBs). For new tables, use `CREATE TABLE IF NOT EXISTS`. Destructive changes require dropping and recreating the database.
+**Schema changes:** Update DDL in `database.py` `init_db()`. For new enum values, use `ALTER TYPE ... ADD VALUE IF NOT EXISTS` (safe for existing DBs). For new tables, use `CREATE TABLE IF NOT EXISTS`. Destructive changes require dropping and recreating the database. **Always update `db_schema.puml`** (PlantUML ER-diagram in project root) to reflect any table/column/relationship changes.
 
 **Metric queries with config:** Routers that list/return metrics use LEFT JOIN to include type-specific config (e.g. `LEFT JOIN scale_config sc ON sc.metric_id = md.id`). The `build_metric_out` helper uses `.get()` for config fields since they may be NULL for non-matching types.
 

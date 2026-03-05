@@ -285,6 +285,42 @@ async def init_db():
             )
         """)
 
+        # ActivityWatch settings
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS activitywatch_settings (
+                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                aw_url VARCHAR(500) NOT NULL DEFAULT 'http://localhost:5600',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+
+        # ActivityWatch daily summary
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS activitywatch_daily_summary (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                date DATE NOT NULL,
+                total_seconds INTEGER NOT NULL DEFAULT 0,
+                active_seconds INTEGER NOT NULL DEFAULT 0,
+                synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE(user_id, date)
+            )
+        """)
+
+        # ActivityWatch per-app/domain usage (aggregated per day)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS activitywatch_app_usage (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                date DATE NOT NULL,
+                app_name VARCHAR(500) NOT NULL,
+                source VARCHAR(20) NOT NULL DEFAULT 'window',
+                duration_seconds INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(user_id, date, app_name, source)
+            )
+        """)
+
         # Indexes
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_correlation_reports_user
@@ -309,4 +345,12 @@ async def init_db():
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_entries_metric_date
             ON entries(metric_id, date)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_activitywatch_daily_summary_user_date
+            ON activitywatch_daily_summary(user_id, date)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_activitywatch_app_usage_user_date
+            ON activitywatch_app_usage(user_id, date)
         """)

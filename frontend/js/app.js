@@ -1,5 +1,6 @@
 // ─── Constants ───
 const TODOIST_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><rect width="24" height="24" rx="4" fill="#e44332"/><path d="M6 8.5l3.5 2 5-3 3.5 2" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M6 12.5l3.5 2 5-3 3.5 2" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M6 16.5l3.5 2 5-3 3.5 2" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
+const AW_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><rect width="24" height="24" rx="4" fill="#6c5ce7"/><circle cx="12" cy="12" r="6" stroke="#fff" stroke-width="1.5" fill="none"/><circle cx="12" cy="12" r="2" fill="#fff"/><line x1="12" y1="6" x2="12" y2="8" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="16" x2="12" y2="18" stroke="#fff" stroke-width="1.5"/><line x1="6" y1="12" x2="8" y2="12" stroke="#fff" stroke-width="1.5"/><line x1="16" y1="12" x2="18" y2="12" stroke="#fff" stroke-width="1.5"/></svg>';
 
 // ─── State ───
 let currentDate = todayStr();
@@ -357,6 +358,15 @@ async function renderTodayForm() {
         html += '</div>';
     }
 
+    // ActivityWatch summary card
+    try {
+        const awStatus = await api.awGetStatus();
+        if (awStatus.enabled) {
+            const awSummary = await api.awGetSummary(currentDate);
+            html += _renderAWSummaryCard(awSummary);
+        }
+    } catch (e) { /* AW not configured — skip */ }
+
     form.innerHTML = html;
     attachInputHandlers();
 
@@ -587,6 +597,81 @@ async function handleNumberChange(e) {
     } catch (error) { alert('Ошибка: ' + error.message); }
 }
 
+// ─── ActivityWatch UI helpers ───
+
+function _awFormatDuration(seconds) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h > 0) return `${h}ч ${m}м`;
+    return `${m}м`;
+}
+
+function _escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function _renderAWSummaryCard(awSummary) {
+    let html = '<div class="aw-section">';
+    html += `<h3 class="category-title"><span class="metric-icon">${AW_ICON}</span> Экранное время</h3>`;
+
+    if (awSummary.synced) {
+        const activeTime = _awFormatDuration(awSummary.active_seconds);
+        const totalTime = _awFormatDuration(awSummary.total_seconds);
+        const afkPct = awSummary.total_seconds > 0
+            ? Math.round((1 - awSummary.active_seconds / awSummary.total_seconds) * 100)
+            : 0;
+
+        html += `<div class="aw-summary-card filled">
+            <div class="aw-summary-stats">
+                <div class="aw-stat"><div class="aw-stat-value">${activeTime}</div><div class="aw-stat-label">активное</div></div>
+                <div class="aw-stat"><div class="aw-stat-value">${totalTime}</div><div class="aw-stat-label">всего</div></div>
+                <div class="aw-stat"><div class="aw-stat-value">${afkPct}%</div><div class="aw-stat-label">AFK</div></div>
+            </div>`;
+
+        const topApps = (awSummary.apps || []).slice(0, 7);
+        if (topApps.length > 0) {
+            html += '<div class="aw-top-apps">';
+            for (const app of topApps) {
+                const pct = awSummary.active_seconds > 0
+                    ? Math.round(app.duration_seconds / awSummary.active_seconds * 100) : 0;
+                html += `<div class="aw-app-row">
+                    <span class="aw-app-name">${_escapeHtml(app.app_name)}</span>
+                    <span class="aw-app-dur">${_awFormatDuration(app.duration_seconds)}</span>
+                    <div class="aw-app-bar"><div class="aw-app-bar-fill" style="width:${pct}%"></div></div>
+                </div>`;
+            }
+            html += '</div>';
+        }
+
+        const topDomains = (awSummary.domains || []).slice(0, 5);
+        if (topDomains.length > 0) {
+            html += '<div class="aw-top-apps" style="margin-top:8px"><div class="aw-stat-label" style="margin-bottom:4px">Сайты</div>';
+            for (const d of topDomains) {
+                const pct = awSummary.active_seconds > 0
+                    ? Math.round(d.duration_seconds / awSummary.active_seconds * 100) : 0;
+                html += `<div class="aw-app-row">
+                    <span class="aw-app-name">${_escapeHtml(d.domain)}</span>
+                    <span class="aw-app-dur">${_awFormatDuration(d.duration_seconds)}</span>
+                    <div class="aw-app-bar"><div class="aw-app-bar-fill" style="width:${pct}%"></div></div>
+                </div>`;
+            }
+            html += '</div>';
+        }
+
+        html += `<button class="btn-small btn-fetch aw-sync-btn" data-action="aw-sync">Обновить</button>`;
+        html += '</div>';
+    } else {
+        html += `<div class="aw-summary-card">
+            <div class="aw-empty">Нет данных за этот день</div>
+            <button class="btn-small btn-fetch aw-sync-btn" data-action="aw-sync">Синхронизировать</button>
+        </div>`;
+    }
+    html += '</div>';
+    return html;
+}
+
 function attachInputHandlers() {
     const form = document.getElementById('metrics-form');
     if (form.dataset.handlersAttached) return;
@@ -597,6 +682,31 @@ function attachInputHandlers() {
 
 async function handleFormClick(e) {
     const btn = e.target;
+
+    // ActivityWatch sync
+    if (btn.dataset.action === 'aw-sync') {
+        btn.disabled = true;
+        const origText = btn.textContent;
+        btn.textContent = 'Загрузка...';
+        try {
+            const awAvailable = await awClient.checkAvailable();
+            if (!awAvailable) {
+                alert('ActivityWatch не обнаружен. Убедитесь, что он запущен на вашем компьютере.');
+                btn.disabled = false;
+                btn.textContent = origText;
+                return;
+            }
+            const { windowEvents, afkEvents, webEvents } = await awClient.fetchDayEvents(currentDate);
+            await api.awSync(currentDate, windowEvents, afkEvents, webEvents);
+            await renderTodayForm();
+        } catch (error) {
+            alert('Ошибка синхронизации ActivityWatch: ' + error.message);
+            btn.disabled = false;
+            btn.textContent = origText;
+        }
+        return;
+    }
+
     const card = btn.closest('.metric-card');
     if (!card) return;
 
@@ -933,6 +1043,25 @@ async function loadDashboard(start, end) {
             </div>`;
         }
     }
+
+    // ActivityWatch trend
+    let awTrendPoints = null;
+    try {
+        const awStatus = await api.awGetStatus();
+        if (awStatus.enabled) {
+            const awTrends = await api.awGetTrends(start, end);
+            if (awTrends.points && awTrends.points.length > 0) {
+                awTrendPoints = awTrends.points;
+                trendsHtml += `<div class="trend-card-row aw-trend-card">
+                    <div class="trend-card-header">
+                        <h4><span class="metric-icon">${AW_ICON}</span> Экранное время</h4>
+                    </div>
+                    <div class="trend-chart-container"><canvas id="trend-chart-aw"></canvas></div>
+                </div>`;
+            }
+        }
+    } catch (e) { /* AW not configured */ }
+
     trendsHtml += '</div>';
     trendsEl.innerHTML = trendsHtml;
 
@@ -949,6 +1078,33 @@ async function loadDashboard(start, end) {
         const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type;
         const config = buildChartConfig(points, mt, colors, { compact: true });
         trendChartInstances.push(new Chart(canvas.getContext('2d'), config));
+    }
+
+    // AW trend chart
+    if (awTrendPoints) {
+        const awCanvas = document.getElementById('trend-chart-aw');
+        if (awCanvas) {
+            const labels = awTrendPoints.map(p => p.date.slice(5));
+            const activeData = awTrendPoints.map(p => p.active_hours);
+            const afkData = awTrendPoints.map((p, i) => Math.max(0, p.total_hours - activeData[i]));
+            const chart = new Chart(awCanvas.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: 'Активное', data: activeData, backgroundColor: colors.accent + '99', borderRadius: 4 },
+                        { label: 'AFK', data: afkData, backgroundColor: colors.red + '44', borderRadius: 4 },
+                    ],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: { x: { stacked: true, display: false }, y: { stacked: true, display: false } },
+                    plugins: { legend: { display: false } },
+                },
+            });
+            trendChartInstances.push(chart);
+        }
     }
 
     if (window.lucide) lucide.createIcons({ nameAttr: 'data-lucide' });
@@ -1841,17 +1997,48 @@ async function _loadIntegrationsSection() {
             return;
         }
 
-        const todoist = integrations.find(i => i.provider === 'todoist');
-        if (!todoist) return;
+        let html = '';
 
-        if (todoist.enabled) {
-            listEl.innerHTML = `
-                <div class="integration-status">
+        // Todoist
+        const todoist = integrations.find(i => i.provider === 'todoist');
+        if (todoist) {
+            if (todoist.enabled) {
+                html += `<div class="integration-status">
                     <span class="integration-provider"><i data-lucide="check-circle"></i> Todoist подключён</span>
                     <button class="btn-small btn-danger" id="disconnect-todoist"><i data-lucide="unplug"></i> Отключить</button>
                 </div>`;
-            if (window.lucide) lucide.createIcons();
-            document.getElementById('disconnect-todoist').addEventListener('click', async () => {
+            } else {
+                html += `<div class="integration-status">
+                    <span class="integration-provider">Todoist</span>
+                    <button class="btn-primary btn-small" id="connect-todoist"><i data-lucide="plug"></i> Подключить</button>
+                </div>`;
+            }
+        }
+
+        // ActivityWatch
+        const aw = integrations.find(i => i.provider === 'activitywatch');
+        if (aw) {
+            if (aw.enabled) {
+                html += `<div class="integration-status">
+                    <span class="integration-provider"><i data-lucide="check-circle"></i> ActivityWatch подключён</span>
+                    <button class="btn-small btn-danger" id="disconnect-aw"><i data-lucide="unplug"></i> Отключить</button>
+                </div>
+                <div id="aw-connection-check" class="aw-connection-check"><span class="text-dim">Проверяю доступность...</span></div>`;
+            } else {
+                html += `<div class="integration-status">
+                    <span class="integration-provider"><span class="metric-icon">${AW_ICON}</span> ActivityWatch</span>
+                    <button class="btn-primary btn-small" id="connect-aw"><i data-lucide="plug"></i> Подключить</button>
+                </div>
+                <div class="integration-note">Экранное время с вашего компьютера. Требуется <a href="https://activitywatch.net/" target="_blank">ActivityWatch</a>.</div>`;
+            }
+        }
+
+        listEl.innerHTML = html;
+        if (window.lucide) lucide.createIcons();
+
+        // Todoist handlers
+        if (todoist && todoist.enabled) {
+            document.getElementById('disconnect-todoist')?.addEventListener('click', async () => {
                 if (!confirm('Отключить Todoist? Метрика будет архивирована, данные сохранятся.')) return;
                 try {
                     await api.disconnectIntegration('todoist');
@@ -1859,18 +2046,37 @@ async function _loadIntegrationsSection() {
                     navigateTo('settings');
                 } catch (error) { alert('Ошибка: ' + error.message); }
             });
-        } else {
-            listEl.innerHTML = `
-                <div class="integration-status">
-                    <span class="integration-provider">Todoist</span>
-                    <button class="btn-primary btn-small" id="connect-todoist"><i data-lucide="plug"></i> Подключить</button>
-                </div>`;
-            if (window.lucide) lucide.createIcons();
-            document.getElementById('connect-todoist').addEventListener('click', async () => {
+        } else if (todoist) {
+            document.getElementById('connect-todoist')?.addEventListener('click', async () => {
                 try {
                     const { url } = await api.getTodoistAuthUrl();
                     window.location.href = url;
                 } catch (error) { alert('Ошибка: ' + error.message); }
+            });
+        }
+
+        // ActivityWatch handlers
+        if (aw && aw.enabled) {
+            document.getElementById('disconnect-aw')?.addEventListener('click', async () => {
+                if (!confirm('Отключить ActivityWatch? Данные сохранятся.')) return;
+                try {
+                    await api.awDisable();
+                    navigateTo('settings');
+                } catch (error) { alert('Ошибка: ' + error.message); }
+            });
+            // Check AW availability
+            const checkEl = document.getElementById('aw-connection-check');
+            if (checkEl) {
+                const available = await awClient.checkAvailable();
+                checkEl.innerHTML = available
+                    ? '<span style="color:var(--green)"><i data-lucide="wifi"></i> ActivityWatch доступен</span>'
+                    : '<span style="color:var(--red)"><i data-lucide="wifi-off"></i> ActivityWatch недоступен — убедитесь, что он запущен</span>';
+                if (window.lucide) lucide.createIcons();
+            }
+        } else if (aw) {
+            document.getElementById('connect-aw')?.addEventListener('click', async () => {
+                await api.awEnable();
+                navigateTo('settings');
             });
         }
     } catch (error) {

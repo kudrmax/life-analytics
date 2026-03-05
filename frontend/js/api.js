@@ -145,4 +145,26 @@ const api = {
     getTodoistAvailableMetrics() {
         return this.request('GET', '/api/integrations/todoist/available-metrics');
     },
+
+    // ActivityWatch
+    awGetStatus() {
+        return this.request('GET', '/api/integrations/activitywatch/status');
+    },
+    awEnable() {
+        return this.request('POST', '/api/integrations/activitywatch/enable');
+    },
+    awDisable() {
+        return this.request('DELETE', '/api/integrations/activitywatch/disable');
+    },
+    awSync(date, windowEvents, afkEvents, webEvents = null) {
+        const body = { date, window_events: windowEvents, afk_events: afkEvents };
+        if (webEvents) body.web_events = webEvents;
+        return this.request('POST', '/api/integrations/activitywatch/sync', body);
+    },
+    awGetSummary(date) {
+        return this.request('GET', `/api/integrations/activitywatch/summary?date=${date}`);
+    },
+    awGetTrends(start, end) {
+        return this.request('GET', `/api/integrations/activitywatch/trends?start=${start}&end=${end}`);
+    },
 };
