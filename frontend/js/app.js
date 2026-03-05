@@ -28,19 +28,16 @@ function initTheme() {
 function applyTheme(theme) {
     if (theme === 'light') {
         document.documentElement.setAttribute('data-theme', 'light');
-        updateThemeIcon('☀️');
     } else {
         document.documentElement.removeAttribute('data-theme');
-        updateThemeIcon('🌙');
     }
     localStorage.setItem(THEME_KEY, theme);
-}
-
-function updateThemeIcon(icon) {
-    const themeIcon = document.querySelector('.theme-icon');
-    if (themeIcon) {
-        themeIcon.textContent = icon;
-    }
+    const toggle = document.getElementById('theme-switch-input');
+    if (toggle) toggle.checked = (theme === 'light');
+    const label = document.getElementById('theme-label');
+    if (label) label.textContent = theme === 'light' ? 'Светлая тема' : 'Тёмная тема';
+    const icon = document.getElementById('theme-icon-emoji');
+    if (icon) icon.textContent = theme === 'light' ? '☀️' : '🌙';
 }
 
 function toggleTheme() {
@@ -49,17 +46,9 @@ function toggleTheme() {
     applyTheme(newTheme);
 }
 
-function setupThemeToggle() {
-    const themeToggle = document.getElementById('theme-toggle');
-    if (themeToggle) {
-        themeToggle.addEventListener('click', toggleTheme);
-    }
-}
-
 // ─── Init ───
 document.addEventListener('DOMContentLoaded', async () => {
     initTheme();
-    setupThemeToggle();
     setupNav();
     if (window.lucide) lucide.createIcons();
     await checkAuth();
@@ -1193,7 +1182,7 @@ async function loadDashboard(start, end) {
             trendData.push({ metric: m, points: trend.points });
             trendsHtml += `<div class="trend-card-row" data-metric-id="${m.id}" style="cursor:pointer">
                 <div class="trend-card-header">
-                    <h4>${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</h4>
+                    <h4>${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}<span class="trend-metric-name">${m.name}</span></h4>
                     <i data-lucide="info" class="trend-info-icon"></i>
                 </div>
                 <div class="trend-chart-container"><canvas id="trend-chart-${m.id}"></canvas></div>
@@ -1204,7 +1193,7 @@ async function loadDashboard(start, end) {
     if (awTrendPoints) {
         trendsHtml += `<div class="trend-card-row aw-trend-card">
             <div class="trend-card-header">
-                <h4><span class="metric-icon">${AW_ICON}</span> Экранное время</h4>
+                <h4><span class="metric-icon">${AW_ICON}</span><span class="trend-metric-name">Экранное время</span></h4>
             </div>
             <div class="trend-chart-container"><canvas id="trend-chart-aw"></canvas></div>
         </div>`;
@@ -1899,6 +1888,14 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     html += `<div class="user-info"><i data-lucide="user"></i><span>${localStorage.getItem('la_username') || 'Unknown'}</span></div>`;
     html += '<button class="btn-small btn-logout" id="logout-btn"><i data-lucide="log-out"></i><span>Выйти</span></button>';
     html += '</div>';
+
+    const currentTheme = localStorage.getItem(THEME_KEY) || 'dark';
+    const isLight = currentTheme === 'light';
+    html += '<div class="theme-row">';
+    html += `<span class="theme-row-label"><span id="theme-icon-emoji">${isLight ? '☀️' : '🌙'}</span> <span id="theme-label">${isLight ? 'Светлая тема' : 'Тёмная тема'}</span></span>`;
+    html += `<label class="theme-switch"><input type="checkbox" id="theme-switch-input" ${isLight ? 'checked' : ''}><span class="slider"></span></label>`;
+    html += '</div>';
+
     html += '<h2>Настройки метрик</h2>';
     html += '<div class="settings-actions">';
     html += '<button class="btn-primary" id="add-metric"><i data-lucide="plus"></i> Новая метрика</button>';
@@ -1978,6 +1975,12 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
 
     container.innerHTML = html;
     if (window.lucide) lucide.createIcons();
+
+    // Theme toggle
+    const themeSwitch = document.getElementById('theme-switch-input');
+    if (themeSwitch) {
+        themeSwitch.addEventListener('change', toggleTheme);
+    }
 
     // Load integrations status
     _loadIntegrationsSection();
