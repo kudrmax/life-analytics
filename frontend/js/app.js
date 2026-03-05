@@ -1,6 +1,6 @@
 // ─── Constants ───
-const TODOIST_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><rect width="24" height="24" rx="4" fill="#e44332"/><path d="M6 8.5l3.5 2 5-3 3.5 2" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M6 12.5l3.5 2 5-3 3.5 2" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M6 16.5l3.5 2 5-3 3.5 2" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
-const AW_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><rect width="24" height="24" rx="4" fill="#6c5ce7"/><circle cx="12" cy="12" r="6" stroke="#fff" stroke-width="1.5" fill="none"/><circle cx="12" cy="12" r="2" fill="#fff"/><line x1="12" y1="6" x2="12" y2="8" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="16" x2="12" y2="18" stroke="#fff" stroke-width="1.5"/><line x1="6" y1="12" x2="8" y2="12" stroke="#fff" stroke-width="1.5"/><line x1="16" y1="12" x2="18" y2="12" stroke="#fff" stroke-width="1.5"/></svg>';
+const TODOIST_ICON = '<svg viewBox="0 0 512 512" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><rect width="512" height="512" rx="100" fill="#e44332"/><path d="M130 182l60 35 132-77 60 35" stroke="#fff" stroke-width="38" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M130 256l60 35 132-77 60 35" stroke="#fff" stroke-width="38" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M130 330l60 35 132-77 60 35" stroke="#fff" stroke-width="38" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
+const AW_ICON = '<svg viewBox="0 0 100 100" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="48" fill="#6c5ce7"/><circle cx="50" cy="50" r="30" stroke="#fff" stroke-width="5" fill="none"/><path d="M50 28v22l16 10" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
 
 // ─── State ───
 let currentDate = todayStr();
@@ -1772,7 +1772,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                 : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
-                : m.type === 'integration' ? '<span class="metric-icon">' + TODOIST_ICON + '</span> Todoist'
+                : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
             html += `<div class="setting-row">
                 <div class="setting-info">
@@ -2003,14 +2003,18 @@ async function _loadIntegrationsSection() {
         const todoist = integrations.find(i => i.provider === 'todoist');
         if (todoist) {
             if (todoist.enabled) {
-                html += `<div class="integration-status">
-                    <span class="integration-provider"><i data-lucide="check-circle"></i> Todoist подключён</span>
-                    <button class="btn-small btn-danger" id="disconnect-todoist"><i data-lucide="unplug"></i> Отключить</button>
+                html += `<div class="integration-card">
+                    <div class="integration-status">
+                        <span class="integration-provider"><span class="metric-icon">${TODOIST_ICON}</span> Todoist подключён</span>
+                        <button class="btn-small btn-danger" id="disconnect-todoist"><i data-lucide="unplug"></i> Отключить</button>
+                    </div>
                 </div>`;
             } else {
-                html += `<div class="integration-status">
-                    <span class="integration-provider">Todoist</span>
-                    <button class="btn-primary btn-small" id="connect-todoist"><i data-lucide="plug"></i> Подключить</button>
+                html += `<div class="integration-card">
+                    <div class="integration-status">
+                        <span class="integration-provider"><span class="metric-icon">${TODOIST_ICON}</span> Todoist</span>
+                        <button class="btn-primary btn-small" id="connect-todoist"><i data-lucide="plug"></i> Подключить</button>
+                    </div>
                 </div>`;
             }
         }
@@ -2019,24 +2023,28 @@ async function _loadIntegrationsSection() {
         const aw = integrations.find(i => i.provider === 'activitywatch');
         if (aw) {
             if (aw.enabled) {
-                html += `<div class="integration-status">
-                    <span class="integration-provider"><i data-lucide="check-circle"></i> ActivityWatch подключён</span>
-                    <button class="btn-small btn-danger" id="disconnect-aw"><i data-lucide="unplug"></i> Отключить</button>
-                </div>
-                <div id="aw-connection-check" class="aw-connection-check"><span class="text-dim">Проверяю доступность...</span></div>
-                <div id="aw-categories-section" class="aw-categories-section">
-                    <div class="aw-categories-header">
-                        <span class="label-text">Категории приложений</span>
-                        <button class="btn-small" id="aw-add-category"><i data-lucide="plus"></i> Категория</button>
+                html += `<div class="integration-card">
+                    <div class="integration-status">
+                        <span class="integration-provider"><span class="metric-icon">${AW_ICON}</span> ActivityWatch подключён</span>
+                        <button class="btn-small btn-danger" id="disconnect-aw"><i data-lucide="unplug"></i> Отключить</button>
                     </div>
-                    <div id="aw-categories-list" class="aw-categories-list"><span class="text-dim">Загрузка...</span></div>
+                    <div id="aw-connection-check" class="aw-connection-check"><span class="text-dim">Проверяю доступность...</span></div>
+                    <div id="aw-categories-section" class="aw-categories-section">
+                        <div class="aw-categories-header">
+                            <span class="label-text">Категории приложений</span>
+                            <button class="btn-small" id="aw-add-category"><i data-lucide="plus"></i> Категория</button>
+                        </div>
+                        <div id="aw-categories-list" class="aw-categories-list"><span class="text-dim">Загрузка...</span></div>
+                    </div>
                 </div>`;
             } else {
-                html += `<div class="integration-status">
-                    <span class="integration-provider"><span class="metric-icon">${AW_ICON}</span> ActivityWatch</span>
-                    <button class="btn-primary btn-small" id="connect-aw"><i data-lucide="plug"></i> Подключить</button>
-                </div>
-                <div class="integration-note">Экранное время с вашего компьютера. Требуется <a href="https://activitywatch.net/" target="_blank">ActivityWatch</a>.</div>`;
+                html += `<div class="integration-card">
+                    <div class="integration-status">
+                        <span class="integration-provider"><span class="metric-icon">${AW_ICON}</span> ActivityWatch</span>
+                        <button class="btn-primary btn-small" id="connect-aw"><i data-lucide="plug"></i> Подключить</button>
+                    </div>
+                    <div class="integration-note">Экранное время с вашего компьютера. Требуется <a href="https://activitywatch.net/" target="_blank">ActivityWatch</a>.</div>
+                </div>`;
             }
         }
 

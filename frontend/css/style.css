@@ -2235,14 +2235,18 @@ emoji-picker {
     margin-bottom: 12px;
 }
 
+.integration-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+}
+
 .integration-status {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 16px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
 }
 
 .integration-provider {
@@ -2271,7 +2275,7 @@ emoji-picker {
     border-radius: 12px;
     padding: 16px;
 }
-.aw-summary-card.filled { border-color: #6c5ce7; }
+.aw-summary-card.filled { border-color: var(--border); }
 
 .aw-summary-stats {
     display: flex;
@@ -2318,7 +2322,7 @@ emoji-picker {
 }
 .aw-app-bar-fill {
     height: 100%;
-    background: #6c5ce7;
+    background: var(--accent);
     border-radius: 2px;
 }
 
@@ -2332,12 +2336,19 @@ emoji-picker {
 .aw-connection-check {
     margin-top: 8px;
     font-size: 0.85rem;
-    display: flex;
+}
+.aw-connection-check span {
+    display: inline-flex;
     align-items: center;
     gap: 6px;
 }
+.aw-connection-check i {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
 
-.aw-trend-card { border-left: 3px solid #6c5ce7; }
+.aw-trend-card { }
 
 .integration-note {
     font-size: 0.8rem;
@@ -2351,10 +2362,8 @@ emoji-picker {
 /* ═══════════════════════════════════════════════════════ */
 .aw-categories-section {
     margin-top: 12px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 12px 16px;
-    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
 }
 
 .aw-categories-header {

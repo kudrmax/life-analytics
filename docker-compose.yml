@@ -15,6 +15,22 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=20
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   backend:
     build: ./backend
@@ -29,6 +45,15 @@ services:
       TODOIST_CLIENT_SECRET: ${TODOIST_CLIENT_SECRET:-}
     ports:
       - "8000:8000"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   frontend:
     build: ./frontend
@@ -37,6 +62,15 @@ services:
       - backend
     ports:
       - "3000:80"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
 
   backup:
     build: ./backup
@@ -57,6 +91,11 @@ services:
       BACKUP_RETAIN_DAYS: ${BACKUP_RETAIN_DAYS:-30}
     volumes:
       - ./backups:/backups
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
 
 volumes:
   pgdata:

@@ -67,4 +67,4 @@ ACTIVITYWATCH_METRICS = {
     },
 }
 
-ACTIVITYWATCH_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><rect width="24" height="24" rx="4" fill="#6c5ce7"/><circle cx="12" cy="12" r="7" stroke="#fff" stroke-width="1.5" fill="none"/><path d="M12 8v4.5l3 1.5" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>'
+ACTIVITYWATCH_ICON = '<svg viewBox="0 0 100 100" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="48" fill="#6c5ce7"/><circle cx="50" cy="50" r="30" stroke="#fff" stroke-width="5" fill="none"/><path d="M50 28v22l16 10" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>'

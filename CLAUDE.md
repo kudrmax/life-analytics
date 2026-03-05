@@ -30,6 +30,13 @@ make restart                # restart backend only
 make update                 # git pull + rebuild
 make down                   # stop all
 
+# Production (с локальной машины, нужен VPS_HOST)
+VPS_HOST=<IP> make deploy       # ручной деплой на VPS через SSH
+VPS_HOST=<IP> make ssh          # подключиться к VPS
+VPS_HOST=<IP> make prod-logs    # логи production
+VPS_HOST=<IP> make prod-status  # статус контейнеров
+VPS_HOST=<IP> make prod-db      # подключиться к production БД
+
 # Backup (requires YADISK_TOKEN in .env)
 make backup-up              # start backup service
 make backup-down            # stop backup service
@@ -47,7 +54,8 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 
 ### Backend (FastAPI + asyncpg + PostgreSQL)
 
-- `main.py` — FastAPI app with lifespan (creates/closes asyncpg pool, runs `init_db`)
+- `main.py` — FastAPI app with lifespan (creates/closes asyncpg pool, runs `init_db`, runs `migrations`)
+- `migrations.py` — lightweight DB migrations (schema_migrations table, version-based SQL)
 - `database.py` — asyncpg pool management, full DDL schema in `init_db()` (tables, enums, indexes)
 - `auth.py` — JWT (HS256, 7-day expiry), bcrypt hashing, `get_current_user` dependency
 - `schemas.py` — Pydantic models for all request/response types
@@ -191,7 +199,11 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 
 **Data isolation:** All queries filter by `current_user["id"]`. Return 404 (not 403) on unauthorized access.
 
-**Schema changes:** Update DDL in `database.py` `init_db()`. For new enum values, use `ALTER TYPE ... ADD VALUE IF NOT EXISTS` (safe for existing DBs). For new tables, use `CREATE TABLE IF NOT EXISTS`. Destructive changes require dropping and recreating the database. **Always update `db_schema.puml`** (PlantUML ER-diagram in project root) to reflect any table/column/relationship changes.
+**Schema changes:** Update DDL in `database.py` `init_db()`. For new enum values, use `ALTER TYPE ... ADD VALUE IF NOT EXISTS` (safe for existing DBs). For new tables, use `CREATE TABLE IF NOT EXISTS`. For altering existing tables (add column, change type), add a migration to `migrations.py` AND update DDL in `init_db()`. **Always update `db_schema.puml`** (PlantUML ER-diagram in project root) to reflect any table/column/relationship changes.
+
+**Migrations:** `migrations.py` — lightweight version-based system. `schema_migrations` table tracks applied versions. Migrations run automatically on backend startup after `init_db()`. Each migration: `(version_int, description, sql)`. Always use `IF NOT EXISTS` / `IF EXISTS` in migration SQL for idempotency.
+
+**Deployment:** Docker Compose on VDSina VPS. Auto-deploy via GitHub Actions on push to master (SSH → git pull → docker compose up --build). Memory limits set in docker-compose.yml (512M db, 512M backend, 64M frontend). PostgreSQL tuned for 2 GB RAM. Swap 2 GB on VPS for safety.
 
 **Metric queries with config:** Routers that list/return metrics use LEFT JOIN to include type-specific config (e.g. `LEFT JOIN scale_config sc ON sc.metric_id = md.id`). The `build_metric_out` helper uses `.get()` for config fields since they may be NULL for non-matching types.
 

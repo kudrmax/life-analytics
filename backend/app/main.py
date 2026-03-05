@@ -3,7 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import create_pool, close_pool, init_db
+from app.database import create_pool, close_pool, init_db, pool as app_pool
+from app.migrations import run_migrations
 from app.routers import metrics, entries, daily, analytics, auth, export_import, integrations
 
 
@@ -11,6 +12,8 @@ from app.routers import metrics, entries, daily, analytics, auth, export_import,
 async def lifespan(app: FastAPI):
     await create_pool()
     await init_db()
+    from app.database import pool as db_pool
+    await run_migrations(db_pool)
     yield
     await close_pool()
 

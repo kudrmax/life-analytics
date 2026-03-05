@@ -1,229 +1,221 @@
-# Деплой Life Analytics на VPS
+# Деплой Life Analytics на VPS (Docker Compose)
 
 ## Информация о сервере
 
-- **IP:** 77.222.35.163
-- **Username:** root
-- **SSH ключ:** ~/.ssh/vps_key
+- **Хостинг:** VDSina
+- **ОС:** Ubuntu 22.04+ (или Debian 12+)
 - **Репозиторий:** https://github.com/kudrmax/life-analytics.git
+- **Расположение на сервере:** `/opt/life-analytics`
 
 ---
 
-## Деплой (делается один раз)
+## Первоначальная настройка VPS (один раз)
 
 ### 1. Подключиться к серверу
 
 ```bash
-ssh -i ~/.ssh/vps_key root@77.222.35.163
+ssh root@<IP>
 ```
 
-### 2. Установить необходимое ПО
+### 2. Установить Docker и утилиты
 
 ```bash
-apt update
-apt install -y python3 python3-pip python3-venv nginx git make
+apt update && apt upgrade -y
+curl -fsSL https://get.docker.com | sh
+apt install -y make git
 ```
 
-### 3. Склонировать проект
+### 3. Настроить swap (подстраховка для 2 GB RAM)
 
 ```bash
-cd /var/www
+fallocate -l 2G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+```
+
+### 4. Настроить firewall
+
+```bash
+ufw allow 22
+ufw allow 80
+ufw enable
+```
+
+### 5. Склонировать проект
+
+```bash
+cd /opt
 git clone https://github.com/kudrmax/life-analytics.git
 cd life-analytics
 ```
 
-### 4. Настроить backend
+### 6. Создать .env
 
 ```bash
-cd /var/www/life-analytics/backend
-
-# Создать виртуальное окружение
-python3 -m venv venv
-
-# Активировать
-source venv/bin/activate
-
-# Установить зависимости
-pip install -r requirements.txt
+cp .env.example .env
+nano .env
 ```
 
-### 5. Создать секретный ключ для production
+**Обязательно изменить:**
+- `LA_SECRET_KEY` — сгенерировать: `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`
+- `POSTGRES_PASSWORD` — надёжный пароль
+- Обновить `DATABASE_URL` с новым паролем
+
+### 7. Запустить
 
 ```bash
-# Сгенерировать случайный ключ
-python3 -c 'import secrets; print("LA_SECRET_KEY=" + secrets.token_urlsafe(32))' >> /etc/environment
-
-# Перезагрузить переменные окружения
-source /etc/environment
+docker compose up -d --build
 ```
 
-**Зачем:** Ваши JWT токены подписываются этим ключом. Без уникального ключа кто угодно может подделать токены.
-
-### 6. Создать systemd сервис (автозапуск backend)
+### 8. Проверить
 
 ```bash
-nano /etc/systemd/system/life-analytics.service
+docker compose ps          # все контейнеры running
+curl http://localhost/api/health  # {"status":"ok"}
 ```
 
-Вставить:
-
-```ini
-[Unit]
-Description=Life Analytics Backend
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/var/www/life-analytics/backend
-Environment="PATH=/var/www/life-analytics/backend/venv/bin"
-EnvironmentFile=/etc/environment
-ExecStart=/var/www/life-analytics/backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Сохранить: `Ctrl+O`, `Enter`, `Ctrl+X`
-
-**Зачем:** Чтобы backend работал постоянно в фоне и автоматически запускался после перезагрузки сервера.
-
-Запустить сервис:
-
-```bash
-systemctl daemon-reload
-systemctl enable life-analytics
-systemctl start life-analytics
-
-# Проверить что работает
-systemctl status life-analytics
-```
-
-### 7. Настроить nginx
-
-```bash
-nano /etc/nginx/sites-available/life-analytics
-```
-
-Вставить:
-
-```nginx
-server {
-    listen 80;
-    server_name 77.222.35.163;
-
-    # Frontend (статические файлы)
-    location / {
-        root /var/www/life-analytics/frontend;
-        try_files $uri $uri/ /index.html;
-    }
-
-    # Backend API
-    location /api/ {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-
-    # API docs
-    location /docs {
-        proxy_pass http://127.0.0.1:8000;
-    }
-}
-```
-
-Сохранить и активировать:
-
-```bash
-ln -s /etc/nginx/sites-available/life-analytics /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default
-nginx -t
-systemctl restart nginx
-```
-
-**Зачем:** nginx раздаёт ваши HTML/CSS/JS файлы и перенаправляет запросы к `/api/` на ваш FastAPI backend.
-
-### 8. Готово!
-
-Откройте в браузере: **http://77.222.35.163**
+Открыть в браузере: `http://<IP>:3000`
 
 ---
 
-## Обновление проекта (когда выходит новая версия)
+## Настройка автодеплоя (GitHub Actions)
 
-**На локальной машине** - запушить изменения:
+### Создать SSH ключ для деплоя
 
 ```bash
-git add .
-git commit -m "Update"
+# На VPS
+ssh-keygen -t ed25519 -f ~/.ssh/deploy_key -N ""
+cat ~/.ssh/deploy_key.pub >> ~/.ssh/authorized_keys
+cat ~/.ssh/deploy_key  # скопировать приватный ключ
+```
+
+### Добавить секреты в GitHub
+
+В репозитории → Settings → Secrets and variables → Actions:
+
+- `VPS_HOST` — IP адрес VPS
+- `VPS_USER` — `root`
+- `VPS_SSH_KEY` — приватный ключ (содержимое `deploy_key`)
+
+### Как работает
+
+1. `git push origin master` → GitHub Actions запускается
+2. Подключается к VPS по SSH
+3. `git pull` → `docker compose up -d --build` → `docker image prune -f`
+4. Даунтайм: ~10-30 секунд
+
+---
+
+## Обновление проекта
+
+### Автоматически (рекомендуется)
+
+```bash
 git push origin master
+# GitHub Actions сделает деплой автоматически
 ```
 
-**На сервере** - обновить одной командой:
+### Вручную (с локальной машины)
 
 ```bash
-ssh -i ~/.ssh/vps_key root@77.222.35.163 "cd /var/www/life-analytics && make update"
+VPS_HOST=<IP> make deploy
 ```
 
-**Или** подключиться к серверу и запустить:
+### Вручную (на сервере)
 
 ```bash
-ssh -i ~/.ssh/vps_key root@77.222.35.163
-cd /var/www/life-analytics
+ssh root@<IP>
+cd /opt/life-analytics
 make update
-```
-
-Эта команда автоматически:
-- Подтянет изменения из git (`git pull`)
-- Обновит Python зависимости (`pip install -r requirements.txt`)
-- Перезапустит backend (`systemctl restart`)
-
-### Другие полезные make команды
-
-```bash
-make restart        # Просто перезапустить backend
-make logs          # Посмотреть логи в реальном времени
-make status        # Проверить статус сервиса
-make nginx-restart # Перезапустить nginx
 ```
 
 ---
 
 ## Полезные команды
 
-**С использованием Makefile** (из директории `/var/www/life-analytics`):
+### С локальной машины (нужен VPS_HOST)
 
 ```bash
-make update         # Обновить проект (git pull + pip install + restart)
-make restart        # Перезапустить backend
-make logs          # Посмотреть логи backend
-make status        # Статус backend
-make nginx-restart # Перезапустить nginx
+VPS_HOST=<IP> make deploy       # Деплой
+VPS_HOST=<IP> make ssh          # Подключиться к VPS
+VPS_HOST=<IP> make prod-logs    # Логи production
+VPS_HOST=<IP> make prod-status  # Статус контейнеров
+VPS_HOST=<IP> make prod-db      # Подключиться к БД
 ```
 
-**Прямые команды systemd:**
+### На сервере
 
 ```bash
-systemctl status life-analytics      # Проверить статус
-systemctl restart life-analytics     # Перезапустить backend
-journalctl -u life-analytics -f      # Логи в реальном времени
-tail -f /var/log/nginx/error.log    # Логи nginx
+make up             # Запустить все сервисы
+make down           # Остановить все сервисы
+make logs           # Логи всех сервисов
+make logs-backend   # Логи backend
+make restart        # Перезапустить backend
+make status         # Статус контейнеров
+make update         # git pull + rebuild
+```
+
+### Бэкапы
+
+```bash
+make backup-up      # Запустить сервис бэкапов
+make backup-logs    # Логи бэкапов
+make backup-now     # Разовый бэкап
 ```
 
 ---
 
-## Если что-то не работает
+## Миграции базы данных
 
-**Backend не запускается:**
-```bash
-journalctl -u life-analytics -n 50
+Миграции выполняются автоматически при старте backend.
+
+### Как добавить миграцию
+
+1. Добавь запись в `backend/app/migrations.py`:
+
+```python
+MIGRATIONS = [
+    (1, "add_timezone_to_users", "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT DEFAULT 'UTC'"),
+]
 ```
 
-**Nginx показывает ошибку:**
+2. Также обнови DDL в `database.py` `init_db()` (для чистых установок)
+3. Запуши в master → автодеплой → миграция выполнится при старте
+
+### Просмотр выполненных миграций
+
 ```bash
-tail -f /var/log/nginx/error.log
+VPS_HOST=<IP> make prod-db
+# В psql:
+SELECT * FROM schema_migrations ORDER BY version;
 ```
 
-**502 Bad Gateway:**
-- Проверьте что backend запущен: `systemctl status life-analytics`
+---
+
+## Troubleshooting
+
+**Контейнер не запускается:**
+```bash
+docker compose logs backend     # логи backend
+docker compose logs db          # логи PostgreSQL
+```
+
+**502 Bad Gateway / сайт недоступен:**
+```bash
+docker compose ps               # проверить статус
+docker compose restart backend   # перезапустить
+```
+
+**Диск заполнен:**
+```bash
+docker system prune -af          # удалить все неиспользуемые образы и контейнеры
+docker volume ls                 # проверить volumes
+```
+
+**Нехватка памяти (OOM):**
+```bash
+free -h                          # проверить RAM
+docker stats                     # потребление памяти контейнерами
+```

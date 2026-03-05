@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up down logs logs-backend migrate restart update status nginx-test nginx-restart backup-up backup-down backup-logs backup-now
+.PHONY: help up down logs logs-backend migrate restart update status nginx-test nginx-restart backup-up backup-down backup-logs backup-now deploy ssh prod-logs prod-status prod-db
 
 .DEFAULT_GOAL := help
 
@@ -17,11 +17,18 @@ help: ## Показать эту справку
 	@echo "    make logs-backend    Логи только backend"
 	@echo "    make status          Статус контейнеров"
 	@echo ""
-	@echo "  Production:"
+	@echo "  Production (на сервере):"
 	@echo "    make update          git pull + пересобрать и перезапустить"
 	@echo "    make restart         Перезапустить backend"
 	@echo "    make nginx-test      Проверить конфиг nginx"
 	@echo "    make nginx-restart   Перезапустить nginx"
+	@echo ""
+	@echo "  Production (с локальной машины, нужен VPS_HOST):"
+	@echo "    make deploy          Ручной деплой на VPS через SSH"
+	@echo "    make ssh             Подключиться к VPS"
+	@echo "    make prod-logs       Логи production через SSH"
+	@echo "    make prod-status     Статус контейнеров на production"
+	@echo "    make prod-db         Подключиться к production БД"
 	@echo ""
 	@echo "  Backup (нужен YADISK_TOKEN в .env):"
 	@echo "    make backup-up       Запустить сервис бэкапов"
@@ -65,6 +72,28 @@ nginx-test:
 nginx-restart:
 	systemctl restart nginx
 	@echo "Nginx restarted!"
+
+# ─── Remote (с локальной машины) ───
+
+deploy:
+	@test -n "$$VPS_HOST" || (echo "Error: VPS_HOST not set. Usage: VPS_HOST=1.2.3.4 make deploy" && exit 1)
+	ssh root@$${VPS_HOST} "cd /opt/life-analytics && git pull origin master && docker compose up -d --build --remove-orphans && docker image prune -f"
+
+ssh:
+	@test -n "$$VPS_HOST" || (echo "Error: VPS_HOST not set. Usage: VPS_HOST=1.2.3.4 make ssh" && exit 1)
+	ssh root@$${VPS_HOST}
+
+prod-logs:
+	@test -n "$$VPS_HOST" || (echo "Error: VPS_HOST not set." && exit 1)
+	ssh root@$${VPS_HOST} "cd /opt/life-analytics && docker compose logs -f --tail=100"
+
+prod-status:
+	@test -n "$$VPS_HOST" || (echo "Error: VPS_HOST not set." && exit 1)
+	ssh root@$${VPS_HOST} "cd /opt/life-analytics && docker compose ps"
+
+prod-db:
+	@test -n "$$VPS_HOST" || (echo "Error: VPS_HOST not set." && exit 1)
+	ssh -t root@$${VPS_HOST} "docker exec -it life-analytics-db-1 psql -U la_user -d life_analytics"
 
 # ─── Backup ───
 

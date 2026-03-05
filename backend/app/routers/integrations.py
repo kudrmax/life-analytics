@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from jose import jwt, JWTError
 
-from app.database import get_db, seed_default_categories
+from app.database import get_db
 from app.auth import get_current_user, SECRET_KEY, ALGORITHM
 from app.encryption import encrypt_token
 from app.integrations.todoist.client import TodoistClient
@@ -241,7 +241,6 @@ async def aw_enable(
            ON CONFLICT (user_id) DO UPDATE SET enabled = TRUE""",
         current_user["id"],
     )
-    await seed_default_categories(db, current_user["id"])
     return {"status": "enabled"}
 
 
@@ -355,9 +354,6 @@ async def aw_list_categories(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    # Auto-seed categories for users who enabled AW before this feature
-    await seed_default_categories(db, current_user["id"])
-
     rows = await db.fetch(
         """SELECT id, name, color, sort_order
            FROM activitywatch_categories
