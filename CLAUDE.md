@@ -103,14 +103,15 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `js/app.js` — all page logic: routing, rendering, event handling
 - `css/style.css` — dark/light theme via CSS custom properties
 
-**Navigation:** Сегодня, История, Статистика (бывший Дашборд), Настройки.
+**Navigation:** Сегодня, Статистика, Анализ, История, Настройки.
 
 **Routing:** `navigateTo(page, params = {})` — поддерживает параметры (e.g. `{ metricId }`, `{ openAddModal: true }`).
 
 **Pages:**
 - Сегодня (today): ввод метрик за текущий день; `today-actions` кнопки «Добавить метрику» / «Редактировать метрики»
-- Статистика (dashboard): `stats-header` с выбором периода, тренды с мини-чартами, корреляционные отчёты
-- Детализация метрики (metric-detail): Chart.js графики (bar для bool, line для остальных); переход через `navigateTo('metric-detail', { metricId })`; `detailChartInstance` глобальная переменная для cleanup
+- Статистика (charts): `stats-header` с выбором периода, тренды с мини-чартами для всех метрик + ActivityWatch
+- Анализ (analysis): `stats-header` с выбором периода, корреляционные отчёты с polling
+- Детализация метрики (metric-detail): Chart.js графики (bar для bool, line для остальных); переход через `navigateTo('metric-detail', { metricId })`; кнопка «Назад» ведёт на `charts`; `detailChartInstance` глобальная переменная для cleanup
 - Настройки (settings): принимает `{ openAddModal: true }` для автооткрытия модалки добавления метрики; раздел "Интеграции" внизу с кнопками подключения/отключения Todoist
 
 **Event delegation pattern:** `#metrics-form` element persists across re-renders (innerHTML replaced). Event listeners (click, change) are attached once via `data-handlersAttached` guard in `attachInputHandlers()` to prevent duplicate async handlers.
