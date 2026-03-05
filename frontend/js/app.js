@@ -2621,7 +2621,15 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
     function previewInputHtml(type) {
         if (type === 'time') {
-            return `<button type="button" class="time-picker-btn">Указать время</button>`;
+            return `<button type="button" class="time-picker-btn">Указать время</button>
+            <div class="time-preview-clock">
+                <div class="tp-mini-face">
+                    <div class="tp-mini-hand tp-mini-hour"></div>
+                    <div class="tp-mini-hand tp-mini-minute"></div>
+                    <div class="tp-mini-dot"></div>
+                </div>
+                <span class="tp-mini-hint">Циферблат для выбора</span>
+            </div>`;
         }
         if (type === 'number') {
             return `<div class="number-input">
@@ -2700,7 +2708,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 </div>
 
                 <label class="form-label">
-                    <span class="label-text">Категория</span>
+                    <span class="label-text">Категория <span class="label-optional">(необязательно)</span></span>
                     <input id="nm-cat" placeholder="Например: Утро" class="form-input" value="${existingMetric?.category || ''}">
                 </label>
 
@@ -2767,43 +2775,76 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 ${currentType !== 'computed' && currentType !== 'integration' ? `
                 <div class="form-section" id="nm-slots-section">
                     <span class="label-text">Замеры в день</span>
-                    <div class="slot-labels-list" id="nm-slot-labels"></div>
-                    <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить замер</button>
-                    <span class="label-hint">Оставьте пустым для одного замера в день. Добавьте 2+ замера (например Утро, День, Вечер) для нескольких записей.</span>
+                    <div class="slots-choice-grid">
+                        <label class="slots-choice-card ${!existingMetric?.slots?.length ? 'selected' : ''}" data-slots="single">
+                            <input type="radio" name="nm-slots-mode" value="single" ${!existingMetric?.slots?.length ? 'checked' : ''}>
+                            <span class="slots-choice-title">Один замер</span>
+                            <div class="slots-choice-preview" id="slots-preview-single"></div>
+                        </label>
+                        <label class="slots-choice-card ${existingMetric?.slots?.length ? 'selected' : ''}" data-slots="multiple">
+                            <input type="radio" name="nm-slots-mode" value="multiple" ${existingMetric?.slots?.length ? 'checked' : ''}>
+                            <span class="slots-choice-title">Несколько замеров</span>
+                            <div class="slots-choice-preview" id="slots-preview-multiple"></div>
+                        </label>
+                    </div>
+                    <div class="slots-config" id="nm-slots-config" style="display:${existingMetric?.slots?.length ? 'flex' : 'none'}">
+                        <div class="slot-labels-list" id="nm-slot-labels"></div>
+                        <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить замер</button>
+                        <span class="label-hint">Названия замеров можно переименовать</span>
+                    </div>
                 </div>
                 ` : ''}
                 ` : `
                 <div class="form-section" id="nm-type-section">
                     <span class="label-text">Тип метрики</span>
-                    <div class="radio-group-inline">
-                        <label class="radio-inline">
+                    <span class="label-hint">Выберите как вы будете записывать значение</span>
+                    <div class="type-cards-grid">
+                        <label class="type-card ${currentType === 'bool' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="bool" ${currentType === 'bool' ? 'checked' : ''}>
-                            <span>Да/Нет</span>
+                            <div class="type-card-icon"><i data-lucide="check-circle"></i></div>
+                            <span class="type-card-name">Да / Нет</span>
                         </label>
-                        <label class="radio-inline">
+                        <label class="type-card ${currentType === 'time' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="time" ${currentType === 'time' ? 'checked' : ''}>
-                            <span>Время</span>
+                            <div class="type-card-icon"><i data-lucide="clock"></i></div>
+                            <span class="type-card-name">Время</span>
                         </label>
-                        <label class="radio-inline">
+                        <label class="type-card ${currentType === 'number' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="number" ${currentType === 'number' ? 'checked' : ''}>
-                            <span>Число</span>
+                            <div class="type-card-icon"><i data-lucide="hash"></i></div>
+                            <span class="type-card-name">Число</span>
                         </label>
-                        <label class="radio-inline">
+                        <label class="type-card ${currentType === 'scale' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="scale" ${currentType === 'scale' ? 'checked' : ''}>
-                            <span>Шкала</span>
+                            <div class="type-card-icon"><i data-lucide="sliders-horizontal"></i></div>
+                            <span class="type-card-name">Шкала</span>
                         </label>
-                        <label class="radio-inline">
+                        <label class="type-card ${currentType === 'computed' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="computed" ${currentType === 'computed' ? 'checked' : ''}>
-                            <span>Формула</span>
+                            <div class="type-card-icon"><i data-lucide="calculator"></i></div>
+                            <span class="type-card-name">Формула</span>
                         </label>
-                        ${todoistConnected ? `<label class="radio-inline">
+                        ${todoistConnected ? `<label class="type-card">
                             <input type="radio" name="nm-type" value="integration-todoist">
-                            <span>Todoist</span>
+                            <div class="type-card-icon"><i data-lucide="list-checks"></i></div>
+                            <span class="type-card-name">Todoist</span>
                         </label>` : ''}
-                        ${awConnected ? `<label class="radio-inline">
+                        ${awConnected ? `<label class="type-card">
                             <input type="radio" name="nm-type" value="integration-activitywatch">
-                            <span>ActivityWatch</span>
+                            <div class="type-card-icon"><i data-lucide="monitor"></i></div>
+                            <span class="type-card-name">ActivityWatch</span>
                         </label>` : ''}
+                    </div>
+                </div>
+                <div class="modal-preview-inline" id="preview-inline">
+                    <span class="label-hint">Пример как это будет выглядеть</span>
+                    <div id="metric-preview-inline" class="metric-preview">
+                        <div class="metric-card" id="preview-card-inline">
+                            <div class="metric-header">
+                                <label class="metric-label">${existingMetric?.icon ? '<span class="metric-icon">' + existingMetric.icon + '</span>' : ''}${existingMetric?.name || 'Название метрики'}</label>
+                            </div>
+                            <div class="metric-input">${previewInputHtml(currentType)}</div>
+                        </div>
                     </div>
                 </div>
                 <div class="form-section" id="nm-integration-config" style="display: none">
@@ -2872,18 +2913,31 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     </div>
                     <span class="label-hint">Поддерживаются +, −, ×, ÷ и скобки. Время можно комбинировать только с временем.</span>
                 </div>
-                <div class="form-section" id="nm-slots-section" style="display: ${currentType === 'computed' ? 'none' : ''}">
+                <div class="form-section" id="nm-slots-section" style="display: ${currentType === 'computed' || currentType === 'integration' ? 'none' : ''}">
                     <span class="label-text">Замеры в день</span>
-                    <div class="slot-labels-list" id="nm-slot-labels"></div>
-                    <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить замер</button>
-                    <span class="label-hint">Оставьте пустым для одного замера в день. Добавьте 2+ замера (например Утро, День, Вечер) для нескольких записей.</span>
+                    <div class="slots-choice-grid">
+                        <label class="slots-choice-card selected" data-slots="single">
+                            <input type="radio" name="nm-slots-mode" value="single" checked>
+                            <span class="slots-choice-title">Один замер</span>
+                            <div class="slots-choice-preview" id="slots-preview-single"></div>
+                        </label>
+                        <label class="slots-choice-card" data-slots="multiple">
+                            <input type="radio" name="nm-slots-mode" value="multiple">
+                            <span class="slots-choice-title">Несколько замеров</span>
+                            <div class="slots-choice-preview" id="slots-preview-multiple"></div>
+                        </label>
+                    </div>
+                    <div class="slots-config" id="nm-slots-config" style="display:none">
+                        <div class="slot-labels-list" id="nm-slot-labels"></div>
+                        <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить замер</button>
+                        <span class="label-hint">Названия замеров можно переименовать</span>
+                    </div>
                 </div>
                 `}
             </div>
 
             <div class="modal-preview-column">
                 <div class="preview-sticky">
-                    <span class="label-text">Превью</span>
                     <div id="metric-preview" class="metric-preview">
                         <div class="metric-card" id="preview-card">
                             <div class="metric-header">
@@ -2977,6 +3031,11 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     if (!isEdit) {
         overlay.querySelectorAll('input[name="nm-type"]').forEach(radio => {
             radio.addEventListener('change', () => {
+                // Update card selection visual
+                overlay.querySelectorAll('.type-card').forEach(c => c.classList.remove('selected'));
+                const card = radio.closest('.type-card');
+                if (card) card.classList.add('selected');
+
                 const selectedType = getCurrentType();
                 const selectedProvider = getCurrentProvider();
                 const scaleConfig = document.getElementById('nm-scale-config');
@@ -3091,7 +3150,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     }
 
     function setupPreviewInteractions() {
-        document.querySelectorAll('#preview-card .bool-btn').forEach(btn => {
+        document.querySelectorAll('#preview-card .bool-btn, #preview-card-inline .bool-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.preventDefault();
                 const buttons = btn.parentElement.querySelectorAll('.bool-btn');
@@ -3100,7 +3159,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 btn.classList.add('active', isYes ? 'yes' : 'no');
             });
         });
-        document.querySelectorAll('#preview-card .scale-btn').forEach(btn => {
+        document.querySelectorAll('#preview-card .scale-btn, #preview-card-inline .scale-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.preventDefault();
                 const buttons = btn.parentElement.querySelectorAll('.scale-btn');
@@ -3137,10 +3196,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         const name = (icon ? '<span class="metric-icon">' + icon + '</span>' : '') + rawName;
         const slotInputs = slotList ? slotList.querySelectorAll('.slot-label-input') : [];
         const labels = Array.from(slotInputs).map(i => i.value.trim()).filter(v => v !== '');
-        const previewCard = document.getElementById('preview-card');
 
+        let cardHtml;
         if (labels.length >= 2) {
-            // Multi-slot preview
             let slotsHtml = '<div class="multiple-entry">';
             for (const label of labels) {
                 slotsHtml += `<div class="metric-slot">
@@ -3151,27 +3209,71 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 </div>`;
             }
             slotsHtml += '</div>';
-            previewCard.innerHTML = `
-                <div class="metric-header">
+            cardHtml = `<div class="metric-header">
                     <label class="metric-label">${name}</label>
-                </div>
-                ${slotsHtml}`;
+                </div>${slotsHtml}`;
         } else {
-            // Single preview
-            previewCard.innerHTML = `
-                <div class="metric-header">
+            cardHtml = `<div class="metric-header">
                     <label class="metric-label">${name}</label>
                 </div>
                 <div class="metric-input" id="preview-input">${previewInputHtml(type)}</div>`;
         }
+
+        // Update both preview containers (desktop column + mobile inline)
+        const previewCard = document.getElementById('preview-card');
+        if (previewCard) previewCard.innerHTML = cardHtml;
+        const previewCardInline = document.getElementById('preview-card-inline');
+        if (previewCardInline) previewCardInline.innerHTML = cardHtml;
+
         setupPreviewInteractions();
+        if (typeof updateSlotsPreview === 'function') updateSlotsPreview();
     }
 
     // ─── Slot management ───
     const slotList = document.getElementById('nm-slot-labels');
     const addSlotBtn = document.getElementById('nm-add-slot');
+    const slotsConfig = document.getElementById('nm-slots-config');
 
     setupPreviewInteractions();
+
+    // ─── Slots choice cards ───
+    function updateSlotsPreview() {
+        const singlePreview = document.getElementById('slots-preview-single');
+        const multiPreview = document.getElementById('slots-preview-multiple');
+        if (!singlePreview || !multiPreview) return;
+        const boolHtml = `<div class="bool-buttons"><button class="bool-btn">Да</button><button class="bool-btn">Нет</button></div>`;
+        singlePreview.innerHTML = `<div class="metric-input">${boolHtml}</div>`;
+        multiPreview.innerHTML = `<div class="multiple-entry">
+            ${['Утро', 'День', 'Вечер'].map(l => `<div class="metric-slot">
+                <div class="period-header"><span class="period-label">${l}</span></div>
+                <div class="metric-input">${boolHtml}</div>
+            </div>`).join('')}
+        </div>`;
+    }
+
+    overlay.querySelectorAll('input[name="nm-slots-mode"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            overlay.querySelectorAll('.slots-choice-card').forEach(c => c.classList.remove('selected'));
+            const card = radio.closest('.slots-choice-card');
+            if (card) card.classList.add('selected');
+
+            if (radio.value === 'multiple') {
+                if (slotsConfig) slotsConfig.style.display = 'flex';
+                // Auto-add 3 default slots if empty
+                if (slotList && slotList.querySelectorAll('.slot-label-row').length === 0) {
+                    ['Утро', 'День', 'Вечер'].forEach(l => addSlotField(l));
+                }
+            } else {
+                if (slotsConfig) slotsConfig.style.display = 'none';
+                // Clear slots
+                if (slotList) slotList.innerHTML = '';
+            }
+            updatePreview();
+        });
+    });
+
+    // Initial slots preview
+    updateSlotsPreview();
 
     function addSlotField(label = '') {
         const row = document.createElement('div');
@@ -3204,8 +3306,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         const name = document.getElementById('nm-name').value;
         const category = document.getElementById('nm-cat').value;
 
-        if (!name || !category) {
-            alert('Заполните название и категорию');
+        if (!name) {
+            alert('Заполните название');
             return;
         }
 
