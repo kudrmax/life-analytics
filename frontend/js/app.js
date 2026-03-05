@@ -33,7 +33,7 @@ function applyTheme(theme) {
     }
     localStorage.setItem(THEME_KEY, theme);
     const toggle = document.getElementById('theme-switch-input');
-    if (toggle) toggle.checked = (theme === 'light');
+    if (toggle) toggle.checked = (theme === 'dark');
     const label = document.getElementById('theme-label');
     if (label) label.textContent = theme === 'light' ? 'Светлая тема' : 'Тёмная тема';
     const icon = document.getElementById('theme-icon-emoji');
@@ -1893,7 +1893,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     const isLight = currentTheme === 'light';
     html += '<div class="theme-row">';
     html += `<span class="theme-row-label"><span id="theme-icon-emoji">${isLight ? '☀️' : '🌙'}</span> <span id="theme-label">${isLight ? 'Светлая тема' : 'Тёмная тема'}</span></span>`;
-    html += `<label class="theme-switch"><input type="checkbox" id="theme-switch-input" ${isLight ? 'checked' : ''}><span class="slider"></span></label>`;
+    html += `<label class="theme-switch"><input type="checkbox" id="theme-switch-input" ${isLight ? '' : 'checked'}><span class="slider"></span></label>`;
     html += '</div>';
 
     html += '<h2>Настройки метрик</h2>';
