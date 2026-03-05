@@ -41,7 +41,7 @@ body {
     line-height: 1.5;
     max-width: 600px;
     margin: 0 auto;
-    padding: 0 16px 80px;
+    padding: env(safe-area-inset-top, 0) 16px 80px;
     transition: background-color 0.3s ease, color 0.3s ease;
 }
 
@@ -72,6 +72,7 @@ nav {
     left: 0; right: 0;
     background: var(--surface);
     border-top: 1px solid var(--border);
+    padding-bottom: env(safe-area-inset-bottom, 0);
     z-index: 100;
 }
 
@@ -1812,7 +1813,7 @@ input[type="month"], input[type="date"] {
 /* ─── Theme Toggle ─── */
 .theme-toggle {
     position: fixed;
-    top: 16px;
+    top: calc(16px + env(safe-area-inset-top, 0));
     right: 16px;
     background: var(--surface);
     border: 1px solid var(--border);
