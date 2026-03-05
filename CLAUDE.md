@@ -72,7 +72,9 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `correlation_reports` — id, user_id (FK), status ('running'/'done'/'error'), period_start, period_end, created_at, finished_at
 - `correlation_pairs` — id, report_id (FK), metric_a_id, metric_b_id, slot_a_id, slot_b_id, label_a, label_b, type_a, type_b, correlation (FLOAT), data_points (INTEGER)
 - `user_integrations` — id, user_id (FK), provider (VARCHAR), encrypted_token (TEXT), enabled, created_at; UNIQUE(user_id, provider)
-- `integration_config` — metric_id (PK/FK), provider (VARCHAR), metric_key (VARCHAR, default 'completed_tasks_count')
+- `integration_config` — metric_id (PK/FK), provider (VARCHAR), metric_key (VARCHAR), value_type (VARCHAR)
+- `integration_filter_config` — metric_id (PK/FK), filter_name VARCHAR(200) — config for filter_tasks_count metrics
+- `integration_query_config` — metric_id (PK/FK), filter_query VARCHAR(1024) — config for query_tasks_count metrics
 
 **Entry uniqueness (partial indexes):** Metrics without slots: `UNIQUE(metric_id, user_id, date) WHERE slot_id IS NULL`. Metrics with slots: `UNIQUE(metric_id, user_id, date, slot_id) WHERE slot_id IS NOT NULL`.
 
@@ -151,11 +153,14 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 8. `frontend/js/app.js` — render function, input handlers, history display, settings type label, modal (preview + radio + type hint + config fields)
 
 **Integration pattern (Todoist):**
-- OAuth flow: `GET /api/integrations/todoist/auth-url` (JWT-protected) → redirect to Todoist → `GET /api/integrations/todoist/callback` (no JWT, uses state JWT) → auto-creates metric (type=integration) + integration_config
-- Data fetch: `POST /api/integrations/{provider}/fetch` → service layer decrypts token, calls Todoist API, upserts entry in values_number
-- Architecture: `integrations/todoist/client.py` (pure API client) → `integrations/todoist/service.py` (DB + client orchestration) → `routers/integrations.py` (HTTP layer)
+- OAuth flow: `GET /api/integrations/todoist/auth-url` (JWT-protected) → redirect to Todoist → `GET /api/integrations/todoist/callback` (no JWT, uses state JWT) → saves token to user_integrations
+- User creates integration metrics manually via modal (type=integration, provider=todoist, metric_key from registry)
+- Registry: `integrations/todoist/registry.py` — TODOIST_METRICS dict with metric_key → {name, value_type, config_fields}
+- Available metric_keys: `completed_tasks_count` (no config), `filter_tasks_count` (requires filter_name in integration_filter_config), `query_tasks_count` (requires filter_query in integration_query_config)
+- Data fetch: `POST /api/integrations/{provider}/fetch` → service layer dispatches by metric_key, returns {results, errors}
+- Architecture: `integrations/todoist/client.py` (pure API client: completed tasks, Sync API filters, Filter API query) → `integrations/todoist/service.py` (DB + client orchestration) → `routers/integrations.py` (HTTP layer)
 - Token encryption: Fernet symmetric encryption via `encryption.py`, key derived from LA_SECRET_KEY
-- Integration metrics store values in `values_number` (same as number type), display as read-only with fetch button on frontend
+- Integration metrics store values in values_* table per value_type, display as read-only with fetch button on frontend
 - Env vars: `TODOIST_CLIENT_ID`, `TODOIST_CLIENT_SECRET`
 
 **Analytics endpoints:**

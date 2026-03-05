@@ -2218,6 +2218,14 @@ emoji-picker {
     margin: 0;
 }
 
+.integration-hint {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    padding: 2px 0 0 0;
+    opacity: 0.7;
+}
+
 .integrations-section {
     margin-top: 24px;
 }

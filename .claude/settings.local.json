@@ -44,7 +44,9 @@
       "WebFetch(domain:rollout.com)",
       "WebFetch(domain:doist.github.io)",
       "WebFetch(domain:groups.google.com)",
-      "WebFetch(domain:pypi.org)"
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:docs.activitywatch.net)",
+      "Bash(make logs-backend:*)"
     ]
   }
 }

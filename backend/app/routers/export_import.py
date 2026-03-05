@@ -30,14 +30,18 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             'id', 'slug', 'name', 'category', 'icon', 'type',
             'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step',
             'slot_labels', 'formula', 'result_type', 'provider', 'metric_key', 'value_type',
+            'filter_name', 'filter_query',
         ])
 
         metrics = await db.fetch(
             """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
-                      ic.provider, ic.metric_key, ic.value_type
+                      ic.provider, ic.metric_key, ic.value_type,
+                      ifc.filter_name, iqc.filter_query
                FROM metric_definitions md
                LEFT JOIN scale_config sc ON sc.metric_id = md.id
                LEFT JOIN integration_config ic ON ic.metric_id = md.id
+               LEFT JOIN integration_filter_config ifc ON ifc.metric_id = md.id
+               LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
                WHERE md.user_id = $1 ORDER BY md.sort_order, md.id""",
             current_user["id"],
         )
@@ -87,6 +91,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
                 json.dumps(slot_labels) if slot_labels else '',
                 formula_export, result_type_export,
                 m.get("provider") or '', m.get("metric_key") or '', m.get("value_type") or '',
+                m.get("filter_name") or '', m.get("filter_query") or '',
             ])
 
         zip_file.writestr('metrics.csv', metrics_csv.getvalue())
@@ -208,6 +213,8 @@ async def import_data(
                     csv_provider = row.get('provider', '')
                     csv_metric_key = row.get('metric_key', '')
                     csv_value_type = row.get('value_type', '')
+                    csv_filter_name = row.get('filter_name', '')
+                    csv_filter_query = row.get('filter_query', '')
 
                     if existing:
                         await db.execute(
@@ -243,6 +250,20 @@ async def import_data(
                                    SET provider = EXCLUDED.provider, metric_key = EXCLUDED.metric_key, value_type = EXCLUDED.value_type""",
                                 existing["id"], csv_provider, csv_metric_key, csv_value_type or 'number',
                             )
+                            if csv_metric_key == 'filter_tasks_count' and csv_filter_name:
+                                await db.execute(
+                                    """INSERT INTO integration_filter_config (metric_id, filter_name)
+                                       VALUES ($1, $2)
+                                       ON CONFLICT (metric_id) DO UPDATE SET filter_name = EXCLUDED.filter_name""",
+                                    existing["id"], csv_filter_name,
+                                )
+                            elif csv_metric_key == 'query_tasks_count' and csv_filter_query:
+                                await db.execute(
+                                    """INSERT INTO integration_query_config (metric_id, filter_query)
+                                       VALUES ($1, $2)
+                                       ON CONFLICT (metric_id) DO UPDATE SET filter_query = EXCLUDED.filter_query""",
+                                    existing["id"], csv_filter_query,
+                                )
                         # Import slots if provided
                         if len(csv_slot_labels) >= 2:
                             await _import_slots(db, existing["id"], csv_slot_labels)
@@ -270,6 +291,16 @@ async def import_data(
                                 "INSERT INTO integration_config (metric_id, provider, metric_key, value_type) VALUES ($1, $2, $3, $4)",
                                 new_id, csv_provider, csv_metric_key, csv_value_type or 'number',
                             )
+                            if csv_metric_key == 'filter_tasks_count' and csv_filter_name:
+                                await db.execute(
+                                    "INSERT INTO integration_filter_config (metric_id, filter_name) VALUES ($1, $2)",
+                                    new_id, csv_filter_name,
+                                )
+                            elif csv_metric_key == 'query_tasks_count' and csv_filter_query:
+                                await db.execute(
+                                    "INSERT INTO integration_query_config (metric_id, filter_query) VALUES ($1, $2)",
+                                    new_id, csv_filter_query,
+                                )
                         # Create slots if provided
                         if len(csv_slot_labels) >= 2:
                             for i, label in enumerate(csv_slot_labels):

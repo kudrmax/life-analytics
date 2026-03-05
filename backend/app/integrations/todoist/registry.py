@@ -2,6 +2,17 @@ TODOIST_METRICS = {
     'completed_tasks_count': {
         'name': 'Количество выполненных задач',
         'value_type': 'number',
+        'config_fields': [],
+    },
+    'filter_tasks_count': {
+        'name': 'Задачи в фильтре (по имени)',
+        'value_type': 'number',
+        'config_fields': ['filter_name'],
+    },
+    'query_tasks_count': {
+        'name': 'Задачи по запросу',
+        'value_type': 'number',
+        'config_fields': ['filter_query'],
     },
 }
 

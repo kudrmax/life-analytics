@@ -400,6 +400,9 @@ function renderMetricInput(m) {
         const clearBtn = entry
             ? `<button class="metric-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`
             : '';
+        let configHint = '';
+        if (m.filter_name) configHint = `<span class="integration-hint">Фильтр: ${m.filter_name}</span>`;
+        else if (m.filter_query) configHint = `<span class="integration-hint">Запрос: ${m.filter_query}</span>`;
         return `<div class="metric-card ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="integration" data-provider="${m.provider || ''}" data-entry-id="${entryId || ''}">
             <div class="metric-header">
                 <label class="metric-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</label>
@@ -409,6 +412,7 @@ function renderMetricInput(m) {
                 <span class="computed-value ${isFilled ? '' : 'empty'}">${displayVal}</span>
                 <button class="btn-small btn-fetch" data-action="fetch-integration" data-provider="${m.provider || 'todoist'}">${btnLabel}</button>
             </div>
+            ${configHint}
         </div>`;
     }
 
@@ -607,7 +611,11 @@ async function handleFormClick(e) {
         btn.disabled = true;
         btn.textContent = 'Загрузка...';
         try {
-            await api.fetchIntegration(provider, currentDate);
+            const result = await api.fetchIntegration(provider, currentDate, metricId);
+            if (result && result.errors && result.errors.length > 0) {
+                const msgs = result.errors.map(e => e.error).join('\n');
+                alert('Некоторые метрики не обновились:\n' + msgs);
+            }
             await renderTodayForm();
         } catch (error) {
             alert('Ошибка: ' + error.message);
@@ -2088,8 +2096,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 <div class="form-section" id="nm-integration-config" style="display: none">
                     <span class="label-text">Метрика Todoist</span>
                     <select id="nm-integration-metric" class="form-input">
-                        ${todoistAvailableMetrics.map(m => `<option value="${m.key}">${m.name}</option>`).join('')}
+                        ${todoistAvailableMetrics.map(m => `<option value="${m.key}" data-config-fields="${(m.config_fields || []).join(',')}">${m.name}</option>`).join('')}
                     </select>
+                    <div id="nm-integration-fields"></div>
                 </div>
                 <div class="form-section" id="nm-scale-config" style="display: ${currentType === 'scale' ? 'flex' : 'none'}">
                     <span class="label-text">Настройки шкалы</span>
@@ -2269,6 +2278,34 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 updatePreview();
             });
         });
+
+        // Integration metric select — show config fields
+        const integrationMetricSelect = overlay.querySelector('#nm-integration-metric');
+        if (integrationMetricSelect) {
+            const renderIntegrationFields = () => {
+                const fieldsContainer = document.getElementById('nm-integration-fields');
+                if (!fieldsContainer) return;
+                const selected = integrationMetricSelect.selectedOptions[0];
+                const configFields = (selected?.dataset.configFields || '').split(',').filter(Boolean);
+                let html = '';
+                if (configFields.includes('filter_name')) {
+                    html = `<label class="form-label">
+                        <span class="label-text">Название фильтра в Todoist</span>
+                        <input id="nm-filter-name" placeholder="Например: Работа" class="form-input">
+                    </label>
+                    <span class="label-hint">Имя фильтра из вашего Todoist (регистр не важен)</span>`;
+                } else if (configFields.includes('filter_query')) {
+                    html = `<label class="form-label">
+                        <span class="label-text">Поисковый запрос (filter query)</span>
+                        <input id="nm-filter-query" placeholder="Например: today & @work" class="form-input">
+                    </label>
+                    <span class="label-hint">Любой <a href="https://todoist.com/help/articles/introduction-to-filters-V98wIH" target="_blank">запрос Todoist</a></span>`;
+                }
+                fieldsContainer.innerHTML = html;
+            };
+            integrationMetricSelect.addEventListener('change', renderIntegrationFields);
+            renderIntegrationFields();
+        }
 
         // Scale config input listeners — update preview in real time
         ['nm-scale-min', 'nm-scale-max', 'nm-scale-step'].forEach(id => {
@@ -2495,6 +2532,22 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     }
                     createData.provider = 'todoist';
                     createData.metric_key = metricSelect.value;
+                    if (metricSelect.value === 'filter_tasks_count') {
+                        const filterNameEl = document.getElementById('nm-filter-name');
+                        if (!filterNameEl || !filterNameEl.value.trim()) {
+                            alert('Укажите название фильтра');
+                            return;
+                        }
+                        createData.filter_name = filterNameEl.value.trim();
+                    }
+                    if (metricSelect.value === 'query_tasks_count') {
+                        const filterQueryEl = document.getElementById('nm-filter-query');
+                        if (!filterQueryEl || !filterQueryEl.value.trim()) {
+                            alert('Укажите поисковый запрос');
+                            return;
+                        }
+                        createData.filter_query = filterQueryEl.value.trim();
+                    }
                 }
 
                 if (!['computed', 'integration'].includes(selectedType) && slotLabels.length >= 2) {

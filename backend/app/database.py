@@ -177,10 +177,10 @@ async def init_db():
 
         # Add icon column to metric_definitions
         await conn.execute("""
-            ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS icon VARCHAR(500) NOT NULL DEFAULT ''
+            ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS icon VARCHAR(600) NOT NULL DEFAULT ''
         """)
         await conn.execute("""
-            ALTER TABLE metric_definitions ALTER COLUMN icon TYPE VARCHAR(500)
+            ALTER TABLE metric_definitions ALTER COLUMN icon TYPE VARCHAR(600)
         """)
 
         # Correlation reports
@@ -258,6 +258,22 @@ async def init_db():
 
         await conn.execute("""
             ALTER TABLE integration_config ADD COLUMN IF NOT EXISTS value_type VARCHAR(20) NOT NULL DEFAULT 'number'
+        """)
+
+        # Integration filter config (filter_tasks_count — filter by name)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS integration_filter_config (
+                metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
+                filter_name VARCHAR(200) NOT NULL
+            )
+        """)
+
+        # Integration query config (query_tasks_count — arbitrary filter query)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS integration_query_config (
+                metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
+                filter_query VARCHAR(1024) NOT NULL
+            )
         """)
 
         # Computed metric config (formula stored as JSONB token list)

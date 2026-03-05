@@ -135,8 +135,11 @@ const api = {
     disconnectIntegration(provider) {
         return this.request('DELETE', `/api/integrations/${provider}/disconnect`);
     },
-    fetchIntegration(provider, date = null) {
-        const q = date ? `?date=${date}` : '';
+    fetchIntegration(provider, date = null, metricId = null) {
+        const params = [];
+        if (date) params.push(`date=${date}`);
+        if (metricId) params.push(`metric_id=${metricId}`);
+        const q = params.length ? '?' + params.join('&') : '';
         return this.request('POST', `/api/integrations/${provider}/fetch${q}`);
     },
     getTodoistAvailableMetrics() {

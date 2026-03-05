@@ -20,11 +20,14 @@ async def list_metrics(
 ):
     query = """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
                       cc.formula, cc.result_type,
-                      ic.provider, ic.metric_key, ic.value_type
+                      ic.provider, ic.metric_key, ic.value_type,
+                      ifc.filter_name, iqc.filter_query
                FROM metric_definitions md
                LEFT JOIN scale_config sc ON sc.metric_id = md.id
                LEFT JOIN computed_config cc ON cc.metric_id = md.id
                LEFT JOIN integration_config ic ON ic.metric_id = md.id
+               LEFT JOIN integration_filter_config ifc ON ifc.metric_id = md.id
+               LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
                WHERE md.user_id = $1"""
     params = [current_user["id"]]
     if enabled_only:
@@ -47,11 +50,14 @@ async def get_metric(
     row = await db.fetchrow(
         """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
                   cc.formula, cc.result_type,
-                  ic.provider, ic.metric_key, ic.value_type
+                  ic.provider, ic.metric_key, ic.value_type,
+                  ifc.filter_name, iqc.filter_query
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
            LEFT JOIN computed_config cc ON cc.metric_id = md.id
            LEFT JOIN integration_config ic ON ic.metric_id = md.id
+           LEFT JOIN integration_filter_config ifc ON ifc.metric_id = md.id
+           LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
            WHERE md.id = $1 AND md.user_id = $2""",
         metric_id, current_user["id"],
     )
@@ -82,6 +88,13 @@ async def create_metric(
             )
             if not integration_row:
                 raise HTTPException(400, "Todoist is not connected")
+            # Validate config fields
+            if data.metric_key == "filter_tasks_count":
+                if not data.filter_name or not data.filter_name.strip():
+                    raise HTTPException(400, "filter_name is required for filter_tasks_count")
+            elif data.metric_key == "query_tasks_count":
+                if not data.filter_query or not data.filter_query.strip():
+                    raise HTTPException(400, "filter_query is required for query_tasks_count")
         else:
             raise HTTPException(400, f"Unknown provider: {data.provider}")
 
@@ -124,6 +137,16 @@ async def create_metric(
             "INSERT INTO integration_config (metric_id, provider, metric_key, value_type) VALUES ($1, $2, $3, $4)",
             metric_id, data.provider, data.metric_key, value_type,
         )
+        if data.metric_key == "filter_tasks_count":
+            await db.execute(
+                "INSERT INTO integration_filter_config (metric_id, filter_name) VALUES ($1, $2)",
+                metric_id, data.filter_name.strip(),
+            )
+        elif data.metric_key == "query_tasks_count":
+            await db.execute(
+                "INSERT INTO integration_query_config (metric_id, filter_query) VALUES ($1, $2)",
+                metric_id, data.filter_query.strip(),
+            )
 
     if data.type == MetricType.scale:
         await db.execute(

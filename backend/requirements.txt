@@ -7,3 +7,4 @@ bcrypt
 python-multipart
 todoist-api-python>=3.0.0
 cryptography
+httpx

@@ -32,6 +32,8 @@ async def build_metric_out(row: asyncpg.Record, slots: list | None = None) -> Me
         provider=row.get("provider"),
         metric_key=row.get("metric_key"),
         value_type=row.get("value_type"),
+        filter_name=row.get("filter_name"),
+        filter_query=row.get("filter_query"),
     )
 
 

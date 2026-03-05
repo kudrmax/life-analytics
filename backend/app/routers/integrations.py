@@ -123,7 +123,12 @@ async def todoist_available_metrics(
     current_user: dict = Depends(get_current_user),
 ):
     return [
-        {"key": key, "name": info["name"], "value_type": info["value_type"]}
+        {
+            "key": key,
+            "name": info["name"],
+            "value_type": info["value_type"],
+            "config_fields": info.get("config_fields", []),
+        }
         for key, info in TODOIST_METRICS.items()
     ]
 
@@ -154,6 +159,7 @@ async def disconnect_integration(
 async def fetch_integration_data(
     provider: str,
     date: str = Query(None),
+    metric_id: int = Query(None),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -162,10 +168,15 @@ async def fetch_integration_data(
 
     target_date = date_type.fromisoformat(date) if date else date_type.today()
     try:
-        count = await fetch_and_store(db, current_user["id"], target_date)
+        result = await fetch_and_store(db, current_user["id"], target_date, metric_id=metric_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(502, f"Todoist API error: {e}")
 
-    return {"provider": provider, "date": str(target_date), "value": count}
+    return {
+        "provider": provider,
+        "date": str(target_date),
+        "results": result.get("results", []),
+        "errors": result.get("errors", []),
+    }
