@@ -1,0 +1,228 @@
+@startuml life_analytics_db_schema
+!pragma layout smetana
+
+!theme plain
+skinparam linetype ortho
+skinparam roundcorner 5
+skinparam class {
+    BackgroundColor #FEFEFE
+    BorderColor #333333
+    ArrowColor #555555
+}
+
+hide circle
+hide methods
+
+title Life Analytics — Database Schema
+
+entity "users" as users {
+    * **id** : SERIAL <<PK>>
+    --
+    * username : VARCHAR(30) <<UNIQUE>>
+    * password_hash : TEXT
+    * created_at : TIMESTAMPTZ
+}
+
+entity "metric_definitions" as md {
+    * **id** : SERIAL <<PK>>
+    --
+    * user_id : INTEGER <<FK>>
+    * slug : VARCHAR(100)
+    * name : VARCHAR(200)
+    * category : VARCHAR(100)
+    * type : metric_type
+    * enabled : BOOLEAN
+    * sort_order : INTEGER
+    * icon : VARCHAR(600)
+    * created_at : TIMESTAMPTZ
+    --
+    <<UNIQUE>> (user_id, slug)
+}
+
+entity "entries" as entries {
+    * **id** : SERIAL <<PK>>
+    --
+    * metric_id : INTEGER <<FK>>
+    * user_id : INTEGER <<FK>>
+    * date : DATE
+    * recorded_at : TIMESTAMPTZ
+    slot_id : INTEGER <<FK>>
+    --
+    <<UNIQUE INDEX>> (metric_id, user_id, date)
+    WHERE slot_id IS NULL
+    --
+    <<UNIQUE INDEX>> (metric_id, user_id, date, slot_id)
+    WHERE slot_id IS NOT NULL
+}
+
+entity "measurement_slots" as slots {
+    * **id** : SERIAL <<PK>>
+    --
+    * metric_id : INTEGER <<FK>>
+    * sort_order : INTEGER
+    * label : VARCHAR(100)
+    * enabled : BOOLEAN
+}
+
+entity "values_bool" as vb {
+    * **entry_id** : INTEGER <<PK>> <<FK>>
+    --
+    * value : BOOLEAN
+}
+
+entity "values_time" as vt {
+    * **entry_id** : INTEGER <<PK>> <<FK>>
+    --
+    * value : TIMESTAMPTZ
+}
+
+entity "values_number" as vn {
+    * **entry_id** : INTEGER <<PK>> <<FK>>
+    --
+    * value : INTEGER
+}
+
+entity "values_scale" as vs {
+    * **entry_id** : INTEGER <<PK>> <<FK>>
+    --
+    * value : INTEGER
+    * scale_min : INTEGER
+    * scale_max : INTEGER
+    * scale_step : INTEGER
+}
+
+entity "scale_config" as sc {
+    * **metric_id** : INTEGER <<PK>> <<FK>>
+    --
+    * scale_min : INTEGER
+    * scale_max : INTEGER
+    * scale_step : INTEGER
+}
+
+entity "computed_config" as cc {
+    * **metric_id** : INTEGER <<PK>> <<FK>>
+    --
+    * formula : JSONB
+    * result_type : VARCHAR(10)
+}
+
+entity "correlation_reports" as cr {
+    * **id** : SERIAL <<PK>>
+    --
+    * user_id : INTEGER <<FK>>
+    * status : VARCHAR(20)
+    * period_start : DATE
+    * period_end : DATE
+    * created_at : TIMESTAMPTZ
+    finished_at : TIMESTAMPTZ
+}
+
+entity "correlation_pairs" as cp {
+    * **id** : SERIAL <<PK>>
+    --
+    * report_id : INTEGER <<FK>>
+    metric_a_id : INTEGER
+    metric_b_id : INTEGER
+    slot_a_id : INTEGER
+    slot_b_id : INTEGER
+    * label_a : VARCHAR(200)
+    * label_b : VARCHAR(200)
+    * type_a : VARCHAR(20)
+    * type_b : VARCHAR(20)
+    correlation : FLOAT
+    * data_points : INTEGER
+    * lag_days : INTEGER
+}
+
+entity "user_integrations" as ui {
+    * **id** : SERIAL <<PK>>
+    --
+    * user_id : INTEGER <<FK>>
+    * provider : VARCHAR(50)
+    * encrypted_token : TEXT
+    * enabled : BOOLEAN
+    * created_at : TIMESTAMPTZ
+    --
+    <<UNIQUE>> (user_id, provider)
+}
+
+entity "integration_config" as ic {
+    * **metric_id** : INTEGER <<PK>> <<FK>>
+    --
+    * provider : VARCHAR(50)
+    * metric_key : VARCHAR(100)
+    * value_type : VARCHAR(20)
+}
+
+entity "integration_filter_config" as ifc {
+    * **metric_id** : INTEGER <<PK>> <<FK>>
+    --
+    * filter_name : VARCHAR(200)
+}
+
+entity "integration_query_config" as iqc {
+    * **metric_id** : INTEGER <<PK>> <<FK>>
+    --
+    * filter_query : VARCHAR(1024)
+}
+
+entity "activitywatch_settings" as aws {
+    * **user_id** : INTEGER <<PK>> <<FK>>
+    --
+    * enabled : BOOLEAN
+    * aw_url : VARCHAR(500)
+    * created_at : TIMESTAMPTZ
+}
+
+entity "activitywatch_daily_summary" as ads {
+    * **id** : SERIAL <<PK>>
+    --
+    * user_id : INTEGER <<FK>>
+    * date : DATE
+    * total_seconds : INTEGER
+    * active_seconds : INTEGER
+    * synced_at : TIMESTAMPTZ
+    --
+    <<UNIQUE>> (user_id, date)
+}
+
+entity "activitywatch_app_usage" as aau {
+    * **id** : SERIAL <<PK>>
+    --
+    * user_id : INTEGER <<FK>>
+    * date : DATE
+    * app_name : VARCHAR(500)
+    * source : VARCHAR(20)
+    * duration_seconds : INTEGER
+    --
+    <<UNIQUE>> (user_id, date, app_name, source)
+}
+
+' ── Relationships ──
+
+users ||--o{ md : "user_id"
+users ||--o{ entries : "user_id"
+users ||--o{ cr : "user_id"
+users ||--o{ ui : "user_id"
+users ||--o{ aws : "user_id"
+users ||--o{ ads : "user_id"
+users ||--o{ aau : "user_id"
+
+md ||--o{ entries : "metric_id"
+md ||--o{ slots : "metric_id"
+md ||--o| sc : "metric_id"
+md ||--o| cc : "metric_id"
+md ||--o| ic : "metric_id"
+md ||--o| ifc : "metric_id"
+md ||--o| iqc : "metric_id"
+
+slots ||--o{ entries : "slot_id"
+
+entries ||--o| vb : "entry_id"
+entries ||--o| vt : "entry_id"
+entries ||--o| vn : "entry_id"
+entries ||--o| vs : "entry_id"
+
+cr ||--o{ cp : "report_id"
+
+@enduml
