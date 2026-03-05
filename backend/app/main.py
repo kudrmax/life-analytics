@@ -44,6 +44,8 @@ async def lifespan(app: FastAPI):
     await init_db()
     from app.database import pool as db_pool
     await run_migrations(db_pool)
+    async with db_pool.acquire() as conn:
+        await conn.execute("ANALYZE")
     yield
     await close_pool()
 
