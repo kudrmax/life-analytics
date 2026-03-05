@@ -105,7 +105,7 @@ function navigateTo(page, params = {}) {
         nav.style.display = (page === 'login' || page === 'register') ? 'none' : '';
     }
 
-    const activePage = page === 'metric-detail' ? 'dashboard' : page;
+    const activePage = page === 'metric-detail' ? 'charts' : page;
     document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === activePage));
     const main = document.getElementById('main');
 
@@ -114,7 +114,8 @@ function navigateTo(page, params = {}) {
         case 'register': renderRegister(main); break;
         case 'today': renderToday(main); break;
         case 'history': renderHistory(main); break;
-        case 'dashboard': renderDashboard(main); break;
+        case 'charts': renderCharts(main); break;
+        case 'analysis': renderAnalysis(main); break;
         case 'metric-detail': renderMetricDetail(main, params.metricId); break;
         case 'settings': renderSettings(main, params); break;
     }
@@ -1117,8 +1118,8 @@ function _formatEntryValue(entry, type, resultType) {
     }
 }
 
-// ─── Dashboard Page ───
-async function renderDashboard(container) {
+// ─── Charts Page (Статистика) ───
+async function renderCharts(container) {
     const end = todayStr();
     const start = daysAgo(30);
 
@@ -1126,31 +1127,34 @@ async function renderDashboard(container) {
         <div class="stats-header">
             <h2 class="stats-title">Статистика</h2>
             <div class="stats-controls">
-                <input type="date" id="dash-start" value="${start}">
+                <div id="charts-start-picker"></div>
                 <span class="stats-dash">—</span>
-                <input type="date" id="dash-end" value="${end}">
-                <button class="btn-icon" id="dash-refresh" title="Обновить">
+                <div id="charts-end-picker"></div>
+                <button class="btn-icon" id="charts-refresh" title="Обновить">
                     <i data-lucide="refresh-cw"></i>
                 </button>
             </div>
         </div>
         <div id="trends-section"></div>
-        <div id="correlation-section"></div>
     `;
 
     if (window.lucide) lucide.createIcons();
 
-    document.getElementById('dash-refresh').addEventListener('click', () => {
-        loadDashboard(
-            document.getElementById('dash-start').value,
-            document.getElementById('dash-end').value
-        );
+    const chartsStartPicker = createDatePicker('charts-start-picker', start, () => {
+        loadChartsTrends(chartsStartPicker.getValue(), chartsEndPicker.getValue());
+    });
+    const chartsEndPicker = createDatePicker('charts-end-picker', end, () => {
+        loadChartsTrends(chartsStartPicker.getValue(), chartsEndPicker.getValue());
     });
 
-    await loadDashboard(start, end);
+    document.getElementById('charts-refresh').addEventListener('click', () => {
+        loadChartsTrends(chartsStartPicker.getValue(), chartsEndPicker.getValue());
+    });
+
+    await loadChartsTrends(start, end);
 }
 
-async function loadDashboard(start, end) {
+async function loadChartsTrends(start, end) {
     const _t0 = performance.now();
     // Destroy previous trend charts
     trendChartInstances.forEach(c => c.destroy());
@@ -1175,7 +1179,7 @@ async function loadDashboard(start, end) {
         })(),
     ]);
 
-    let trendsHtml = '<h3>Графики и данные</h3><div class="trends-list">';
+    let trendsHtml = '<div class="trends-list">';
     const trendData = [];
     for (const { metric: m, trend } of trendResults) {
         if (trend.points && trend.points.length > 0) {
@@ -1253,8 +1257,49 @@ async function loadDashboard(start, end) {
         });
     });
 
-    // Correlation section
+    console.debug(`[render] charts  ${(performance.now() - _t0).toFixed(0)}ms`);
+}
+
+// ─── Analysis Page (Анализ) ───
+async function renderAnalysis(container) {
+    const end = todayStr();
+    const start = daysAgo(30);
+
+    container.innerHTML = `
+        <div class="stats-header">
+            <h2 class="stats-title">Анализ</h2>
+            <div class="stats-controls">
+                <div id="analysis-start-picker"></div>
+                <span class="stats-dash">—</span>
+                <div id="analysis-end-picker"></div>
+                <button class="btn-icon" id="analysis-refresh" title="Обновить">
+                    <i data-lucide="refresh-cw"></i>
+                </button>
+            </div>
+        </div>
+        <div id="correlation-section"></div>
+    `;
+
+    if (window.lucide) lucide.createIcons();
+
+    const analysisStartPicker = createDatePicker('analysis-start-picker', start, () => {
+        loadAnalysisCorrelation(analysisStartPicker.getValue(), analysisEndPicker.getValue());
+    });
+    const analysisEndPicker = createDatePicker('analysis-end-picker', end, () => {
+        loadAnalysisCorrelation(analysisStartPicker.getValue(), analysisEndPicker.getValue());
+    });
+
+    document.getElementById('analysis-refresh').addEventListener('click', () => {
+        loadAnalysisCorrelation(analysisStartPicker.getValue(), analysisEndPicker.getValue());
+    });
+
+    await loadAnalysisCorrelation(start, end);
+}
+
+async function loadAnalysisCorrelation(start, end) {
+    const _t0 = performance.now();
     const corrEl = document.getElementById('correlation-section');
+
     corrEl.innerHTML = `
         <div class="corr-header">
             <div class="corr-header-left">
@@ -1275,7 +1320,7 @@ async function loadDashboard(start, end) {
     });
 
     loadCorrelationReport(start, end);
-    console.debug(`[render] dashboard  ${(performance.now() - _t0).toFixed(0)}ms`);
+    console.debug(`[render] analysis  ${(performance.now() - _t0).toFixed(0)}ms`);
 }
 
 async function loadCorrelationReport(start, end) {
@@ -1295,7 +1340,7 @@ async function loadCorrelationReport(start, end) {
         html += '<div class="corr-running">Рассчитываем корреляции...</div>';
         if (!corrPollInterval) {
             corrPollInterval = setInterval(async () => {
-                if (currentPage !== 'dashboard') {
+                if (currentPage !== 'analysis') {
                     clearInterval(corrPollInterval);
                     corrPollInterval = null;
                     return;
@@ -1772,20 +1817,20 @@ function minutesToHHMM(m) {
 
 async function renderMetricDetail(container, metricId) {
     const metric = metrics.find(m => m.id === metricId);
-    if (!metric) { navigateTo('dashboard'); return; }
+    if (!metric) { navigateTo('charts'); return; }
 
     const end = todayStr();
     const start = daysAgo(90);
 
     container.innerHTML = `
         <div class="detail-header">
-            <button class="btn-small" id="detail-back"><i data-lucide="arrow-left"></i> Дашборд</button>
+            <button class="btn-small" id="detail-back"><i data-lucide="arrow-left"></i> Статистика</button>
             <h2>${metric.icon ? '<span class="metric-icon">' + metric.icon + '</span>' : ''}${metric.name}</h2>
         </div>
         <div class="detail-controls">
-            <input type="date" id="detail-start" value="${start}">
+            <div id="detail-start-picker"></div>
             <span>—</span>
-            <input type="date" id="detail-end" value="${end}">
+            <div id="detail-end-picker"></div>
             <button class="btn-small" id="detail-refresh">Обновить</button>
         </div>
         <div class="detail-chart-container"><canvas id="detail-chart"></canvas></div>
@@ -1794,13 +1839,16 @@ async function renderMetricDetail(container, metricId) {
 
     if (window.lucide) lucide.createIcons();
 
-    document.getElementById('detail-back').addEventListener('click', () => navigateTo('dashboard'));
+    const detailStartPicker = createDatePicker('detail-start-picker', start, () => {
+        loadMetricDetail(metricId, metric, detailStartPicker.getValue(), detailEndPicker.getValue());
+    });
+    const detailEndPicker = createDatePicker('detail-end-picker', end, () => {
+        loadMetricDetail(metricId, metric, detailStartPicker.getValue(), detailEndPicker.getValue());
+    });
+
+    document.getElementById('detail-back').addEventListener('click', () => navigateTo('charts'));
     document.getElementById('detail-refresh').addEventListener('click', () => {
-        loadMetricDetail(
-            metricId, metric,
-            document.getElementById('detail-start').value,
-            document.getElementById('detail-end').value
-        );
+        loadMetricDetail(metricId, metric, detailStartPicker.getValue(), detailEndPicker.getValue());
     });
 
     await loadMetricDetail(metricId, metric, start, end);
@@ -3352,6 +3400,148 @@ function showClockPicker(initialValue, callback) {
             };
         });
     }
+}
+
+// ─── Date Picker ───
+const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+const DAY_NAMES_SHORT = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+
+function createDatePicker(containerId, initialValue, onChange) {
+    const container = document.getElementById(containerId);
+    if (!container) return null;
+
+    let currentValue = initialValue;
+    let viewYear, viewMonth; // 1-based month
+    {
+        const parts = initialValue.split('-');
+        viewYear = parseInt(parts[0]);
+        viewMonth = parseInt(parts[1]);
+    }
+
+    function fmtBtn(dateStr) {
+        const [, m, d] = dateStr.split('-');
+        return `${d}.${m}`;
+    }
+
+    // Build DOM
+    container.classList.add('date-picker');
+    const btn = document.createElement('button');
+    btn.className = 'date-picker-btn';
+    btn.type = 'button';
+    btn.textContent = fmtBtn(currentValue);
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'date-picker-dropdown';
+
+    container.appendChild(btn);
+    container.appendChild(dropdown);
+
+    function renderDropdown() {
+        const daysInMonth = new Date(viewYear, viewMonth, 0).getDate();
+        const firstDay = (new Date(viewYear, viewMonth - 1, 1).getDay() + 6) % 7;
+        const today = todayStr();
+
+        let html = `<div class="date-picker-nav">
+            <button type="button" class="date-picker-nav-btn" data-dp-prev><i data-lucide="chevron-left"></i></button>
+            <span class="date-picker-nav-title">${MONTHS_RU[viewMonth - 1]} ${viewYear}</span>
+            <button type="button" class="date-picker-nav-btn" data-dp-next><i data-lucide="chevron-right"></i></button>
+        </div><div class="date-picker-grid">`;
+
+        html += DAY_NAMES_SHORT.map(d => `<div class="cal-header">${d}</div>`).join('');
+        for (let i = 0; i < firstDay; i++) html += '<div class="cal-empty"></div>';
+
+        for (let d = 1; d <= daysInMonth; d++) {
+            const dateStr = `${viewYear}-${String(viewMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+            const cls = [
+                'cal-day',
+                dateStr === today ? 'today' : '',
+                dateStr === currentValue ? 'selected' : ''
+            ].filter(Boolean).join(' ');
+            html += `<div class="${cls}" data-dp-date="${dateStr}">${d}</div>`;
+        }
+        html += '</div>';
+        dropdown.innerHTML = html;
+        if (window.lucide) lucide.createIcons({ nodes: [dropdown] });
+
+        dropdown.querySelector('[data-dp-prev]').addEventListener('click', (e) => {
+            e.stopPropagation();
+            viewMonth--;
+            if (viewMonth < 1) { viewMonth = 12; viewYear--; }
+            renderDropdown();
+        });
+        dropdown.querySelector('[data-dp-next]').addEventListener('click', (e) => {
+            e.stopPropagation();
+            viewMonth++;
+            if (viewMonth > 12) { viewMonth = 1; viewYear++; }
+            renderDropdown();
+        });
+        dropdown.querySelectorAll('[data-dp-date]').forEach(el => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                currentValue = el.dataset.dpDate;
+                const [, m] = currentValue.split('-');
+                viewYear = parseInt(currentValue.split('-')[0]);
+                viewMonth = parseInt(m);
+                btn.textContent = fmtBtn(currentValue);
+                close();
+                if (onChange) onChange(currentValue);
+            });
+        });
+    }
+
+    function alignDropdown() {
+        dropdown.classList.remove('align-left', 'align-right');
+        requestAnimationFrame(() => {
+            const rect = dropdown.getBoundingClientRect();
+            if (rect.left < 4) {
+                dropdown.classList.add('align-left');
+            } else if (rect.right > window.innerWidth - 4) {
+                dropdown.classList.add('align-right');
+            }
+        });
+    }
+
+    function open() {
+        // Close all other open date pickers
+        document.querySelectorAll('.date-picker-dropdown.open').forEach(d => d.classList.remove('open'));
+        renderDropdown();
+        dropdown.classList.add('open');
+        alignDropdown();
+    }
+
+    function close() {
+        dropdown.classList.remove('open');
+    }
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (dropdown.classList.contains('open')) {
+            close();
+        } else {
+            open();
+        }
+    });
+
+    dropdown.addEventListener('click', (e) => e.stopPropagation());
+
+    const outsideHandler = () => close();
+    document.addEventListener('click', outsideHandler);
+
+    return {
+        getValue() { return currentValue; },
+        setValue(dateStr) {
+            currentValue = dateStr;
+            const parts = dateStr.split('-');
+            viewYear = parseInt(parts[0]);
+            viewMonth = parseInt(parts[1]);
+            btn.textContent = fmtBtn(currentValue);
+        },
+        destroy() {
+            document.removeEventListener('click', outsideHandler);
+            container.innerHTML = '';
+            container.classList.remove('date-picker');
+        }
+    };
 }
 
 // ─── Helpers ───
