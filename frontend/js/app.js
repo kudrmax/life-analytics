@@ -10,6 +10,7 @@ let currentUser = null;
 let isAuthenticated = false;
 let corrPollInterval = null;
 const corrPairData = new Map();
+let dailySummaryCache = { date: null, data: null };
 
 function todayStr() {
     return new Date().toISOString().slice(0, 10);
@@ -63,7 +64,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     await checkAuth();
 
     if (isAuthenticated) {
-        await loadMetrics();
+        const today = todayStr();
+        const [_, summaryData] = await Promise.all([
+            loadMetrics(),
+            api.getDailySummary(today),
+        ]);
+        dailySummaryCache = { date: today, data: summaryData };
         navigateTo('today');
     } else {
         navigateTo('login');
@@ -308,24 +314,39 @@ async function renderTodayForm() {
         goTodayBtn.style.display = (currentDate === todayStr()) ? 'none' : '';
     }
     const form = document.getElementById('metrics-form');
-    if (!form.innerHTML || form.querySelector('.loading-spinner')) {
-        form.innerHTML = '<div class="loading-spinner"></div>';
-    }
 
-    // Fetch daily summary and AW data in parallel
-    const [summary, awCard] = await Promise.all([
-        api.getDailySummary(currentDate),
-        (async () => {
-            try {
-                const awStatus = await api.awGetStatus();
-                if (awStatus.enabled) {
-                    const awSummary = await api.awGetSummary(currentDate);
-                    return _renderAWSummaryCard(awSummary);
-                }
-            } catch (e) { /* AW not configured — skip */ }
-            return '';
-        })(),
-    ]);
+    let summary, awCard;
+    if (dailySummaryCache.date === currentDate && dailySummaryCache.data) {
+        summary = dailySummaryCache.data;
+        dailySummaryCache = { date: null, data: null };
+        // AW data still needs fetching
+        try {
+            const awStatus = await api.awGetStatus();
+            if (awStatus.enabled) {
+                const awSummary = await api.awGetSummary(currentDate);
+                awCard = _renderAWSummaryCard(awSummary);
+            } else {
+                awCard = '';
+            }
+        } catch (e) { awCard = ''; }
+    } else {
+        if (!form.innerHTML || form.querySelector('.loading-spinner')) {
+            form.innerHTML = '<div class="loading-spinner"></div>';
+        }
+        [summary, awCard] = await Promise.all([
+            api.getDailySummary(currentDate),
+            (async () => {
+                try {
+                    const awStatus = await api.awGetStatus();
+                    if (awStatus.enabled) {
+                        const awSummary = await api.awGetSummary(currentDate);
+                        return _renderAWSummaryCard(awSummary);
+                    }
+                } catch (e) { /* AW not configured — skip */ }
+                return '';
+            })(),
+        ]);
+    }
 
     // Group by category
     const categories = {};
@@ -585,12 +606,16 @@ async function handleNumberChange(e) {
 
     const raw = input.value.trim();
     if (raw === '') {
-        // Empty input — delete entry to return to null
         if (entryId) {
-            try {
-                await api.deleteEntry(parseInt(entryId));
-                await renderTodayForm();
-            } catch (error) { alert('Ошибка: ' + error.message); }
+            card.classList.remove('filled');
+            if (slotEl) slotEl.dataset.entryId = '';
+            else card.dataset.entryId = '';
+            api.deleteEntry(parseInt(entryId)).then(() => {
+                renderTodayForm();
+            }).catch(err => {
+                alert('Ошибка: ' + err.message);
+                renderTodayForm();
+            });
         }
         return;
     }
@@ -601,10 +626,15 @@ async function handleNumberChange(e) {
         return;
     }
 
-    try {
-        await saveDaily(metricId, entryId, parsed, slotId);
-        await renderTodayForm();
-    } catch (error) { alert('Ошибка: ' + error.message); }
+    card.classList.add('filled');
+    saveDaily(metricId, entryId, parsed, slotId).then(({ entryId: newId }) => {
+        if (slotEl) slotEl.dataset.entryId = newId;
+        else card.dataset.entryId = newId;
+        updateProgress();
+    }).catch(err => {
+        alert('Ошибка: ' + err.message);
+        renderTodayForm();
+    });
 }
 
 // ─── ActivityWatch UI helpers ───
@@ -747,45 +777,71 @@ async function handleFormClick(e) {
 
     // Clear metric entry
     if (btn.dataset.clearEntry) {
-        try {
-            const clearEntryId = parseInt(btn.dataset.clearEntry);
-            await api.deleteEntry(clearEntryId);
-            await renderTodayForm();
-        } catch (error) {
-            alert('Ошибка при удалении: ' + error.message);
-        }
+        const clearEntryId = parseInt(btn.dataset.clearEntry);
+        card.classList.remove('filled');
+        if (slotEl) slotEl.dataset.entryId = '';
+        else card.dataset.entryId = '';
+        api.deleteEntry(clearEntryId).then(() => {
+            renderTodayForm();
+        }).catch(err => {
+            alert('Ошибка при удалении: ' + err.message);
+            renderTodayForm();
+        });
         return;
     }
 
     // Boolean buttons
     if (btn.classList.contains('bool-btn')) {
-        try {
-            const boolVal = btn.dataset.value === 'true';
-            await saveDaily(metricId, entryId, boolVal, slotId);
-            await renderTodayForm();
-        } catch (error) {
-            alert('Ошибка: ' + error.message);
-        }
+        const boolVal = btn.dataset.value === 'true';
+        const container = slotEl || card;
+        container.querySelectorAll('.bool-btn').forEach(b => {
+            b.classList.remove('active', 'yes', 'no');
+        });
+        btn.classList.add('active', boolVal ? 'yes' : 'no');
+        card.classList.add('filled');
+        saveDaily(metricId, entryId, boolVal, slotId).then(({ entryId: newId }) => {
+            if (slotEl) slotEl.dataset.entryId = newId;
+            else card.dataset.entryId = newId;
+            updateProgress();
+        }).catch(err => {
+            alert('Ошибка: ' + err.message);
+            renderTodayForm();
+        });
         return;
     }
 
     // Scale buttons
     if (btn.classList.contains('scale-btn')) {
-        try {
-            await saveDaily(metricId, entryId, parseInt(btn.dataset.value), slotId);
-            await renderTodayForm();
-        } catch (error) {
-            alert('Ошибка: ' + error.message);
-        }
+        const container = slotEl || card;
+        container.querySelectorAll('.scale-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        card.classList.add('filled');
+        saveDaily(metricId, entryId, parseInt(btn.dataset.value), slotId).then(({ entryId: newId }) => {
+            if (slotEl) slotEl.dataset.entryId = newId;
+            else card.dataset.entryId = newId;
+            updateProgress();
+        }).catch(err => {
+            alert('Ошибка: ' + err.message);
+            renderTodayForm();
+        });
         return;
     }
 
     // Number "=0" button
     if (btn.dataset.action === 'set-zero') {
-        try {
-            await saveDaily(metricId, entryId, 0, slotId);
-            await renderTodayForm();
-        } catch (error) { alert('Ошибка: ' + error.message); }
+        const container = slotEl || card;
+        const input = container.querySelector('.number-value-input');
+        input.value = 0;
+        card.classList.add('filled');
+        btn.remove();
+        saveDaily(metricId, entryId, 0, slotId).then(({ entryId: newId }) => {
+            if (slotEl) slotEl.dataset.entryId = newId;
+            else card.dataset.entryId = newId;
+            updateProgress();
+        }).catch(err => {
+            alert('Ошибка: ' + err.message);
+            renderTodayForm();
+        });
         return;
     }
 
@@ -796,10 +852,18 @@ async function handleFormClick(e) {
         let currentVal = input.value !== '' ? parseInt(input.value) : 0;
         if (isNaN(currentVal)) currentVal = 0;
         const newVal = currentVal + (btn.dataset.action === 'increment' ? 1 : -1);
-        try {
-            await saveDaily(metricId, entryId, newVal, slotId);
-            await renderTodayForm();
-        } catch (error) { alert('Ошибка: ' + error.message); }
+        input.value = newVal;
+        card.classList.add('filled');
+        const zeroBtn = container.querySelector('.number-zero-btn');
+        if (zeroBtn) zeroBtn.remove();
+        saveDaily(metricId, entryId, newVal, slotId).then(({ entryId: newId }) => {
+            if (slotEl) slotEl.dataset.entryId = newId;
+            else card.dataset.entryId = newId;
+            updateProgress();
+        }).catch(err => {
+            alert('Ошибка: ' + err.message);
+            renderTodayForm();
+        });
         return;
     }
 
@@ -823,6 +887,7 @@ async function handleFormClick(e) {
 async function saveDaily(metricId, entryId, value, slotId) {
     if (entryId) {
         await api.updateEntry(parseInt(entryId), { value });
+        return { entryId: parseInt(entryId) };
     } else {
         const payload = {
             metric_id: parseInt(metricId),
@@ -830,8 +895,33 @@ async function saveDaily(metricId, entryId, value, slotId) {
             value,
         };
         if (slotId) payload.slot_id = parseInt(slotId);
-        await api.createEntry(payload);
+        const result = await api.createEntry(payload);
+        return { entryId: result.id };
     }
+}
+
+function updateProgress() {
+    const form = document.getElementById('metrics-form');
+    let total = 0, filled = 0;
+    form.querySelectorAll('.metric-card').forEach(card => {
+        const type = card.dataset.metricType;
+        if (type === 'computed' || type === 'integration') return;
+        const slots = card.querySelectorAll('.metric-slot');
+        if (slots.length > 0) {
+            slots.forEach(s => {
+                total++;
+                if (s.dataset.entryId) filled++;
+            });
+        } else {
+            total++;
+            if (card.dataset.entryId) filled++;
+        }
+    });
+    const pct = total > 0 ? Math.round((filled / total) * 100) : 0;
+    document.getElementById('progress-count').textContent = `${pct}%`;
+    const bar = document.getElementById('progress-fill');
+    bar.style.width = `${pct}%`;
+    bar.classList.toggle('complete', filled === total && total > 0);
 }
 
 // ─── History Page ───
