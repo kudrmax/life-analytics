@@ -1397,6 +1397,21 @@ input[type="month"], input[type="date"] {
 }
 .corr-help-btn:hover { color: var(--text); border-color: var(--text-dim); }
 
+.corr-help {
+    text-align: left;
+    font-size: 14px;
+    line-height: 1.7;
+}
+.corr-help h3 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 18px 0 6px;
+    color: var(--text);
+}
+.corr-help p {
+    margin: 0 0 12px;
+}
+
 /* ─── Modal ─── */
 .modal-overlay {
     position: fixed;
