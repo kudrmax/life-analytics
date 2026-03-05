@@ -24,6 +24,7 @@ POSTGRES_DB = os.environ.get("POSTGRES_DB", "life_analytics")
 YADISK_TOKEN = os.environ.get("YADISK_TOKEN", "")
 YADISK_BACKUP_PATH = os.environ.get("YADISK_BACKUP_PATH", "/life-analytics-backups/")
 
+BACKUP_PREFIX = os.environ.get("BACKUP_PREFIX", "life_analytics")
 BACKUP_INTERVAL_MINUTES = int(os.environ.get("BACKUP_INTERVAL_MINUTES", "360"))
 BACKUP_RETAIN_DAYS = int(os.environ.get("BACKUP_RETAIN_DAYS", "30"))
 
@@ -33,7 +34,7 @@ LOCAL_BACKUP_DIR = "/backups"
 def create_dump() -> str:
     """Run pg_dump | gzip, return path to .sql.gz file."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
-    filename = f"life_analytics_{ts}.sql.gz"
+    filename = f"{BACKUP_PREFIX}_{ts}.sql.gz"
     os.makedirs(LOCAL_BACKUP_DIR, exist_ok=True)
     filepath = f"{LOCAL_BACKUP_DIR}/{filename}"
 
