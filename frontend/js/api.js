@@ -18,6 +18,25 @@ function clearToken() {
     localStorage.removeItem(USERNAME_KEY);
 }
 
+// Response cache
+const _responseCache = new Map();
+
+function getCached(url, maxAgeMs) {
+    const entry = _responseCache.get(url);
+    if (entry && Date.now() - entry.time < maxAgeMs) return entry.data;
+    return undefined;
+}
+
+function setCache(url, data) {
+    _responseCache.set(url, { data, time: Date.now() });
+}
+
+function invalidateCache(...patterns) {
+    for (const key of _responseCache.keys()) {
+        if (patterns.some(p => key.includes(p))) _responseCache.delete(key);
+    }
+}
+
 const api = {
     API_BASE,
     async request(method, path, body = null) {
@@ -50,6 +69,15 @@ const api = {
         return res.json();
     },
 
+    cachedGet(path, maxAgeMs = 120_000) {
+        const cached = getCached(path, maxAgeMs);
+        if (cached !== undefined) return Promise.resolve(cached);
+        return this.request('GET', path).then(data => {
+            setCache(path, data);
+            return data;
+        });
+    },
+
     // Auth
     register(username, password) {
         return this.request('POST', '/api/auth/register', { username, password });
@@ -72,14 +100,20 @@ const api = {
         const q = enabledOnly ? '?enabled_only=true' : '';
         return this.request('GET', `/api/metrics${q}`);
     },
-    createMetric(data) {
-        return this.request('POST', '/api/metrics', data);
+    async createMetric(data) {
+        const result = await this.request('POST', '/api/metrics', data);
+        invalidateCache('/api/metrics', '/api/daily/');
+        return result;
     },
-    updateMetric(id, data) {
-        return this.request('PATCH', `/api/metrics/${id}`, data);
+    async updateMetric(id, data) {
+        const result = await this.request('PATCH', `/api/metrics/${id}`, data);
+        invalidateCache('/api/metrics', '/api/daily/');
+        return result;
     },
-    deleteMetric(id) {
-        return this.request('DELETE', `/api/metrics/${id}`);
+    async deleteMetric(id) {
+        const result = await this.request('DELETE', `/api/metrics/${id}`);
+        invalidateCache('/api/metrics', '/api/daily/');
+        return result;
     },
 
     // Entries
@@ -88,19 +122,25 @@ const api = {
         if (metricId) q += `&metric_id=${metricId}`;
         return this.request('GET', `/api/entries${q}`);
     },
-    createEntry(data) {
-        return this.request('POST', '/api/entries', data);
+    async createEntry(data) {
+        const result = await this.request('POST', '/api/entries', data);
+        invalidateCache('/api/daily/', '/api/entries');
+        return result;
     },
-    updateEntry(id, data) {
-        return this.request('PUT', `/api/entries/${id}`, data);
+    async updateEntry(id, data) {
+        const result = await this.request('PUT', `/api/entries/${id}`, data);
+        invalidateCache('/api/daily/', '/api/entries');
+        return result;
     },
-    deleteEntry(id) {
-        return this.request('DELETE', `/api/entries/${id}`);
+    async deleteEntry(id) {
+        const result = await this.request('DELETE', `/api/entries/${id}`);
+        invalidateCache('/api/daily/', '/api/entries');
+        return result;
     },
 
     // Daily
     getDailySummary(date) {
-        return this.request('GET', `/api/daily/${date}`);
+        return this.cachedGet(`/api/daily/${date}`);
     },
 
     // Analytics
@@ -132,15 +172,19 @@ const api = {
     getTodoistAuthUrl() {
         return this.request('GET', '/api/integrations/todoist/auth-url');
     },
-    disconnectIntegration(provider) {
-        return this.request('DELETE', `/api/integrations/${provider}/disconnect`);
+    async disconnectIntegration(provider) {
+        const result = await this.request('DELETE', `/api/integrations/${provider}/disconnect`);
+        invalidateCache('/api/integrations');
+        return result;
     },
-    fetchIntegration(provider, date = null, metricId = null) {
+    async fetchIntegration(provider, date = null, metricId = null) {
         const params = [];
         if (date) params.push(`date=${date}`);
         if (metricId) params.push(`metric_id=${metricId}`);
         const q = params.length ? '?' + params.join('&') : '';
-        return this.request('POST', `/api/integrations/${provider}/fetch${q}`);
+        const result = await this.request('POST', `/api/integrations/${provider}/fetch${q}`);
+        invalidateCache('/api/daily/');
+        return result;
     },
     getTodoistAvailableMetrics() {
         return this.request('GET', '/api/integrations/todoist/available-metrics');
@@ -148,21 +192,27 @@ const api = {
 
     // ActivityWatch
     awGetStatus() {
-        return this.request('GET', '/api/integrations/activitywatch/status');
+        return this.cachedGet('/api/integrations/activitywatch/status', 300_000);
     },
-    awEnable() {
-        return this.request('POST', '/api/integrations/activitywatch/enable');
+    async awEnable() {
+        const result = await this.request('POST', '/api/integrations/activitywatch/enable');
+        invalidateCache('/api/integrations/activitywatch');
+        return result;
     },
-    awDisable() {
-        return this.request('DELETE', '/api/integrations/activitywatch/disable');
+    async awDisable() {
+        const result = await this.request('DELETE', '/api/integrations/activitywatch/disable');
+        invalidateCache('/api/integrations/activitywatch');
+        return result;
     },
-    awSync(date, windowEvents, afkEvents, webEvents = null) {
+    async awSync(date, windowEvents, afkEvents, webEvents = null) {
         const body = { date, window_events: windowEvents, afk_events: afkEvents };
         if (webEvents) body.web_events = webEvents;
-        return this.request('POST', '/api/integrations/activitywatch/sync', body);
+        const result = await this.request('POST', '/api/integrations/activitywatch/sync', body);
+        invalidateCache('/api/integrations/activitywatch');
+        return result;
     },
     awGetSummary(date) {
-        return this.request('GET', `/api/integrations/activitywatch/summary?date=${date}`);
+        return this.cachedGet(`/api/integrations/activitywatch/summary?date=${date}`);
     },
     awGetTrends(start, end) {
         return this.request('GET', `/api/integrations/activitywatch/trends?start=${start}&end=${end}`);
@@ -172,23 +222,33 @@ const api = {
     awGetCategories() {
         return this.request('GET', '/api/integrations/activitywatch/categories');
     },
-    awCreateCategory(name, color) {
-        return this.request('POST', '/api/integrations/activitywatch/categories', { name, color });
+    async awCreateCategory(name, color) {
+        const result = await this.request('POST', '/api/integrations/activitywatch/categories', { name, color });
+        invalidateCache('/api/integrations/activitywatch/categories');
+        return result;
     },
-    awUpdateCategory(id, data) {
-        return this.request('PUT', `/api/integrations/activitywatch/categories/${id}`, data);
+    async awUpdateCategory(id, data) {
+        const result = await this.request('PUT', `/api/integrations/activitywatch/categories/${id}`, data);
+        invalidateCache('/api/integrations/activitywatch/categories');
+        return result;
     },
-    awDeleteCategory(id) {
-        return this.request('DELETE', `/api/integrations/activitywatch/categories/${id}`);
+    async awDeleteCategory(id) {
+        const result = await this.request('DELETE', `/api/integrations/activitywatch/categories/${id}`);
+        invalidateCache('/api/integrations/activitywatch/categories');
+        return result;
     },
     awGetApps() {
         return this.request('GET', '/api/integrations/activitywatch/apps');
     },
-    awSetAppCategory(appName, categoryId) {
-        return this.request('PUT', `/api/integrations/activitywatch/apps/${encodeURIComponent(appName)}/category`, { category_id: categoryId });
+    async awSetAppCategory(appName, categoryId) {
+        const result = await this.request('PUT', `/api/integrations/activitywatch/apps/${encodeURIComponent(appName)}/category`, { category_id: categoryId });
+        invalidateCache('/api/integrations/activitywatch/apps');
+        return result;
     },
-    awBatchSetCategory(appNames, categoryId) {
-        return this.request('PUT', '/api/integrations/activitywatch/apps/batch-category', { app_names: appNames, category_id: categoryId });
+    async awBatchSetCategory(appNames, categoryId) {
+        const result = await this.request('PUT', '/api/integrations/activitywatch/apps/batch-category', { app_names: appNames, category_id: categoryId });
+        invalidateCache('/api/integrations/activitywatch/apps');
+        return result;
     },
     awGetAvailableMetrics() {
         return this.request('GET', '/api/integrations/activitywatch/available-metrics');
