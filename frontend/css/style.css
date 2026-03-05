@@ -45,6 +45,26 @@ body {
     transition: background-color 0.3s ease, color 0.3s ease;
 }
 
+/* ─── Loading Spinner ─── */
+.loading-spinner {
+    display: flex;
+    justify-content: center;
+    padding: 3rem 0;
+    color: var(--text-dim);
+}
+.loading-spinner::after {
+    content: '';
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
 /* ─── Nav ─── */
 nav {
     position: fixed;

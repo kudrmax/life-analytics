@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends
 
 from app.database import get_db
 from app.auth import get_current_user
-from app.metric_helpers import get_entry_value
 from app.formula import convert_metric_value, evaluate_formula
 
 
@@ -17,6 +16,7 @@ def _parse_formula(raw):
     if isinstance(raw, str):
         return json.loads(raw)
     return raw
+
 
 router = APIRouter(prefix="/api/daily", tags=["daily"])
 
@@ -84,6 +84,65 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
     for e in entries:
         entries_by_metric[e["metric_id"]].append(e)
 
+    # --- Batch-load all entry values instead of N+1 queries ---
+    # Build metric_id -> effective storage type lookup
+    metric_type_map: dict[int, str] = {}
+    for m in metrics:
+        if m["type"] == "integration":
+            metric_type_map[m["id"]] = m.get("value_type") or "number"
+        else:
+            metric_type_map[m["id"]] = m["type"]
+
+    # Group entry IDs by storage type
+    entry_ids_by_type: dict[str, list[int]] = defaultdict(list)
+    all_entry_ids = [e["id"] for e in entries]
+    for e in entries:
+        etype = metric_type_map.get(e["metric_id"], "bool")
+        entry_ids_by_type[etype].append(e["id"])
+
+    # Batch-fetch values from each typed table
+    values_map: dict[int, any] = {}  # entry_id -> value
+    scale_context_map: dict[int, dict] = {}  # entry_id -> {scale_min, scale_max, scale_step}
+
+    if entry_ids_by_type.get("bool"):
+        rows = await db.fetch(
+            "SELECT entry_id, value FROM values_bool WHERE entry_id = ANY($1)",
+            entry_ids_by_type["bool"],
+        )
+        for r in rows:
+            values_map[r["entry_id"]] = r["value"]
+
+    if entry_ids_by_type.get("number"):
+        rows = await db.fetch(
+            "SELECT entry_id, value FROM values_number WHERE entry_id = ANY($1)",
+            entry_ids_by_type["number"],
+        )
+        for r in rows:
+            values_map[r["entry_id"]] = r["value"]
+
+    if entry_ids_by_type.get("time"):
+        rows = await db.fetch(
+            "SELECT entry_id, value FROM values_time WHERE entry_id = ANY($1)",
+            entry_ids_by_type["time"],
+        )
+        for r in rows:
+            ts = r["value"]
+            values_map[r["entry_id"]] = f"{ts.hour:02d}:{ts.minute:02d}"
+
+    if entry_ids_by_type.get("scale"):
+        rows = await db.fetch(
+            "SELECT entry_id, value, scale_min, scale_max, scale_step FROM values_scale WHERE entry_id = ANY($1)",
+            entry_ids_by_type["scale"],
+        )
+        for r in rows:
+            values_map[r["entry_id"]] = r["value"]
+            scale_context_map[r["entry_id"]] = {
+                "scale_min": r["scale_min"],
+                "scale_max": r["scale_max"],
+                "scale_step": r["scale_step"],
+            }
+
+    # --- Build result using pre-loaded values ---
     result = []
     for m in metrics:
         mid = m["id"]
@@ -130,23 +189,18 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                     "entry": None,
                 }
                 if entry:
-                    etype = m.get("value_type") or m["type"] if m["type"] == "integration" else m["type"]
-                    value = await get_entry_value(db, entry["id"], etype)
+                    value = values_map.get(entry["id"])
                     slot_item["entry"] = {
                         "id": entry["id"],
                         "recorded_at": str(entry["recorded_at"]),
                         "value": value,
                     }
                     # Scale context from stored values
-                    if m["type"] == "scale":
-                        vs = await db.fetchrow(
-                            "SELECT scale_min, scale_max, scale_step FROM values_scale WHERE entry_id = $1",
-                            entry["id"],
-                        )
-                        if vs:
-                            slot_item["entry"]["scale_min"] = vs["scale_min"]
-                            slot_item["entry"]["scale_max"] = vs["scale_max"]
-                            slot_item["entry"]["scale_step"] = vs["scale_step"]
+                    sc = scale_context_map.get(entry["id"])
+                    if sc:
+                        slot_item["entry"]["scale_min"] = sc["scale_min"]
+                        slot_item["entry"]["scale_max"] = sc["scale_max"]
+                        slot_item["entry"]["scale_step"] = sc["scale_step"]
 
                 slot_items.append(slot_item)
 
@@ -160,23 +214,18 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                     break
 
             if entry:
-                etype = m.get("value_type") or m["type"] if m["type"] == "integration" else m["type"]
-                value = await get_entry_value(db, entry["id"], etype)
+                value = values_map.get(entry["id"])
                 item["entry"] = {
                     "id": entry["id"],
                     "recorded_at": str(entry["recorded_at"]),
                     "value": value,
                 }
                 # For filled scale entries, use stored context instead of current config
-                if m["type"] == "scale":
-                    vs = await db.fetchrow(
-                        "SELECT scale_min, scale_max, scale_step FROM values_scale WHERE entry_id = $1",
-                        entry["id"],
-                    )
-                    if vs:
-                        item["scale_min"] = vs["scale_min"]
-                        item["scale_max"] = vs["scale_max"]
-                        item["scale_step"] = vs["scale_step"]
+                sc = scale_context_map.get(entry["id"])
+                if sc:
+                    item["scale_min"] = sc["scale_min"]
+                    item["scale_max"] = sc["scale_max"]
+                    item["scale_step"] = sc["scale_step"]
 
         result.append(item)
 

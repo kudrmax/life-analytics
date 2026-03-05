@@ -307,8 +307,25 @@ async function renderTodayForm() {
     if (goTodayBtn) {
         goTodayBtn.style.display = (currentDate === todayStr()) ? 'none' : '';
     }
-    const summary = await api.getDailySummary(currentDate);
     const form = document.getElementById('metrics-form');
+    if (!form.innerHTML || form.querySelector('.loading-spinner')) {
+        form.innerHTML = '<div class="loading-spinner"></div>';
+    }
+
+    // Fetch daily summary and AW data in parallel
+    const [summary, awCard] = await Promise.all([
+        api.getDailySummary(currentDate),
+        (async () => {
+            try {
+                const awStatus = await api.awGetStatus();
+                if (awStatus.enabled) {
+                    const awSummary = await api.awGetSummary(currentDate);
+                    return _renderAWSummaryCard(awSummary);
+                }
+            } catch (e) { /* AW not configured — skip */ }
+            return '';
+        })(),
+    ]);
 
     // Group by category
     const categories = {};
@@ -358,14 +375,7 @@ async function renderTodayForm() {
         html += '</div>';
     }
 
-    // ActivityWatch summary card
-    try {
-        const awStatus = await api.awGetStatus();
-        if (awStatus.enabled) {
-            const awSummary = await api.awGetSummary(currentDate);
-            html += _renderAWSummaryCard(awSummary);
-        }
-    } catch (e) { /* AW not configured — skip */ }
+    html += awCard;
 
     form.innerHTML = html;
     attachInputHandlers();
@@ -912,6 +922,7 @@ function renderCalendar(yearMonth) {
 
 async function showDayDetail(date) {
     const detail = document.getElementById('day-detail');
+    detail.innerHTML = '<div class="loading-spinner"></div>';
     const summary = await api.getDailySummary(date);
 
     // Update progress bar (skip computed metrics)
@@ -1028,10 +1039,27 @@ async function loadDashboard(start, end) {
     trendChartInstances = [];
 
     const trendsEl = document.getElementById('trends-section');
+
+    // Fetch all trends in parallel
+    const [trendResults, awTrendPoints] = await Promise.all([
+        Promise.all(metrics.map(m =>
+            api.getTrends(m.id, start, end).then(t => ({ metric: m, trend: t }))
+        )),
+        (async () => {
+            try {
+                const awStatus = await api.awGetStatus();
+                if (awStatus.enabled) {
+                    const awTrends = await api.awGetTrends(start, end);
+                    if (awTrends.points && awTrends.points.length > 0) return awTrends.points;
+                }
+            } catch (e) { /* AW not configured */ }
+            return null;
+        })(),
+    ]);
+
     let trendsHtml = '<h3>Графики и данные</h3><div class="trends-list">';
     const trendData = [];
-    for (const m of metrics) {
-        const trend = await api.getTrends(m.id, start, end);
+    for (const { metric: m, trend } of trendResults) {
         if (trend.points && trend.points.length > 0) {
             trendData.push({ metric: m, points: trend.points });
             trendsHtml += `<div class="trend-card-row" data-metric-id="${m.id}" style="cursor:pointer">
@@ -1044,23 +1072,14 @@ async function loadDashboard(start, end) {
         }
     }
 
-    // ActivityWatch trend
-    let awTrendPoints = null;
-    try {
-        const awStatus = await api.awGetStatus();
-        if (awStatus.enabled) {
-            const awTrends = await api.awGetTrends(start, end);
-            if (awTrends.points && awTrends.points.length > 0) {
-                awTrendPoints = awTrends.points;
-                trendsHtml += `<div class="trend-card-row aw-trend-card">
-                    <div class="trend-card-header">
-                        <h4><span class="metric-icon">${AW_ICON}</span> Экранное время</h4>
-                    </div>
-                    <div class="trend-chart-container"><canvas id="trend-chart-aw"></canvas></div>
-                </div>`;
-            }
-        }
-    } catch (e) { /* AW not configured */ }
+    if (awTrendPoints) {
+        trendsHtml += `<div class="trend-card-row aw-trend-card">
+            <div class="trend-card-header">
+                <h4><span class="metric-icon">${AW_ICON}</span> Экранное время</h4>
+            </div>
+            <div class="trend-chart-container"><canvas id="trend-chart-aw"></canvas></div>
+        </div>`;
+    }
 
     trendsHtml += '</div>';
     trendsEl.innerHTML = trendsHtml;
@@ -1741,6 +1760,7 @@ function renderDetailStats(stats, metricType) {
 
 // ─── Settings Page ───
 async function renderSettings(container, { archiveOpen = false, openAddModal = false } = {}) {
+    container.innerHTML = '<div class="loading-spinner"></div>';
     const allMetrics = await api.getMetrics(false);
     let html = '<div class="settings-header">';
     html += `<div class="user-info"><i data-lucide="user"></i><span>${localStorage.getItem('la_username') || 'Unknown'}</span></div>`;
