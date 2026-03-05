@@ -623,6 +623,7 @@ async function handleNumberChange(e) {
     saveDaily(metricId, entryId, parsed, slotId).then(({ entryId: newId }) => {
         if (slotEl) slotEl.dataset.entryId = newId;
         else card.dataset.entryId = newId;
+        _ensureClearButton(card, slotEl, newId);
         updateProgress();
     }).catch(err => {
         alert('Ошибка: ' + err.message);
@@ -795,6 +796,7 @@ async function handleFormClick(e) {
         saveDaily(metricId, entryId, boolVal, slotId).then(({ entryId: newId }) => {
             if (slotEl) slotEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
+            _ensureClearButton(card, slotEl, newId);
             updateProgress();
         }).catch(err => {
             alert('Ошибка: ' + err.message);
@@ -812,6 +814,7 @@ async function handleFormClick(e) {
         saveDaily(metricId, entryId, parseInt(btn.dataset.value), slotId).then(({ entryId: newId }) => {
             if (slotEl) slotEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
+            _ensureClearButton(card, slotEl, newId);
             updateProgress();
         }).catch(err => {
             alert('Ошибка: ' + err.message);
@@ -830,6 +833,7 @@ async function handleFormClick(e) {
         saveDaily(metricId, entryId, 0, slotId).then(({ entryId: newId }) => {
             if (slotEl) slotEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
+            _ensureClearButton(card, slotEl, newId);
             updateProgress();
         }).catch(err => {
             alert('Ошибка: ' + err.message);
@@ -852,6 +856,7 @@ async function handleFormClick(e) {
         saveDaily(metricId, entryId, newVal, slotId).then(({ entryId: newId }) => {
             if (slotEl) slotEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
+            _ensureClearButton(card, slotEl, newId);
             updateProgress();
         }).catch(err => {
             alert('Ошибка: ' + err.message);
@@ -874,6 +879,38 @@ async function handleFormClick(e) {
             }
         });
         return;
+    }
+}
+
+function _ensureClearButton(card, slotEl, entryId) {
+    if (slotEl) {
+        const header = slotEl.querySelector('.period-header');
+        if (!header) return;
+        let btn = header.querySelector('.period-clear-btn');
+        if (btn) {
+            btn.dataset.clearEntry = entryId;
+        } else {
+            btn = document.createElement('button');
+            btn.className = 'period-clear-btn';
+            btn.dataset.clearEntry = entryId;
+            btn.title = 'Очистить';
+            btn.innerHTML = '&times;';
+            header.appendChild(btn);
+        }
+    } else {
+        const header = card.querySelector('.metric-header');
+        if (!header) return;
+        let btn = header.querySelector('.metric-clear-btn');
+        if (btn) {
+            btn.dataset.clearEntry = entryId;
+        } else {
+            btn = document.createElement('button');
+            btn.className = 'metric-clear-btn';
+            btn.dataset.clearEntry = entryId;
+            btn.title = 'Очистить';
+            btn.innerHTML = '&times;';
+            header.appendChild(btn);
+        }
     }
 }
 
