@@ -36,6 +36,8 @@
 
 input, select, textarea { font-size: 16px; }
 
+html { overflow-x: hidden; }
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     background: var(--bg);
@@ -84,6 +86,7 @@ nav {
     justify-content: center;
     max-width: 600px;
     margin: 0 auto;
+    height: 48px;
 }
 
 nav button {
@@ -820,7 +823,7 @@ input[type="month"], input[type="date"] {
     border-radius: 6px;
     font-size: 16px;
     line-height: 30px;
-    width: 140px;
+    width: 125px;
     margin-bottom: 0;
 }
 .stats-dash {
@@ -884,6 +887,12 @@ input[type="month"], input[type="date"] {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.trend-card-header h4 .metric-icon {
+    flex-shrink: 0;
 }
 
 .trend-info-icon {
@@ -1441,6 +1450,7 @@ input[type="month"], input[type="date"] {
         padding: 16px 20px;
     }
     nav button svg { width: 18px; height: 18px; }
+    .nav-inner { height: 52px; }
     body { padding-top: 68px; padding-bottom: 16px; }
 }
 
@@ -1840,9 +1850,11 @@ input[type="month"], input[type="date"] {
 }
 .theme-switch {
     position: relative;
+    display: inline-block;
     width: 48px;
     height: 26px;
     cursor: pointer;
+    flex-shrink: 0;
 }
 .theme-switch input { opacity: 0; width: 0; height: 0; }
 .theme-switch .slider {
