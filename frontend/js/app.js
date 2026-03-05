@@ -318,9 +318,7 @@ async function renderTodayForm() {
     }
     const form = document.getElementById('metrics-form');
 
-    if (!form.innerHTML || form.querySelector('.loading-spinner')) {
-        form.innerHTML = '<div class="loading-spinner"></div>';
-    }
+    form.innerHTML = '<div class="loading-spinner"></div>';
     let summary, awCard;
     [summary, awCard] = await Promise.all([
         api.getDailySummary(currentDate),
