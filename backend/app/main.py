@@ -1,15 +1,45 @@
+import logging
+import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 from app.database import create_pool, close_pool, init_db, pool as app_pool
 from app.migrations import run_migrations
 from app.routers import metrics, entries, daily, analytics, auth, export_import, integrations
 
+SLOW_REQUEST_MS = int(os.environ.get("SLOW_REQUEST_MS", "500"))
+_timing_logger = logging.getLogger("timing")
+
+
+class TimingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/api/health":
+            return await call_next(request)
+        t0 = time.perf_counter()
+        response = await call_next(request)
+        ms = (time.perf_counter() - t0) * 1000
+        msg = "%s %s -> %s  %.0fms"
+        args = (request.method, request.url.path, response.status_code, ms)
+        if ms > SLOW_REQUEST_MS:
+            _timing_logger.warning("SLOW " + msg, *args)
+        else:
+            _timing_logger.info(msg, *args)
+        return response
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(asctime)s %(levelname)-7s [%(name)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
     await create_pool()
     await init_db()
     from app.database import pool as db_pool
@@ -26,6 +56,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(TimingMiddleware)
 
 app.include_router(auth.router)
 app.include_router(metrics.router)

@@ -51,7 +51,9 @@ const api = {
         }
 
         if (body) opts.body = JSON.stringify(body);
+        const _t0 = performance.now();
         const res = await fetch(`${API_BASE}${path}`, opts);
+        console.debug(`[api] ${method} ${path} -> ${res.status}  ${(performance.now() - _t0).toFixed(0)}ms`);
 
         if (res.status === 401) {
             clearToken();
@@ -71,7 +73,11 @@ const api = {
 
     cachedGet(path, maxAgeMs = 120_000) {
         const cached = getCached(path, maxAgeMs);
-        if (cached !== undefined) return Promise.resolve(cached);
+        if (cached !== undefined) {
+            console.debug(`[api] cache HIT  ${path}`);
+            return Promise.resolve(cached);
+        }
+        console.debug(`[api] cache MISS ${path}`);
         return this.request('GET', path).then(data => {
             setCache(path, data);
             return data;

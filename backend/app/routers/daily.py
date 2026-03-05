@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from app.database import get_db
 from app.auth import get_current_user
 from app.formula import convert_metric_value, evaluate_formula
+from app.timing import QueryTimer
 
 
 def _parse_formula(raw):
@@ -23,6 +24,7 @@ router = APIRouter(prefix="/api/daily", tags=["daily"])
 
 @router.get("/{date}")
 async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    qt = QueryTimer(f"daily/{date}")
     metrics = await db.fetch(
         """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
                   cc.formula, cc.result_type,
@@ -42,12 +44,14 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
         current_user["id"],
     )
 
+    qt.mark("metrics")
     d = date_type.fromisoformat(date)
     entries = await db.fetch(
         "SELECT * FROM entries WHERE date = $1 AND user_id = $2",
         d, current_user["id"],
     )
 
+    qt.mark("entries")
     metric_ids = [m["id"] for m in metrics]
 
     # Get enabled slots for all metrics
@@ -59,6 +63,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
         metric_ids,
     ) if metric_ids else []
 
+    qt.mark("slots")
     enabled_slots: dict[int, list] = defaultdict(list)
     for r in enabled_slots_rows:
         enabled_slots[r["metric_id"]].append(r)
@@ -75,6 +80,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             d, current_user["id"], metric_ids,
         )
 
+    qt.mark("disabled_slots")
     disabled_with_entries: dict[int, list] = defaultdict(list)
     for r in disabled_slot_ids_with_entries:
         disabled_with_entries[r["metric_id"]].append(r)
@@ -142,6 +148,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                 "scale_step": r["scale_step"],
             }
 
+    qt.mark("values")
     # --- Build result using pre-loaded values ---
     result = []
     for m in metrics:
@@ -311,4 +318,6 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
          "value": d.isocalendar()[1]},
     ])
 
+    qt.mark("build")
+    qt.log()
     return {"date": date, "metrics": result, "auto_metrics": auto_metrics}

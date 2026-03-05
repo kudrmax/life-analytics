@@ -310,6 +310,7 @@ function changeDay(delta) {
 }
 
 async function renderTodayForm() {
+    const _t0 = performance.now();
     const myVersion = ++_todayRenderVersion;
     document.getElementById('current-date-label').textContent = formatDate(currentDate);
     const goTodayBtn = document.getElementById('go-today');
@@ -414,6 +415,7 @@ async function renderTodayForm() {
     const next = new Date(currentDate);
     next.setDate(next.getDate() + 1);
     api.getDailySummary(next.toISOString().slice(0, 10));
+    console.debug(`[render] today  ${(performance.now() - _t0).toFixed(0)}ms`);
 }
 
 function renderMetricInput(m) {
@@ -1003,6 +1005,7 @@ function changeHistoryDay(delta) {
 }
 
 async function updateHistoryView() {
+    const _t0 = performance.now();
     // Update header
     document.getElementById('hist-date-label').textContent = formatDate(historyDate);
     const goBtn = document.getElementById('hist-go-today');
@@ -1013,6 +1016,7 @@ async function updateHistoryView() {
 
     // Load and show day detail + progress
     await showDayDetail(historyDate);
+    console.debug(`[render] history  ${(performance.now() - _t0).toFixed(0)}ms`);
 }
 
 function renderCalendar(yearMonth) {
@@ -1158,6 +1162,7 @@ async function renderDashboard(container) {
 }
 
 async function loadDashboard(start, end) {
+    const _t0 = performance.now();
     // Destroy previous trend charts
     trendChartInstances.forEach(c => c.destroy());
     trendChartInstances = [];
@@ -1281,6 +1286,7 @@ async function loadDashboard(start, end) {
     });
 
     loadCorrelationReport(start, end);
+    console.debug(`[render] dashboard  ${(performance.now() - _t0).toFixed(0)}ms`);
 }
 
 async function loadCorrelationReport(start, end) {
@@ -1812,6 +1818,7 @@ async function renderMetricDetail(container, metricId) {
 }
 
 async function loadMetricDetail(metricId, metric, start, end) {
+    const _t0 = performance.now();
     const [trend, stats] = await Promise.all([
         api.getTrends(metricId, start, end),
         api.getMetricStats(metricId, start, end),
@@ -1841,6 +1848,7 @@ async function loadMetricDetail(metricId, metric, start, end) {
     // Render stats (use result_type for computed)
     const statsType = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type;
     renderDetailStats(stats, statsType);
+    console.debug(`[render] metric-detail(${metricId})  ${(performance.now() - _t0).toFixed(0)}ms`);
 }
 
 function renderDetailStats(stats, metricType) {
@@ -1884,6 +1892,7 @@ function renderDetailStats(stats, metricType) {
 
 // ─── Settings Page ───
 async function renderSettings(container, { archiveOpen = false, openAddModal = false } = {}) {
+    const _t0 = performance.now();
     container.innerHTML = '<div class="loading-spinner"></div>';
     const allMetrics = await api.cachedGet('/api/metrics');
     let html = '<div class="settings-header">';
@@ -2127,6 +2136,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             }
         });
     });
+    console.debug(`[render] settings  ${(performance.now() - _t0).toFixed(0)}ms`);
 }
 
 async function _loadIntegrationsSection() {
@@ -2437,9 +2447,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         const maxEl = document.getElementById('nm-scale-max');
         const stepEl = document.getElementById('nm-scale-step');
         return {
-            min: minEl ? parseInt(minEl.value) || 1 : (existingMetric?.scale_min || 1),
-            max: maxEl ? parseInt(maxEl.value) || 5 : (existingMetric?.scale_max || 5),
-            step: stepEl ? parseInt(stepEl.value) || 1 : (existingMetric?.scale_step || 1),
+            min: minEl && minEl.value !== '' ? parseInt(minEl.value) : (existingMetric?.scale_min ?? 1),
+            max: maxEl && maxEl.value !== '' ? parseInt(maxEl.value) : (existingMetric?.scale_max ?? 5),
+            step: stepEl && stepEl.value !== '' ? parseInt(stepEl.value) : (existingMetric?.scale_step ?? 1),
         };
     }
 

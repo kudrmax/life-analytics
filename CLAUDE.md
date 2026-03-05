@@ -207,6 +207,45 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 
 **Metric queries with config:** Routers that list/return metrics use LEFT JOIN to include type-specific config (e.g. `LEFT JOIN scale_config sc ON sc.metric_id = md.id`). The `build_metric_out` helper uses `.get()` for config fields since they may be NULL for non-matching types.
 
+## Performance Instrumentation
+
+Lightweight timing is instrumented across all layers. No extra dependencies — stdlib `logging` + `time.perf_counter()` on backend, `performance.now()` + `console.debug` on frontend, `$upstream_response_time` in nginx.
+
+**Key files:**
+- `backend/app/timing.py` — `timed_fetch()` (single query wrapper) + `QueryTimer` (multi-query checkpoint timer)
+- `backend/app/main.py` — `TimingMiddleware` logs every request (method, path, status, ms); SLOW threshold 500ms (env `SLOW_REQUEST_MS`)
+- `backend/app/routers/daily.py` — `QueryTimer` checkpoints: metrics, entries, slots, disabled_slots, values, build
+- `backend/app/routers/analytics.py` — `QueryTimer` in `_compute_report`, `trends`, `metric_stats`
+- `frontend/js/api.js` — `performance.now()` around `fetch()` in `api.request()`, cache HIT/MISS in `cachedGet()`
+- `frontend/js/app.js` — render timing in `renderTodayForm`, `updateHistoryView`, `loadDashboard`, `loadMetricDetail`, `renderSettings`
+- `frontend/nginx.conf` — `log_format timing` with `$request_time` + `$upstream_response_time` for `/api/`
+
+**How to collect data:**
+1. VPS: `VPS_HOST=<IP> make prod-logs` — real-time logs
+2. Browser: DevTools → Console → enable "Verbose" filter
+3. Perform action in UI
+
+**Log format per layer:**
+
+| Layer | Format | Measures |
+|---|---|---|
+| nginx | `req=0.051 upstr=0.049` | Full request time / backend time |
+| backend middleware | `[timing] GET /api/daily/... -> 200  49ms` | Total request processing |
+| backend DB | `[app.db] [daily/...] total=34ms metrics=12ms ...` | Per-SQL-query breakdown |
+| frontend API | `[api] GET /api/daily/... -> 200  280ms` | fetch() to response (network + backend) |
+| frontend render | `[render] today  310ms` | Full page render time |
+
+**Bottleneck diagnostic tree:**
+```
+1. Compare frontend [api] ms vs nginx req= → big gap = client DNS/TLS/network
+2. Compare nginx req= vs upstr= → big gap = nginx overhead (gzip, buffering)
+3. Compare backend [timing] ms vs [app.db] total= → big gap = Python CPU (serialization, formulas)
+4. Look at [app.db] breakdown → which SQL query is slow
+5. Compare frontend [render] ms vs [api] ms → big gap = JS rendering (DOM, Chart.js)
+```
+
+**Thresholds:** SLOW request WARNING: >500ms (`SLOW_REQUEST_MS` env). SLOW SQL WARNING: >200ms. For verbose DB logs: `LOG_LEVEL=DEBUG` in `.env`.
+
 ## Common Workflows
 
 **Add new router:**

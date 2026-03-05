@@ -14,6 +14,7 @@ from app.database import get_db
 from app.auth import get_current_user
 from app.formula import convert_metric_value, evaluate_formula, get_referenced_metric_ids
 from app.correlation_blacklist import should_skip_pair
+from app.timing import timed_fetch, QueryTimer
 
 
 def _parse_formula(raw):
@@ -314,6 +315,7 @@ async def trends(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    qt = QueryTimer(f"trends/{metric_id}")
     metric = await db.fetchrow(
         """SELECT md.*, cc.formula, cc.result_type, ic.value_type AS ic_value_type
            FROM metric_definitions md
@@ -324,6 +326,7 @@ async def trends(
     )
     if not metric:
         return {"error": "Metric not found"}
+    qt.mark("metric")
 
     mt = metric["type"]
     if mt == "integration":
@@ -349,8 +352,10 @@ async def trends(
             metric_id, start_d, end_d, current_user["id"],
         )
         aggregated = _aggregate_by_date(rows, mt)
+    qt.mark("values")
 
     points = [{"date": d, "value": v} for d, v in sorted(aggregated.items())]
+    qt.log()
 
     return {
         "metric_id": metric_id,
@@ -430,6 +435,7 @@ async def metric_stats(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    qt = QueryTimer(f"metric-stats/{metric_id}")
     metric = await db.fetchrow(
         """SELECT md.*, cc.formula, cc.result_type, ic.value_type AS ic_value_type
            FROM metric_definitions md
@@ -440,6 +446,7 @@ async def metric_stats(
     )
     if not metric:
         return {"error": "Metric not found"}
+    qt.mark("metric")
 
     mt = metric["type"]
     if mt == "integration":
@@ -496,6 +503,7 @@ async def metric_stats(
     )
 
     aggregated = _aggregate_by_date(rows, mt)
+    qt.mark("values")
     total_entries = len(aggregated)
     fill_rate = round(total_entries / total_days * 100, 1) if total_days > 0 else 0
 
@@ -577,6 +585,7 @@ async def metric_stats(
         else:
             result.update({"average": 0, "min": 0, "max": 0})
 
+    qt.log()
     return result
 
 
@@ -606,6 +615,7 @@ async def create_correlation_report(
 async def _compute_report(report_id: int, user_id: int, start: str, end: str):
     try:
         async with _db_module.pool.acquire() as conn:
+            qt = QueryTimer(f"correlation-report/{report_id}")
             start_date = date_type.fromisoformat(start)
             end_date = date_type.fromisoformat(end)
 
@@ -617,6 +627,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                    WHERE md.user_id = $1 AND md.enabled = TRUE ORDER BY md.sort_order""",
                 user_id,
             )
+            qt.mark("load_metrics")
             # Resolve integration types
             for i, m in enumerate(metrics_rows):
                 if m["type"] == "integration":
@@ -632,6 +643,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 metric_ids,
             ) if metric_ids else []
 
+            qt.mark("load_slots")
             slots_by_metric: dict[int, list] = defaultdict(list)
             for s in slots_rows:
                 slots_by_metric[s["metric_id"]].append(s)
@@ -645,6 +657,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     computed_ids,
                 )
                 computed_cfgs = {r["metric_id"]: r for r in cc_rows}
+            qt.mark("load_computed_cfg")
 
             # Build data sources: (metric_id, slot_id, type, label)
             metric_names = {m["id"]: m["name"] for m in metrics_rows}
@@ -682,6 +695,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                         conn, mid, mt, start_date, end_date, user_id, slot_id=sid,
                     )
 
+            qt.mark(f"fetch_{len(sources)}_sources")
             # --- Auto sources ---
             auto_info = {}  # source_index -> (auto_type, parent_metric_id)
 
@@ -778,6 +792,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             r_lag2, n_lag2, 1,
                         ))
 
+            qt.mark(f"compute_{len(pairs_to_insert)}_pairs")
             # Batch insert
             if pairs_to_insert:
                 await conn.executemany(
@@ -788,6 +803,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     pairs_to_insert,
                 )
 
+            qt.mark("insert_pairs")
             await conn.execute(
                 "UPDATE correlation_reports SET status = 'done', finished_at = now() WHERE id = $1",
                 report_id,
@@ -797,6 +813,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 "DELETE FROM correlation_reports WHERE user_id = $1 AND id != $2",
                 user_id, report_id,
             )
+            qt.log()
     except Exception:
         logger.exception("Error computing correlation report %s", report_id)
         try:
