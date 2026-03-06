@@ -10,7 +10,11 @@ import asyncpg
 from app.schemas import MetricDefinitionOut, MeasurementSlotOut
 
 
-async def build_metric_out(row: asyncpg.Record, slots: list | None = None) -> MetricDefinitionOut:
+async def build_metric_out(
+    row: asyncpg.Record,
+    slots: list | None = None,
+    enum_opts: list | None = None,
+) -> MetricDefinitionOut:
     formula_raw = row.get("formula")
     if isinstance(formula_raw, str):
         formula_raw = json.loads(formula_raw)
@@ -36,6 +40,8 @@ async def build_metric_out(row: asyncpg.Record, slots: list | None = None) -> Me
         filter_query=row.get("filter_query"),
         category_id=row.get("category_id"),
         config_app_name=row.get("config_app_name"),
+        enum_options=enum_opts,
+        multi_select=row.get("multi_select"),
     )
 
 
@@ -57,6 +63,29 @@ async def get_metric_slots(
     for r in rows:
         result[r["metric_id"]].append({
             "id": r["id"], "label": r["label"], "sort_order": r["sort_order"],
+        })
+    return result
+
+
+async def get_enum_options(
+    conn: asyncpg.Connection,
+    metric_ids: list[int],
+    enabled_only: bool = True,
+) -> dict[int, list]:
+    """Return {metric_id: [{id, label, sort_order, enabled}, ...]}."""
+    condition = "AND eo.enabled = TRUE" if enabled_only else ""
+    rows = await conn.fetch(
+        f"""SELECT eo.id, eo.metric_id, eo.label, eo.sort_order, eo.enabled
+            FROM enum_options eo
+            WHERE eo.metric_id = ANY($1) {condition}
+            ORDER BY eo.metric_id, eo.sort_order""",
+        metric_ids,
+    )
+    result: dict[int, list] = defaultdict(list)
+    for r in rows:
+        result[r["metric_id"]].append({
+            "id": r["id"], "label": r["label"],
+            "sort_order": r["sort_order"], "enabled": r["enabled"],
         })
     return result
 
@@ -96,6 +125,13 @@ async def get_entry_value(
         if not row:
             return None
         return row["value"]
+    elif metric_type == "enum":
+        row = await conn.fetchrow(
+            "SELECT selected_option_ids FROM values_enum WHERE entry_id = $1", entry_id
+        )
+        if not row:
+            return None
+        return list(row["selected_option_ids"])
     else:
         row = await conn.fetchrow(
             "SELECT value FROM values_bool WHERE entry_id = $1", entry_id
@@ -134,6 +170,12 @@ async def insert_value(
             "INSERT INTO values_scale (entry_id, value, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4, $5)",
             entry_id, int(value), s_min, s_max, s_step,
         )
+    elif metric_type == "enum":
+        option_ids = value if isinstance(value, list) else [value]
+        await conn.execute(
+            "INSERT INTO values_enum (entry_id, selected_option_ids) VALUES ($1, $2)",
+            entry_id, option_ids,
+        )
     else:
         await conn.execute(
             "INSERT INTO values_bool (entry_id, value) VALUES ($1, $2)",
@@ -164,6 +206,12 @@ async def update_value(
         await conn.execute(
             "UPDATE values_scale SET value = $1 WHERE entry_id = $2",
             int(value), entry_id,
+        )
+    elif metric_type == "enum":
+        option_ids = value if isinstance(value, list) else [value]
+        await conn.execute(
+            "UPDATE values_enum SET selected_option_ids = $1 WHERE entry_id = $2",
+            option_ids, entry_id,
         )
     else:
         await conn.execute(

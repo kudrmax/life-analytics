@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.database import get_db
 from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut, MetricType
 from app.auth import get_current_user
-from app.metric_helpers import build_metric_out, get_metric_slots
+from app.metric_helpers import build_metric_out, get_metric_slots, get_enum_options
 from app.formula import validate_formula, get_referenced_metric_ids
 from app.integrations.todoist.registry import TODOIST_METRICS, TODOIST_ICON
 from app.integrations.activitywatch.registry import ACTIVITYWATCH_METRICS, ACTIVITYWATCH_ICON
@@ -23,7 +23,8 @@ async def list_metrics(
                       cc.formula, cc.result_type,
                       ic.provider, ic.metric_key, ic.value_type,
                       ifc.filter_name, iqc.filter_query,
-                      icatc.category_id, iapc.app_name AS config_app_name
+                      icatc.category_id, iapc.app_name AS config_app_name,
+                      ec.multi_select
                FROM metric_definitions md
                LEFT JOIN scale_config sc ON sc.metric_id = md.id
                LEFT JOIN computed_config cc ON cc.metric_id = md.id
@@ -32,6 +33,7 @@ async def list_metrics(
                LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
                LEFT JOIN integration_category_config icatc ON icatc.metric_id = md.id
                LEFT JOIN integration_app_config iapc ON iapc.metric_id = md.id
+               LEFT JOIN enum_config ec ON ec.metric_id = md.id
                WHERE md.user_id = $1"""
     params = [current_user["id"]]
     if enabled_only:
@@ -41,8 +43,12 @@ async def list_metrics(
 
     metric_ids = [r["id"] for r in rows]
     slots_map = await get_metric_slots(db, metric_ids) if metric_ids else {}
+    enum_opts_map = await get_enum_options(db, metric_ids) if metric_ids else {}
 
-    return [await build_metric_out(r, slots_map.get(r["id"])) for r in rows]
+    return [
+        await build_metric_out(r, slots_map.get(r["id"]), enum_opts_map.get(r["id"]))
+        for r in rows
+    ]
 
 
 @router.get("/{metric_id}", response_model=MetricDefinitionOut)
@@ -56,7 +62,8 @@ async def get_metric(
                   cc.formula, cc.result_type,
                   ic.provider, ic.metric_key, ic.value_type,
                   ifc.filter_name, iqc.filter_query,
-                  icatc.category_id, iapc.app_name AS config_app_name
+                  icatc.category_id, iapc.app_name AS config_app_name,
+                  ec.multi_select
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
            LEFT JOIN computed_config cc ON cc.metric_id = md.id
@@ -65,6 +72,7 @@ async def get_metric(
            LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
            LEFT JOIN integration_category_config icatc ON icatc.metric_id = md.id
            LEFT JOIN integration_app_config iapc ON iapc.metric_id = md.id
+           LEFT JOIN enum_config ec ON ec.metric_id = md.id
            WHERE md.id = $1 AND md.user_id = $2""",
         metric_id, current_user["id"],
     )
@@ -72,7 +80,8 @@ async def get_metric(
         raise HTTPException(404, "Metric not found")
 
     slots_map = await get_metric_slots(db, [metric_id])
-    return await build_metric_out(row, slots_map.get(metric_id))
+    enum_opts_map = await get_enum_options(db, [metric_id])
+    return await build_metric_out(row, slots_map.get(metric_id), enum_opts_map.get(metric_id))
 
 
 @router.post("", response_model=MetricDefinitionOut, status_code=201)
@@ -125,6 +134,12 @@ async def create_metric(
                     raise HTTPException(400, "app_name is required for app_time")
         else:
             raise HTTPException(400, f"Unknown provider: {data.provider}")
+
+    if data.type == MetricType.enum:
+        if not data.enum_options or len(data.enum_options) < 2:
+            raise HTTPException(400, "Enum metrics need at least 2 options")
+        if len(set(data.enum_options)) != len(data.enum_options):
+            raise HTTPException(400, "Enum option labels must be unique")
 
     existing = await db.fetchval(
         "SELECT id FROM metric_definitions WHERE slug = $1 AND user_id = $2",
@@ -197,6 +212,18 @@ async def create_metric(
             "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
             metric_id, s_min, s_max, s_step,
         )
+
+    if data.type == MetricType.enum:
+        multi = data.multi_select if data.multi_select is not None else False
+        await db.execute(
+            "INSERT INTO enum_config (metric_id, multi_select) VALUES ($1, $2)",
+            metric_id, multi,
+        )
+        for i, label in enumerate(data.enum_options):
+            await db.execute(
+                "INSERT INTO enum_options (metric_id, sort_order, label) VALUES ($1, $2, $3)",
+                metric_id, i, label,
+            )
 
     if data.type == MetricType.computed:
         if not data.formula:
@@ -330,6 +357,63 @@ async def update_metric(
                 "INSERT INTO computed_config (metric_id, formula, result_type) VALUES ($1, $2::jsonb, $3)",
                 metric_id, json.dumps(new_formula), new_result_type,
             )
+
+    # Update enum config
+    if row["type"] == "enum":
+        if data.multi_select is not None:
+            cfg = await db.fetchrow(
+                "SELECT metric_id FROM enum_config WHERE metric_id = $1", metric_id,
+            )
+            if cfg:
+                await db.execute(
+                    "UPDATE enum_config SET multi_select = $1 WHERE metric_id = $2",
+                    data.multi_select, metric_id,
+                )
+            else:
+                await db.execute(
+                    "INSERT INTO enum_config (metric_id, multi_select) VALUES ($1, $2)",
+                    metric_id, data.multi_select,
+                )
+
+        if data.enum_options is not None:
+            new_opts = data.enum_options  # list[dict] with optional id, required label
+            labels = [o["label"] for o in new_opts if o.get("label")]
+            if len(labels) < 2:
+                raise HTTPException(400, "Enum metrics need at least 2 options")
+            if len(set(labels)) != len(labels):
+                raise HTTPException(400, "Enum option labels must be unique")
+
+            existing_opts = await db.fetch(
+                "SELECT * FROM enum_options WHERE metric_id = $1 ORDER BY sort_order",
+                metric_id,
+            )
+            existing_ids = {o["id"] for o in existing_opts}
+            seen_ids = set()
+
+            for i, opt in enumerate(new_opts):
+                opt_id = opt.get("id")
+                label = opt["label"]
+                if opt_id and opt_id in existing_ids:
+                    # Update existing option (rename + reorder + re-enable)
+                    seen_ids.add(opt_id)
+                    await db.execute(
+                        "UPDATE enum_options SET label = $1, sort_order = $2, enabled = TRUE WHERE id = $3",
+                        label, i, opt_id,
+                    )
+                else:
+                    # New option
+                    await db.execute(
+                        "INSERT INTO enum_options (metric_id, sort_order, label) VALUES ($1, $2, $3)",
+                        metric_id, i, label,
+                    )
+
+            # Disable options not in the new list
+            for o in existing_opts:
+                if o["id"] not in seen_ids:
+                    await db.execute(
+                        "UPDATE enum_options SET enabled = FALSE WHERE id = $1",
+                        o["id"],
+                    )
 
     # Update measurement slots
     if data.slot_labels is not None:

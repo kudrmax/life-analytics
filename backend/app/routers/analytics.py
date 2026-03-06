@@ -82,6 +82,8 @@ def _get_value_table(mt: str) -> tuple[str, str]:
         return "values_number", ""
     elif mt == "scale":
         return "values_scale", ", v.scale_min, v.scale_max, v.scale_step"
+    elif mt == "enum":
+        return "values_enum", ""
     return "values_bool", ""
 
 
@@ -216,6 +218,37 @@ async def _values_by_date_for_computed(
     return result
 
 
+async def _values_by_date_for_enum_option(
+    conn, metric_id: int, option_id: int,
+    start_date, end_date, user_id: int, slot_id: int | None = None,
+) -> dict[str, float]:
+    """For a single enum option, return 1.0 if selected, 0.0 if entry exists but not selected."""
+    slot_filter = ""
+    params = [metric_id, start_date, end_date, user_id]
+    if slot_id is not None:
+        slot_filter = " AND e.slot_id = $5"
+        params.append(slot_id)
+
+    rows = await conn.fetch(
+        f"""SELECT e.date, ve.selected_option_ids
+            FROM entries e
+            JOIN values_enum ve ON ve.entry_id = e.id
+            WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
+              AND e.user_id = $4{slot_filter}
+            ORDER BY e.date""",
+        *params,
+    )
+
+    day_values: dict[str, list[bool]] = defaultdict(list)
+    for r in rows:
+        day_values[str(r["date"])].append(option_id in r["selected_option_ids"])
+
+    result = {}
+    for d, bools in day_values.items():
+        result[d] = 1.0 if any(bools) else 0.0
+    return result
+
+
 def _compute_pearson(
     a_by_date: dict[str, float], b_by_date: dict[str, float],
 ) -> tuple[float | None, int]:
@@ -341,6 +374,29 @@ async def trends(
         aggregated = await _values_by_date_for_computed(
             db, formula, result_type, ref_ids, start_d, end_d, current_user["id"],
         )
+    elif mt == "enum":
+        # Return per-option boolean series
+        opts = await db.fetch(
+            "SELECT id, label, sort_order FROM enum_options WHERE metric_id = $1 AND enabled = TRUE ORDER BY sort_order",
+            metric_id,
+        )
+        option_series = {}
+        for o in opts:
+            series = await _values_by_date_for_enum_option(
+                db, metric_id, o["id"], start_d, end_d, current_user["id"],
+            )
+            option_series[o["label"]] = [{"date": d, "value": v} for d, v in sorted(series.items())]
+        qt.mark("values")
+        qt.log()
+        return {
+            "metric_id": metric_id,
+            "metric_name": metric["name"],
+            "metric_type": "enum",
+            "start": start,
+            "end": end,
+            "options": [{"id": o["id"], "label": o["label"]} for o in opts],
+            "option_series": option_series,
+        }
     else:
         value_table, extra_cols = _get_value_table(mt)
         rows = await db.fetch(
@@ -491,6 +547,51 @@ async def metric_stats(
                     "max": round(max(values), 2),
                 })
         return result
+
+    if mt == "enum":
+        rows = await db.fetch(
+            """SELECT e.date, ve.selected_option_ids
+               FROM entries e
+               JOIN values_enum ve ON ve.entry_id = e.id
+               WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4
+               ORDER BY e.date""",
+            metric_id, start_date, end_date, current_user["id"],
+        )
+        opts = await db.fetch(
+            "SELECT id, label FROM enum_options WHERE metric_id = $1 AND enabled = TRUE ORDER BY sort_order",
+            metric_id,
+        )
+        qt.mark("values")
+        dates_with_entries = set(str(r["date"]) for r in rows)
+        total_entries = len(dates_with_entries)
+        fill_rate = round(total_entries / total_days * 100, 1) if total_days > 0 else 0
+
+        option_counts = {o["id"]: 0 for o in opts}
+        for r in rows:
+            for oid in r["selected_option_ids"]:
+                if oid in option_counts:
+                    option_counts[oid] += 1
+
+        option_stats = [
+            {
+                "label": o["label"],
+                "count": option_counts[o["id"]],
+                "percent": round(option_counts[o["id"]] / total_entries * 100, 1) if total_entries > 0 else 0,
+            }
+            for o in opts
+        ]
+        most_common = max(option_stats, key=lambda x: x["count"])["label"] if option_stats else "—"
+
+        qt.log()
+        return {
+            "metric_id": metric_id,
+            "metric_type": "enum",
+            "total_entries": total_entries,
+            "total_days": total_days,
+            "fill_rate": fill_rate,
+            "option_stats": option_stats,
+            "most_common": most_common,
+        }
 
     value_table, extra_cols = _get_value_table(mt)
     rows = await db.fetch(
@@ -659,14 +760,43 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 computed_cfgs = {r["metric_id"]: r for r in cc_rows}
             qt.mark("load_computed_cfg")
 
+            # Load enum options for enum metrics
+            enum_metric_ids = [m["id"] for m in metrics_rows if m["type"] == "enum"]
+            enum_opts_by_metric: dict[int, list] = defaultdict(list)
+            if enum_metric_ids:
+                eo_rows = await conn.fetch(
+                    """SELECT id, metric_id, label FROM enum_options
+                       WHERE metric_id = ANY($1) AND enabled = TRUE
+                       ORDER BY metric_id, sort_order""",
+                    enum_metric_ids,
+                )
+                for r in eo_rows:
+                    enum_opts_by_metric[r["metric_id"]].append(r)
+
             # Build data sources: (metric_id, slot_id, type, label)
             metric_names = {m["id"]: m["name"] for m in metrics_rows}
             sources = []
+            enum_source_info = {}  # source_index -> (option_id, slot_id)
             for m in metrics_rows:
                 mid = m["id"]
                 mt = m["type"]
                 if mt == "computed":
                     sources.append((mid, None, mt, m["name"]))
+                    continue
+                if mt == "enum":
+                    # Each enum option is a separate bool source
+                    opts = enum_opts_by_metric.get(mid, [])
+                    metric_slots = slots_by_metric.get(mid, [])
+                    for opt in opts:
+                        # Aggregate source (across all slots)
+                        idx = len(sources)
+                        sources.append((mid, None, "bool", f"{m['name']}: {opt['label']}"))
+                        enum_source_info[idx] = (opt["id"], None)
+                        if metric_slots:
+                            for s in metric_slots:
+                                idx = len(sources)
+                                sources.append((mid, s["id"], "bool", f"{m['name']}: {opt['label']} — {s['label']}"))
+                                enum_source_info[idx] = (opt["id"], s["id"])
                     continue
                 metric_slots = slots_by_metric.get(mid, [])
                 if metric_slots:
@@ -679,7 +809,12 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             # Fetch data for each source
             source_data = {}
             for i, (mid, sid, mt, _label) in enumerate(sources):
-                if mt == "computed":
+                if i in enum_source_info:
+                    opt_id, slot_id = enum_source_info[i]
+                    source_data[i] = await _values_by_date_for_enum_option(
+                        conn, mid, opt_id, start_date, end_date, user_id, slot_id=slot_id,
+                    )
+                elif mt == "computed":
                     cfg = computed_cfgs.get(mid)
                     if cfg and cfg["formula"]:
                         formula = _parse_formula(cfg["formula"])
@@ -758,7 +893,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             pairs_to_insert = []
             for i in range(len(sources)):
                 for j in range(i + 1, len(sources)):
-                    if should_skip_pair(i, j, sources, auto_info):
+                    if should_skip_pair(i, j, sources, auto_info, enum_source_info):
                         continue
                     si, sj = sources[i], sources[j]
 

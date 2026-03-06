@@ -415,6 +415,97 @@ h3 {
 .bool-btn.active.yes { background: var(--green); border-color: var(--green); color: #fff; }
 .bool-btn.active.no { background: var(--red); border-color: var(--red); color: #fff; }
 
+/* ─── Enum Buttons ─── */
+.enum-buttons {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.enum-btn {
+    padding: 8px 14px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.15s;
+}
+
+.enum-btn:hover { border-color: var(--accent); }
+.enum-buttons.single .enum-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.enum-buttons.multi .enum-btn.active { background: var(--green); border-color: var(--green); color: #fff; }
+
+/* ─── Enum Options (modal) ─── */
+.enum-options-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.enum-option-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.enum-option-row input {
+    flex: 1;
+}
+
+.enum-option-row .drag-handle {
+    cursor: grab;
+    color: var(--text-dim);
+    font-size: 14px;
+    user-select: none;
+    flex-shrink: 0;
+    width: 20px;
+    text-align: center;
+}
+
+.enum-option-row .drag-handle:active {
+    cursor: grabbing;
+}
+
+.enum-option-row.dragging {
+    opacity: 0.4;
+    background: var(--surface2);
+    border-radius: 8px;
+}
+
+.enum-multi-select-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--text);
+    cursor: pointer;
+    padding: 8px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    transition: border-color 0.15s;
+}
+
+.enum-multi-select-label:hover {
+    border-color: var(--accent);
+}
+
+.enum-multi-select-label:has(input:checked) {
+    border-color: var(--accent);
+    background: rgba(108, 140, 255, 0.08);
+}
+
+.enum-multi-select-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    flex-shrink: 0;
+    accent-color: var(--accent);
+}
+
 /* ─── Number / Time Inputs ─── */
 .number-input {
     display: flex;
@@ -1440,27 +1531,41 @@ input[type="month"], input[type="date"] {
 }
 
 /* ─── Modal ─── */
+@keyframes modalIn {
+    from { opacity: 0; transform: translateY(12px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes overlayIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
 .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 200;
     padding: 20px;
     overflow-y: auto;
+    animation: overlayIn 0.2s ease-out;
 }
 
 .modal {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 14px;
     padding: 24px;
     width: 90%;
     max-width: 400px;
     max-height: 90vh;
     overflow-y: auto;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+    animation: modalIn 0.25s ease-out;
 }
 
 .modal-large {
@@ -1468,9 +1573,11 @@ input[type="month"], input[type="date"] {
 }
 
 .modal h3 {
-    margin-bottom: 20px;
+    margin-bottom: 16px;
     padding-top: 0;
-    font-size: 20px;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
 }
 
 .modal-content-split {
@@ -1495,12 +1602,6 @@ input[type="month"], input[type="date"] {
     nav button svg { width: 18px; height: 18px; }
     .nav-inner { height: 52px; }
     body { padding-top: 68px; padding-bottom: 16px; }
-}
-
-@media (max-width: 768px) {
-    .modal-content-split {
-        grid-template-columns: 1fr;
-    }
 }
 
 .modal-form {
@@ -1528,6 +1629,7 @@ input[type="month"], input[type="date"] {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    margin: 0;
 }
 
 .label-text {
@@ -1549,11 +1651,13 @@ input[type="month"], input[type="date"] {
     padding: 10px 12px;
     border-radius: 8px;
     font-size: 14px;
+    transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .form-input:focus {
     outline: none;
     border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(108, 140, 255, 0.12);
 }
 
 .form-section {
@@ -1639,16 +1743,31 @@ input[type="month"], input[type="date"] {
     padding: 6px 10px;
     border-radius: 6px;
     font-size: 14px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.form-input-small:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(108, 140, 255, 0.12);
 }
 
 
 .metric-preview {
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 12px;
     min-height: 150px;
     position: relative;
+}
+
+.preview-sticky .preview-label-desktop {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
 }
 
 
@@ -1671,60 +1790,135 @@ input[type="month"], input[type="date"] {
     font-size: 12px;
 }
 
-/* ─── Type Cards Grid ─── */
+/* ─── Type Cards ─── */
 .type-cards-grid {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: 6px;
 }
 .type-card {
     display: flex;
+    flex-direction: row;
     align-items: center;
-    gap: 6px;
-    padding: 7px 12px;
+    gap: 12px;
+    padding: 10px 14px;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 10px;
     cursor: pointer;
     background: var(--surface2);
     transition: all 0.15s;
+    width: 100%;
 }
 .type-card:hover { border-color: var(--accent); }
 .type-card.selected {
     border-color: var(--accent);
     background: rgba(108, 140, 255, 0.08);
-    box-shadow: 0 0 0 1px var(--accent);
 }
 .type-card input[type="radio"] { display: none; }
-.type-card-icon { color: var(--text-dim); display: flex; }
-.type-card-icon svg { width: 16px; height: 16px; }
-.type-card.selected .type-card-icon { color: var(--accent); }
+.type-card-icon {
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    background: var(--bg);
+    border-radius: 8px;
+    transition: all 0.15s;
+}
+.type-card-icon svg { width: 18px; height: 18px; }
+.type-card.selected .type-card-icon {
+    color: var(--accent);
+    background: rgba(108, 140, 255, 0.12);
+}
+.type-card-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    flex: 1;
+}
 .type-card-name {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
     color: var(--text);
-    white-space: nowrap;
+}
+.type-card-desc {
+    font-size: 12px;
+    color: var(--text-dim);
 }
 
-/* ─── Inline Preview (mobile) ─── */
-.modal-preview-inline { display: none; }
+/* ─── Bottom sticky (mobile) ─── */
+.modal-bottom-sticky .modal-preview-inline { display: none; }
+
 @media (max-width: 768px) {
-    .modal-preview-inline { display: block; }
+    .modal.modal-large {
+        display: flex;
+        flex-direction: column;
+        overflow-y: hidden;
+    }
+    .modal.modal-large > h3 { flex-shrink: 0; }
+
+    .modal-content-split {
+        grid-template-columns: 1fr;
+        flex: 1;
+        overflow-y: auto;
+        min-height: 0;
+        margin-bottom: 0;
+    }
+    .modal-form {
+        max-height: none;
+        overflow-y: visible;
+        padding-right: 0;
+    }
     .modal-preview-column { display: none !important; }
+
+    .modal-bottom-sticky {
+        flex-shrink: 0;
+        border-top: 1px solid var(--border);
+        padding-top: 12px;
+        background: var(--surface);
+        box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.15);
+    }
+    .modal-bottom-sticky .modal-preview-inline {
+        display: block;
+        margin-bottom: 10px;
+    }
+    .modal-bottom-sticky .preview-label {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-dim);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 6px;
+    }
+    .modal-bottom-sticky .modal-preview-inline .metric-card {
+        padding: 8px 12px;
+    }
+    .modal-bottom-sticky .modal-preview-inline .metric-preview {
+        min-height: auto;
+    }
+    .modal-bottom-sticky .modal-actions {
+        margin-top: 0;
+        padding-top: 0;
+        border-top: none;
+    }
 }
 
 /* ─── Slots Choice Cards ─── */
 .slots-choice-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    gap: 6px;
 }
 .slots-choice-card {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 10px;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 8px;
     cursor: pointer;
     background: var(--surface2);
     transition: all 0.15s;
@@ -1732,61 +1926,35 @@ input[type="month"], input[type="date"] {
 .slots-choice-card:hover { border-color: var(--accent); }
 .slots-choice-card.selected {
     border-color: var(--accent);
-    background: rgba(108, 140, 255, 0.08);
-    box-shadow: 0 0 0 1px var(--accent);
+    background: rgba(108, 140, 255, 0.06);
 }
 .slots-choice-card input[type="radio"] { display: none; }
+.slots-choice-icon {
+    display: flex;
+    color: var(--text-dim);
+    flex-shrink: 0;
+    transition: color 0.15s;
+}
+.slots-choice-icon svg { width: 16px; height: 16px; }
+.slots-choice-card.selected .slots-choice-icon { color: var(--accent); }
 .slots-choice-title {
     font-size: 13px;
     font-weight: 500;
     color: var(--text);
 }
-.slots-choice-preview {
-    pointer-events: none;
-    opacity: 0.55;
-}
-.slots-choice-card.selected .slots-choice-preview { opacity: 0.8; }
-.slots-config { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.slots-config { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 
-/* ─── Time Preview Clock ─── */
-.time-preview-clock {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 8px;
-}
-.tp-mini-face {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    border: 2px solid var(--border);
-    position: relative;
-    flex-shrink: 0;
-    background: var(--surface2);
-}
-.tp-mini-hand {
-    position: absolute;
-    bottom: 50%;
-    left: calc(50% - 1px);
-    width: 2px;
-    background: var(--accent);
-    transform-origin: bottom center;
-    border-radius: 1px;
-}
-.tp-mini-hour { height: 12px; transform: rotate(60deg); }
-.tp-mini-minute { height: 16px; transform: rotate(200deg); }
-.tp-mini-dot {
-    position: absolute;
-    top: 50%; left: 50%;
-    width: 4px; height: 4px;
-    background: var(--accent);
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
-}
-.tp-mini-hint {
-    font-size: 12px;
+.formula-empty-warning {
+    padding: 14px 16px;
+    background: rgba(255, 193, 7, 0.06);
+    border: 1px solid rgba(255, 193, 7, 0.2);
+    border-left: 3px solid var(--yellow);
+    border-radius: 8px;
+    font-size: 13px;
     color: var(--text-dim);
+    line-height: 1.5;
 }
+
 
 .modal label {
     display: block;
@@ -1810,9 +1978,9 @@ input[type="month"], input[type="date"] {
 .modal-actions {
     display: flex;
     gap: 8px;
-    margin-top: 20px;
+    margin-top: 16px;
     justify-content: flex-end;
-    padding-top: 20px;
+    padding-top: 16px;
     border-top: 1px solid var(--border);
 }
 
@@ -1822,6 +1990,14 @@ input[type="month"], input[type="date"] {
     font-size: 14px;
     border-radius: 8px;
     margin-bottom: 0;
+    transition: all 0.15s;
+}
+.modal-actions .btn-primary {
+    box-shadow: 0 1px 3px rgba(108, 140, 255, 0.3);
+}
+.modal-actions .btn-primary:hover {
+    box-shadow: 0 2px 8px rgba(108, 140, 255, 0.4);
+    transform: translateY(-1px);
 }
 
 /* ─── Auth Pages ─── */
@@ -2036,7 +2212,8 @@ input[type="month"], input[type="date"] {
     flex: 1;
 }
 
-.slot-label-row .btn-remove-slot {
+.slot-label-row .btn-remove-slot,
+.enum-option-row .btn-remove-slot {
     background: none;
     border: 1px solid var(--border);
     color: var(--text-dim);
@@ -2052,7 +2229,8 @@ input[type="month"], input[type="date"] {
     transition: all 0.15s;
 }
 
-.slot-label-row .btn-remove-slot:hover {
+.slot-label-row .btn-remove-slot:hover,
+.enum-option-row .btn-remove-slot:hover {
     border-color: var(--red);
     color: var(--red);
     background: rgba(239, 83, 80, 0.1);

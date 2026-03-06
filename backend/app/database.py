@@ -233,6 +233,9 @@ async def init_db():
         await conn.execute("""
             ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'integration'
         """)
+        await conn.execute("""
+            ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'enum'
+        """)
 
         # User integrations (OAuth tokens for external services)
         await conn.execute("""
@@ -374,7 +377,38 @@ async def init_db():
             )
         """)
 
+        # Enum config (multi_select flag for enum metrics)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS enum_config (
+                metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
+                multi_select BOOLEAN NOT NULL DEFAULT FALSE
+            )
+        """)
+
+        # Enum options (choices for enum metrics, soft-delete via enabled)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS enum_options (
+                id SERIAL PRIMARY KEY,
+                metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                label VARCHAR(200) NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE
+            )
+        """)
+
+        # Value table for enum metrics (selected option IDs as integer array)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS values_enum (
+                entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+                selected_option_ids INTEGER[] NOT NULL
+            )
+        """)
+
         # Indexes
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_enum_options_metric
+            ON enum_options(metric_id)
+        """)
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_correlation_reports_user
             ON correlation_reports(user_id)

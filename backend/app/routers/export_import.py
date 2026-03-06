@@ -30,18 +30,20 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             'id', 'slug', 'name', 'category', 'icon', 'type',
             'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step',
             'slot_labels', 'formula', 'result_type', 'provider', 'metric_key', 'value_type',
-            'filter_name', 'filter_query',
+            'filter_name', 'filter_query', 'enum_options', 'multi_select',
         ])
 
         metrics = await db.fetch(
             """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
                       ic.provider, ic.metric_key, ic.value_type,
-                      ifc.filter_name, iqc.filter_query
+                      ifc.filter_name, iqc.filter_query,
+                      ec.multi_select
                FROM metric_definitions md
                LEFT JOIN scale_config sc ON sc.metric_id = md.id
                LEFT JOIN integration_config ic ON ic.metric_id = md.id
                LEFT JOIN integration_filter_config ifc ON ifc.metric_id = md.id
                LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
+               LEFT JOIN enum_config ec ON ec.metric_id = md.id
                WHERE md.user_id = $1 ORDER BY md.sort_order, md.id""",
             current_user["id"],
         )
@@ -65,6 +67,27 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             metric_ids,
         ) if metric_ids else []
         computed_cfgs = {r["metric_id"]: r for r in computed_cfg_rows}
+
+        # Load enum options for export
+        enum_opts_rows = await db.fetch(
+            """SELECT metric_id, label FROM enum_options
+               WHERE metric_id = ANY($1) AND enabled = TRUE
+               ORDER BY metric_id, sort_order""",
+            metric_ids,
+        ) if metric_ids else []
+        enum_opts_by_metric: dict[int, list[str]] = defaultdict(list)
+        for r in enum_opts_rows:
+            enum_opts_by_metric[r["metric_id"]].append(r["label"])
+
+        # Build ID→label lookup for enum entry export
+        enum_id_to_label: dict[int, dict[int, str]] = defaultdict(dict)
+        if metric_ids:
+            all_enum_opts = await db.fetch(
+                "SELECT id, metric_id, label FROM enum_options WHERE metric_id = ANY($1)",
+                metric_ids,
+            )
+            for r in all_enum_opts:
+                enum_id_to_label[r["metric_id"]][r["id"]] = r["label"]
 
         for m in metrics:
             slot_labels = slots_by_metric.get(m["id"], [])
@@ -92,6 +115,8 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
                 formula_export, result_type_export,
                 m.get("provider") or '', m.get("metric_key") or '', m.get("value_type") or '',
                 m.get("filter_name") or '', m.get("filter_query") or '',
+                json.dumps(enum_opts_by_metric.get(m["id"], [])) if m["type"] == "enum" else '',
+                1 if m.get("multi_select") else '' if m["type"] != "enum" else 0,
             ])
 
         zip_file.writestr('metrics.csv', metrics_csv.getvalue())
@@ -124,6 +149,10 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             if mt == "computed":
                 continue  # computed metrics have no stored entries
             value = await get_entry_value(db, e["id"], mt)
+            # Convert enum option IDs to labels for portability
+            if mt == "enum" and isinstance(value, list):
+                id_map = enum_id_to_label.get(e["metric_id"], {})
+                value = [id_map.get(oid, str(oid)) for oid in value]
             entries_writer.writerow([
                 str(e["date"]), slug,
                 json.dumps(value),
@@ -218,8 +247,19 @@ async def import_data(
                     )
 
                     metric_type = row.get('type', 'bool')
-                    if metric_type not in ('bool', 'time', 'number', 'scale', 'computed', 'integration'):
+                    if metric_type not in ('bool', 'time', 'number', 'scale', 'computed', 'integration', 'enum'):
                         metric_type = 'bool'
+
+                    # Parse enum config from CSV
+                    csv_enum_options_raw = row.get('enum_options', '')
+                    csv_enum_options = []
+                    if csv_enum_options_raw:
+                        try:
+                            csv_enum_options = json.loads(csv_enum_options_raw)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    csv_multi_select = row.get('multi_select', '')
+                    multi_select = csv_multi_select in ('1', 'True', 'true') if csv_multi_select else False
 
                     # Parse scale config from CSV
                     csv_scale_min = row.get('scale_min', '')
@@ -290,6 +330,15 @@ async def import_data(
                                        ON CONFLICT (metric_id) DO UPDATE SET filter_query = EXCLUDED.filter_query""",
                                     existing["id"], csv_filter_query,
                                 )
+                        # Upsert enum_config if needed
+                        if metric_type == 'enum' and csv_enum_options:
+                            await db.execute(
+                                """INSERT INTO enum_config (metric_id, multi_select)
+                                   VALUES ($1, $2)
+                                   ON CONFLICT (metric_id) DO UPDATE SET multi_select = EXCLUDED.multi_select""",
+                                existing["id"], multi_select,
+                            )
+                            await _import_enum_options(db, existing["id"], csv_enum_options)
                         # Import slots if provided
                         if len(csv_slot_labels) >= 2:
                             await _import_slots(db, existing["id"], csv_slot_labels)
@@ -326,6 +375,17 @@ async def import_data(
                                 await db.execute(
                                     "INSERT INTO integration_query_config (metric_id, filter_query) VALUES ($1, $2)",
                                     new_id, csv_filter_query,
+                                )
+                        # Create enum_config for new enum metrics
+                        if metric_type == 'enum' and csv_enum_options:
+                            await db.execute(
+                                "INSERT INTO enum_config (metric_id, multi_select) VALUES ($1, $2)",
+                                new_id, multi_select,
+                            )
+                            for i, label in enumerate(csv_enum_options):
+                                await db.execute(
+                                    "INSERT INTO enum_options (metric_id, sort_order, label) VALUES ($1, $2, $3)",
+                                    new_id, i, label,
                                 )
                         # Create slots if provided
                         if len(csv_slot_labels) >= 2:
@@ -460,7 +520,22 @@ async def import_data(
                     value_raw = row.get('value', 'false')
                     value = json.loads(value_raw)
 
-                    if mt == "time":
+                    if mt == "enum":
+                        # value is list of option labels — resolve to IDs
+                        if not isinstance(value, list):
+                            entries_skipped += 1
+                            continue
+                        opt_rows = await db.fetch(
+                            "SELECT id, label FROM enum_options WHERE metric_id = $1",
+                            metric_id,
+                        )
+                        label_to_opt_id = {r["label"]: r["id"] for r in opt_rows}
+                        option_ids = [label_to_opt_id[lbl] for lbl in value if lbl in label_to_opt_id]
+                        if not option_ids:
+                            entries_skipped += 1
+                            continue
+                        value = option_ids
+                    elif mt == "time":
                         # value should be "HH:MM" string
                         if not isinstance(value, str):
                             entries_skipped += 1
@@ -540,6 +615,32 @@ async def import_data(
             "errors": entries_errors[:10] if entries_errors else [],
         },
     }
+
+
+async def _import_enum_options(db, metric_id: int, labels: list[str]):
+    """Create or update enum options during import."""
+    existing = await db.fetch(
+        "SELECT * FROM enum_options WHERE metric_id = $1 ORDER BY sort_order",
+        metric_id,
+    )
+    for i, label in enumerate(labels):
+        matching = [o for o in existing if o["sort_order"] == i]
+        if matching:
+            await db.execute(
+                "UPDATE enum_options SET label = $1, enabled = TRUE WHERE id = $2",
+                label, matching[0]["id"],
+            )
+        else:
+            await db.execute(
+                "INSERT INTO enum_options (metric_id, sort_order, label) VALUES ($1, $2, $3)",
+                metric_id, i, label,
+            )
+    for o in existing:
+        if o["sort_order"] >= len(labels):
+            await db.execute(
+                "UPDATE enum_options SET enabled = FALSE WHERE id = $1",
+                o["id"],
+            )
 
 
 async def _import_slots(db, metric_id: int, labels: list[str]):

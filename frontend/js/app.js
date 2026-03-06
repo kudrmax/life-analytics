@@ -529,7 +529,8 @@ function renderMetricInput(m) {
             const entryId = entry ? entry.id : null;
 
             let input;
-            if (m.type === 'time') input = renderTime(val);
+            if (m.type === 'enum') input = renderEnum(val, m.enum_options, m.multi_select);
+            else if (m.type === 'time') input = renderTime(val);
             else if (m.type === 'number') input = renderNumber(val);
             else if (m.type === 'scale') {
                 const sMin = (entry && entry.scale_min != null) ? entry.scale_min : m.scale_min;
@@ -570,7 +571,8 @@ function renderMetricInput(m) {
     const filledClass = isFilled ? 'filled' : '';
 
     let input;
-    if (m.type === 'time') input = renderTime(val);
+    if (m.type === 'enum') input = renderEnum(val, m.enum_options, m.multi_select);
+    else if (m.type === 'time') input = renderTime(val);
     else if (m.type === 'number') input = renderNumber(val);
     else if (m.type === 'scale') input = renderScale(val, m.scale_min, m.scale_max, m.scale_step);
     else input = renderBoolean(val);
@@ -622,6 +624,15 @@ function renderScale(val, min, max, step) {
         buttons += `<button class="scale-btn ${val === v ? 'active' : ''}" data-value="${v}">${v}</button>`;
     }
     return `<div class="scale-buttons">${buttons}</div>`;
+}
+
+function renderEnum(selectedIds, options, multiSelect) {
+    let buttons = '';
+    for (const opt of (options || [])) {
+        const isSelected = selectedIds && Array.isArray(selectedIds) && selectedIds.includes(opt.id);
+        buttons += `<button class="enum-btn ${isSelected ? 'active' : ''}" data-option-id="${opt.id}" data-value="${opt.id}">${opt.label}</button>`;
+    }
+    return `<div class="enum-buttons ${multiSelect ? 'multi' : 'single'}" data-multi-select="${multiSelect ? 'true' : 'false'}">${buttons}</div>`;
 }
 
 // ─── Event Handlers ───
@@ -852,6 +863,48 @@ async function handleFormClick(e) {
         btn.classList.add('active');
         card.classList.add('filled');
         saveDaily(metricId, entryId, parseInt(btn.dataset.value), slotId).then(({ entryId: newId }) => {
+            if (slotEl) slotEl.dataset.entryId = newId;
+            else card.dataset.entryId = newId;
+            _ensureClearButton(card, slotEl, newId);
+            updateProgress();
+        }).catch(err => {
+            alert('Ошибка: ' + err.message);
+            renderTodayForm();
+        });
+        return;
+    }
+
+    // Enum buttons
+    if (btn.classList.contains('enum-btn')) {
+        const container = slotEl || card;
+        const enumContainer = container.querySelector('.enum-buttons');
+        const isMulti = enumContainer?.dataset.multiSelect === 'true';
+
+        if (isMulti) {
+            btn.classList.toggle('active');
+        } else {
+            container.querySelectorAll('.enum-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+
+        const activeIds = [];
+        container.querySelectorAll('.enum-btn.active').forEach(b => {
+            activeIds.push(parseInt(b.dataset.optionId));
+        });
+
+        if (activeIds.length === 0) {
+            // All deselected in multi-select — delete entry
+            if (entryId) {
+                card.classList.remove('filled');
+                if (slotEl) slotEl.dataset.entryId = '';
+                else card.dataset.entryId = '';
+                api.deleteEntry(parseInt(entryId)).then(() => renderTodayForm());
+            }
+            return;
+        }
+
+        card.classList.add('filled');
+        saveDaily(metricId, entryId, activeIds, slotId).then(({ entryId: newId }) => {
             if (slotEl) slotEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
             _ensureClearButton(card, slotEl, newId);
@@ -1137,13 +1190,13 @@ async function showDayDetail(date) {
             if (filledSlots.length === 0) continue;
             hasAny = true;
             for (const s of filledSlots) {
-                const valStr = _formatEntryValue(s.entry, m.type, m.result_type);
+                const valStr = _formatEntryValue(s.entry, m.type, m.result_type, m.enum_options);
                 html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name} — ${s.label}</span><span class="summary-value">${valStr}</span></div>`;
             }
         } else {
             if (!m.entry) continue;
             hasAny = true;
-            const valStr = _formatEntryValue(m.entry, m.type, m.result_type);
+            const valStr = _formatEntryValue(m.entry, m.type, m.result_type, m.enum_options);
             html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span><span class="summary-value">${valStr}</span></div>`;
         }
     }
@@ -1156,7 +1209,17 @@ async function showDayDetail(date) {
     detail.innerHTML = html;
 }
 
-function _formatEntryValue(entry, type, resultType) {
+function _formatEntryValue(entry, type, resultType, enumOptions) {
+    if (type === 'enum') {
+        const v = entry.value;
+        if (!v || !Array.isArray(v)) return '—';
+        if (enumOptions) {
+            const idToLabel = {};
+            for (const opt of enumOptions) idToLabel[opt.id] = opt.label;
+            return v.map(id => idToLabel[id] || String(id)).join(', ');
+        }
+        return v.join(', ');
+    }
     if (type === 'computed') {
         const v = entry.value;
         if (v === null || v === undefined) return '—';
@@ -1260,8 +1323,10 @@ async function loadChartsTrends(start, end) {
     let trendsHtml = '<div class="trends-list">';
     const trendData = [];
     for (const { metric: m, trend } of trendResults) {
-        if (trend.points && trend.points.length > 0) {
-            trendData.push({ metric: m, points: trend.points });
+        const hasPoints = trend.points && trend.points.length > 0;
+        const hasEnumSeries = trend.option_series && Object.keys(trend.option_series).length > 0;
+        if (hasPoints || hasEnumSeries) {
+            trendData.push({ metric: m, points: trend.points || [], trend });
             trendsHtml += `<div class="trend-card-row" data-metric-id="${m.id}" style="cursor:pointer">
                 <div class="trend-card-header">
                     <h4>${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}<span class="trend-metric-name">${m.name}</span></h4>
@@ -1291,12 +1356,38 @@ async function loadChartsTrends(start, end) {
         green: style.getPropertyValue('--green').trim(),
         red: style.getPropertyValue('--red').trim(),
     };
-    for (const { metric, points } of trendData) {
+    for (const { metric, points, trend: trendObj } of trendData) {
         const canvas = document.getElementById(`trend-chart-${metric.id}`);
         if (!canvas) continue;
         const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type;
-        const config = buildChartConfig(points, mt, colors, { compact: true });
-        trendChartInstances.push(new Chart(canvas.getContext('2d'), config));
+        if (mt === 'enum' && trendObj?.option_series) {
+            const optColors = ['#6c8cff', '#4caf50', '#ff9800', '#e91e63', '#9c27b0', '#00bcd4', '#795548', '#607d8b'];
+            const options = trendObj.options || [];
+            const dates = Object.values(trendObj.option_series)[0]?.map(p => formatShortDate(p.date)) || [];
+            const datasets = options.map((opt, idx) => ({
+                label: opt,
+                data: (trendObj.option_series[opt] || []).map(p => p.value),
+                backgroundColor: optColors[idx % optColors.length] + 'cc',
+                borderRadius: 3,
+            }));
+            trendChartInstances.push(new Chart(canvas.getContext('2d'), {
+                type: 'bar',
+                data: { labels: dates, datasets },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    interaction: { mode: null },
+                    events: [],
+                    scales: {
+                        x: { stacked: true, display: false },
+                        y: { stacked: true, display: false },
+                    },
+                },
+            }));
+        } else {
+            const config = buildChartConfig(points, mt, colors, { compact: true });
+            trendChartInstances.push(new Chart(canvas.getContext('2d'), config));
+        }
     }
 
     // AW trend chart
@@ -1980,11 +2071,36 @@ async function loadMetricDetail(metricId, metric, start, end) {
         red: style.getPropertyValue('--red').trim(),
     };
 
-    const points = trend.points || [];
     const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type;
-    const chartConfig = buildChartConfig(points, mt, colors);
 
-    detailChartInstance = new Chart(canvas.getContext('2d'), chartConfig);
+    if (mt === 'enum' && trend.option_series) {
+        // Enum: stacked bar chart with per-option datasets
+        const optColors = ['#6c8cff', '#4caf50', '#ff9800', '#e91e63', '#9c27b0', '#00bcd4', '#795548', '#607d8b'];
+        const options = trend.options || [];
+        const dates = Object.values(trend.option_series)[0]?.map(p => formatShortDate(p.date)) || [];
+        const datasets = options.map((opt, idx) => ({
+            label: opt,
+            data: (trend.option_series[opt] || []).map(p => p.value),
+            backgroundColor: optColors[idx % optColors.length] + 'cc',
+            borderRadius: 3,
+        }));
+        detailChartInstance = new Chart(canvas.getContext('2d'), {
+            type: 'bar',
+            data: { labels: dates, datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: true, position: 'bottom' } },
+                scales: {
+                    x: { stacked: true, ticks: { maxTicksLimit: 7, maxRotation: 0 }, grid: { display: false } },
+                    y: { stacked: true, ticks: { stepSize: 1 } },
+                },
+            },
+        });
+    } else {
+        const points = trend.points || [];
+        const chartConfig = buildChartConfig(points, mt, colors);
+        detailChartInstance = new Chart(canvas.getContext('2d'), chartConfig);
+    }
 
     // Render stats (use result_type for computed)
     const statsType = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type;
@@ -2026,6 +2142,15 @@ function renderDetailStats(stats, metricType) {
             <div class="stat-card"><div class="stat-value">${stats.min}%</div><div class="stat-label">Мин</div></div>
             <div class="stat-card"><div class="stat-value">${stats.max}%</div><div class="stat-label">Макс</div></div>
         `;
+    } else if (metricType === 'enum') {
+        if (stats.most_common) {
+            cards += `<div class="stat-card"><div class="stat-value">${stats.most_common}</div><div class="stat-label">Чаще всего</div></div>`;
+        }
+        if (stats.option_stats) {
+            for (const os of stats.option_stats) {
+                cards += `<div class="stat-card"><div class="stat-value">${os.percent}%</div><div class="stat-label">${os.label}</div></div>`;
+            }
+        }
     }
 
     el.innerHTML = `<h3>Статистика</h3><div class="detail-stats-grid">${cards}</div>`;
@@ -2079,6 +2204,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
                     : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                     : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
+                    : m.type === 'enum' ? '<i data-lucide="list"></i> Варианты'
                     : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
                     : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
                     : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
@@ -2621,15 +2747,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
     function previewInputHtml(type) {
         if (type === 'time') {
-            return `<button type="button" class="time-picker-btn">Указать время</button>
-            <div class="time-preview-clock">
-                <div class="tp-mini-face">
-                    <div class="tp-mini-hand tp-mini-hour"></div>
-                    <div class="tp-mini-hand tp-mini-minute"></div>
-                    <div class="tp-mini-dot"></div>
-                </div>
-                <span class="tp-mini-hint">Циферблат для выбора</span>
-            </div>`;
+            return `<button type="button" class="time-picker-btn">Указать время</button>`;
         }
         if (type === 'number') {
             return `<div class="number-input">
@@ -2646,6 +2764,15 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 buttons += `<button class="scale-btn" data-value="${v}">${v}</button>`;
             }
             return `<div class="scale-buttons">${buttons}</div>`;
+        }
+        if (type === 'enum') {
+            const optInputs = overlay ? overlay.querySelectorAll('.enum-option-input') : [];
+            const labels = Array.from(optInputs).map(i => i.value.trim()).filter(v => v !== '');
+            if (labels.length === 0) {
+                return '<div class="enum-buttons single"><button class="enum-btn">Вариант 1</button><button class="enum-btn">Вариант 2</button></div>';
+            }
+            const isMulti = document.getElementById('nm-multi-select')?.checked;
+            return `<div class="enum-buttons ${isMulti ? 'multi' : 'single'}">${labels.map(l => `<button class="enum-btn">${l}</button>`).join('')}</div>`;
         }
         if (type === 'computed') {
             return `<div class="computed-value empty">= ?</div>`;
@@ -2673,6 +2800,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             return `<span class="label-text">Тип: Шкала</span>
                     <span class="label-hint">Оценка по шкале с настраиваемым диапазоном</span>`;
         }
+        if (type === 'enum') {
+            return `<span class="label-text">Тип: Варианты</span>
+                    <span class="label-hint">Выбор из заданного списка вариантов</span>`;
+        }
         if (type === 'computed') {
             return `<span class="label-text">Тип: Формула</span>
                     <span class="label-hint">Вычисляется автоматически из других метрик</span>`;
@@ -2693,10 +2824,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
             <div class="modal-content-split">
             <div class="modal-form">
-                <label class="form-label">
+                <div class="form-label">
                     <span class="label-text">Название</span>
                     <input id="nm-name" placeholder="Например: Зарядка" class="form-input" value="${existingMetric?.name || ''}">
-                </label>
+                </div>
 
                 <div class="form-label" ${isEdit && currentType === 'integration' ? 'style="display:none"' : ''}>
                     <span class="label-text">Иконка</span>
@@ -2707,10 +2838,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     </div>
                 </div>
 
-                <label class="form-label">
+                <div class="form-label">
                     <span class="label-text">Категория <span class="label-optional">(необязательно)</span></span>
                     <input id="nm-cat" placeholder="Например: Утро" class="form-input" value="${existingMetric?.category || ''}">
-                </label>
+                </div>
 
                 ${isEdit ? `
                 <div class="form-section" id="nm-type-section">
@@ -2734,6 +2865,17 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                         </label>
                     </div>
                     <span class="label-hint">От 1 до 5, шаг 1 → [1] [2] [3] [4] [5]<br>От 1 до 5, шаг 2 → [1] [3] [5]</span>
+                </div>
+                ` : ''}
+                ${currentType === 'enum' ? `
+                <div class="form-section" id="nm-enum-config" style="display: flex">
+                    <span class="label-text">Варианты</span>
+                    <div class="enum-options-list" id="nm-enum-options"></div>
+                    <button type="button" class="btn-add-slot" id="nm-add-enum-option">+ Добавить вариант</button>
+                    <label class="enum-multi-select-label">
+                        <input type="checkbox" id="nm-multi-select" ${existingMetric?.multi_select ? 'checked' : ''}> Можно выбрать несколько
+                    </label>
+                    <span class="label-hint">Минимум 2 варианта</span>
                 </div>
                 ` : ''}
                 ${currentType === 'computed' ? `
@@ -2774,17 +2916,17 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 ` : ''}
                 ${currentType !== 'computed' && currentType !== 'integration' ? `
                 <div class="form-section" id="nm-slots-section">
-                    <span class="label-text">Замеры в день</span>
+                    <span class="label-text">Сколько раз в день замерять?</span>
                     <div class="slots-choice-grid">
                         <label class="slots-choice-card ${!existingMetric?.slots?.length ? 'selected' : ''}" data-slots="single">
                             <input type="radio" name="nm-slots-mode" value="single" ${!existingMetric?.slots?.length ? 'checked' : ''}>
-                            <span class="slots-choice-title">Один замер</span>
-                            <div class="slots-choice-preview" id="slots-preview-single"></div>
+                            <div class="slots-choice-icon"><i data-lucide="circle-dot"></i></div>
+                            <span class="slots-choice-title">Один раз</span>
                         </label>
                         <label class="slots-choice-card ${existingMetric?.slots?.length ? 'selected' : ''}" data-slots="multiple">
                             <input type="radio" name="nm-slots-mode" value="multiple" ${existingMetric?.slots?.length ? 'checked' : ''}>
-                            <span class="slots-choice-title">Несколько замеров</span>
-                            <div class="slots-choice-preview" id="slots-preview-multiple"></div>
+                            <div class="slots-choice-icon"><i data-lucide="list"></i></div>
+                            <span class="slots-choice-title">Несколько раз</span>
                         </label>
                     </div>
                     <div class="slots-config" id="nm-slots-config" style="display:${existingMetric?.slots?.length ? 'flex' : 'none'}">
@@ -2797,54 +2939,48 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 ` : `
                 <div class="form-section" id="nm-type-section">
                     <span class="label-text">Тип метрики</span>
-                    <span class="label-hint">Выберите как вы будете записывать значение</span>
+                    <span class="label-hint">Как вы будете записывать значение</span>
                     <div class="type-cards-grid">
-                        <label class="type-card ${currentType === 'bool' ? 'selected' : ''}">
+                        <div class="type-card ${currentType === 'bool' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="bool" ${currentType === 'bool' ? 'checked' : ''}>
                             <div class="type-card-icon"><i data-lucide="check-circle"></i></div>
-                            <span class="type-card-name">Да / Нет</span>
-                        </label>
-                        <label class="type-card ${currentType === 'time' ? 'selected' : ''}">
+                            <div class="type-card-info"><div class="type-card-name">Да / Нет</div><div class="type-card-desc">Было или нет</div></div>
+                        </div>
+                        <div class="type-card ${currentType === 'time' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="time" ${currentType === 'time' ? 'checked' : ''}>
                             <div class="type-card-icon"><i data-lucide="clock"></i></div>
-                            <span class="type-card-name">Время</span>
-                        </label>
-                        <label class="type-card ${currentType === 'number' ? 'selected' : ''}">
+                            <div class="type-card-info"><div class="type-card-name">Время</div><div class="type-card-desc">Часы и минуты</div></div>
+                        </div>
+                        <div class="type-card ${currentType === 'number' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="number" ${currentType === 'number' ? 'checked' : ''}>
                             <div class="type-card-icon"><i data-lucide="hash"></i></div>
-                            <span class="type-card-name">Число</span>
-                        </label>
-                        <label class="type-card ${currentType === 'scale' ? 'selected' : ''}">
+                            <div class="type-card-info"><div class="type-card-name">Число</div><div class="type-card-desc">Целое значение</div></div>
+                        </div>
+                        <div class="type-card ${currentType === 'scale' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="scale" ${currentType === 'scale' ? 'checked' : ''}>
                             <div class="type-card-icon"><i data-lucide="sliders-horizontal"></i></div>
-                            <span class="type-card-name">Шкала</span>
-                        </label>
-                        <label class="type-card ${currentType === 'computed' ? 'selected' : ''}">
+                            <div class="type-card-info"><div class="type-card-name">Шкала</div><div class="type-card-desc">Оценка от 1 до N</div></div>
+                        </div>
+                        <div class="type-card ${currentType === 'enum' ? 'selected' : ''}">
+                            <input type="radio" name="nm-type" value="enum" ${currentType === 'enum' ? 'checked' : ''}>
+                            <div class="type-card-icon"><i data-lucide="list"></i></div>
+                            <div class="type-card-info"><div class="type-card-name">Варианты</div><div class="type-card-desc">Выбор из списка</div></div>
+                        </div>
+                        <div class="type-card ${currentType === 'computed' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="computed" ${currentType === 'computed' ? 'checked' : ''}>
                             <div class="type-card-icon"><i data-lucide="calculator"></i></div>
-                            <span class="type-card-name">Формула</span>
-                        </label>
-                        ${todoistConnected ? `<label class="type-card">
+                            <div class="type-card-info"><div class="type-card-name">Формула</div><div class="type-card-desc">Вычисляется из других метрик</div></div>
+                        </div>
+                        ${todoistConnected ? `<div class="type-card">
                             <input type="radio" name="nm-type" value="integration-todoist">
                             <div class="type-card-icon"><i data-lucide="list-checks"></i></div>
-                            <span class="type-card-name">Todoist</span>
-                        </label>` : ''}
-                        ${awConnected ? `<label class="type-card">
+                            <div class="type-card-info"><div class="type-card-name">Todoist</div><div class="type-card-desc">Количество задач</div></div>
+                        </div>` : ''}
+                        ${awConnected ? `<div class="type-card">
                             <input type="radio" name="nm-type" value="integration-activitywatch">
                             <div class="type-card-icon"><i data-lucide="monitor"></i></div>
-                            <span class="type-card-name">ActivityWatch</span>
-                        </label>` : ''}
-                    </div>
-                </div>
-                <div class="modal-preview-inline" id="preview-inline">
-                    <span class="label-hint">Пример как это будет выглядеть</span>
-                    <div id="metric-preview-inline" class="metric-preview">
-                        <div class="metric-card" id="preview-card-inline">
-                            <div class="metric-header">
-                                <label class="metric-label">${existingMetric?.icon ? '<span class="metric-icon">' + existingMetric.icon + '</span>' : ''}${existingMetric?.name || 'Название метрики'}</label>
-                            </div>
-                            <div class="metric-input">${previewInputHtml(currentType)}</div>
-                        </div>
+                            <div class="type-card-info"><div class="type-card-name">ActivityWatch</div><div class="type-card-desc">Экранное время</div></div>
+                        </div>` : ''}
                     </div>
                 </div>
                 <div class="form-section" id="nm-integration-config" style="display: none">
@@ -2879,8 +3015,21 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     </div>
                     <span class="label-hint">От 1 до 5, шаг 1 → [1] [2] [3] [4] [5]<br>От 1 до 5, шаг 2 → [1] [3] [5]<br>От 1 до 4, шаг 2 → [1] [3]</span>
                 </div>
+                <div class="form-section" id="nm-enum-config" style="display: ${currentType === 'enum' ? 'flex' : 'none'}">
+                    <span class="label-text">Варианты</span>
+                    <div class="enum-options-list" id="nm-enum-options"></div>
+                    <button type="button" class="btn-add-slot" id="nm-add-enum-option">+ Добавить вариант</button>
+                    <label class="enum-multi-select-label">
+                        <input type="checkbox" id="nm-multi-select"> Можно выбрать несколько
+                    </label>
+                    <span class="label-hint">Минимум 2 варианта</span>
+                </div>
                 <div class="form-section" id="nm-computed-config" style="display: ${currentType === 'computed' ? 'block' : 'none'}">
                     <span class="label-text">Формула</span>
+                    <div class="formula-empty-warning" id="nm-formula-empty-warning" style="display: none">
+                        Чтобы использовать формулы, вам нужно сначала добавить минимум одну метрику другого типа.
+                    </div>
+                    <div id="nm-formula-builder">
                     <div class="formula-tokens" id="nm-formula-tokens">
                         <span class="formula-tokens-empty">Добавьте метрики и операторы</span>
                     </div>
@@ -2912,19 +3061,20 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                         </select>
                     </div>
                     <span class="label-hint">Поддерживаются +, −, ×, ÷ и скобки. Время можно комбинировать только с временем.</span>
+                    </div>
                 </div>
                 <div class="form-section" id="nm-slots-section" style="display: ${currentType === 'computed' || currentType === 'integration' ? 'none' : ''}">
-                    <span class="label-text">Замеры в день</span>
+                    <span class="label-text">Сколько раз в день замерять?</span>
                     <div class="slots-choice-grid">
                         <label class="slots-choice-card selected" data-slots="single">
                             <input type="radio" name="nm-slots-mode" value="single" checked>
-                            <span class="slots-choice-title">Один замер</span>
-                            <div class="slots-choice-preview" id="slots-preview-single"></div>
+                            <div class="slots-choice-icon"><i data-lucide="circle-dot"></i></div>
+                            <span class="slots-choice-title">Один раз</span>
                         </label>
                         <label class="slots-choice-card" data-slots="multiple">
                             <input type="radio" name="nm-slots-mode" value="multiple">
-                            <span class="slots-choice-title">Несколько замеров</span>
-                            <div class="slots-choice-preview" id="slots-preview-multiple"></div>
+                            <div class="slots-choice-icon"><i data-lucide="list"></i></div>
+                            <span class="slots-choice-title">Несколько раз</span>
                         </label>
                     </div>
                     <div class="slots-config" id="nm-slots-config" style="display:none">
@@ -2938,6 +3088,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
             <div class="modal-preview-column">
                 <div class="preview-sticky">
+                    <div class="preview-label-desktop">Превью</div>
                     <div id="metric-preview" class="metric-preview">
                         <div class="metric-card" id="preview-card">
                             <div class="metric-header">
@@ -2952,9 +3103,22 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             </div>
             </div>
 
-            <div class="modal-actions">
-                <button class="btn-primary" id="nm-save">${buttonText}</button>
-                <button class="btn-small" id="nm-cancel">Отмена</button>
+            <div class="modal-bottom-sticky">
+                <div class="modal-preview-inline" id="preview-inline">
+                    <div class="preview-label">Превью</div>
+                    <div id="metric-preview-inline" class="metric-preview">
+                        <div class="metric-card" id="preview-card-inline">
+                            <div class="metric-header">
+                                <label class="metric-label">${existingMetric?.icon ? '<span class="metric-icon">' + existingMetric.icon + '</span>' : ''}${existingMetric?.name || 'Название метрики'}</label>
+                            </div>
+                            <div class="metric-input">${previewInputHtml(currentType)}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-primary" id="nm-save">${buttonText}</button>
+                    <button class="btn-small" id="nm-cancel">Отмена</button>
+                </div>
             </div>
         </div>
     `;
@@ -3029,6 +3193,13 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
     // Type selector change (only in create mode)
     if (!isEdit) {
+        // Click on card selects the radio (since we use div instead of label)
+        overlay.querySelectorAll('.type-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const radio = card.querySelector('input[type="radio"]');
+                if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change')); }
+            });
+        });
         overlay.querySelectorAll('input[name="nm-type"]').forEach(radio => {
             radio.addEventListener('change', () => {
                 // Update card selection visual
@@ -3039,23 +3210,35 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 const selectedType = getCurrentType();
                 const selectedProvider = getCurrentProvider();
                 const scaleConfig = document.getElementById('nm-scale-config');
+                const enumConfig = document.getElementById('nm-enum-config');
                 const computedConfig = document.getElementById('nm-computed-config');
                 const integrationConfig = document.getElementById('nm-integration-config');
                 const awConfig = document.getElementById('nm-aw-config');
                 const slotsSection = document.getElementById('nm-slots-section');
                 const emojiWrapper = overlay.querySelector('.emoji-picker-wrapper');
                 if (scaleConfig) scaleConfig.style.display = selectedType === 'scale' ? 'flex' : 'none';
+                if (enumConfig) enumConfig.style.display = selectedType === 'enum' ? 'flex' : 'none';
                 if (computedConfig) computedConfig.style.display = selectedType === 'computed' ? 'block' : 'none';
                 if (integrationConfig) integrationConfig.style.display = (selectedType === 'integration' && selectedProvider === 'todoist') ? 'block' : 'none';
                 if (awConfig) awConfig.style.display = (selectedType === 'integration' && selectedProvider === 'activitywatch') ? 'block' : 'none';
                 if (slotsSection) slotsSection.style.display = (selectedType === 'computed' || selectedType === 'integration') ? 'none' : '';
                 if (emojiWrapper) emojiWrapper.style.display = selectedType === 'integration' ? 'none' : '';
                 if (selectedType === 'computed') {
-                    formulaTokens = [];
-                    formulaBuilderInitialized = false;
-                    renderFormulaTokens();
-                    populateFormulaMetricSelect();
-                    setupFormulaBuilderHandlers(overlay);
+                    const availableMetrics = metrics.filter(m => m.type !== 'computed' && m.enabled);
+                    const warning = document.getElementById('nm-formula-empty-warning');
+                    const builder = document.getElementById('nm-formula-builder');
+                    if (availableMetrics.length === 0) {
+                        if (warning) warning.style.display = 'block';
+                        if (builder) builder.style.display = 'none';
+                    } else {
+                        if (warning) warning.style.display = 'none';
+                        if (builder) builder.style.display = '';
+                        formulaTokens = [];
+                        formulaBuilderInitialized = false;
+                        renderFormulaTokens();
+                        populateFormulaMetricSelect();
+                        setupFormulaBuilderHandlers(overlay);
+                    }
                 }
                 updatePreview();
             });
@@ -3149,6 +3332,74 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         setupFormulaBuilderHandlers(overlay);
     }
 
+    // ─── Enum option management ───
+    const enumOptionsList = document.getElementById('nm-enum-options');
+    const addEnumOptionBtn = document.getElementById('nm-add-enum-option');
+
+    function addEnumOptionField(label = '', optionId = null) {
+        const row = document.createElement('div');
+        row.className = 'enum-option-row';
+        row.draggable = true;
+        if (optionId) row.dataset.optionId = optionId;
+        row.innerHTML = `<span class="drag-handle">⠿</span>
+            <input type="text" class="form-input enum-option-input" placeholder="Название варианта" value="${label}">
+            <button type="button" class="btn-remove-slot">&times;</button>`;
+        enumOptionsList.appendChild(row);
+        row.querySelector('.btn-remove-slot').onclick = () => { row.remove(); updatePreview(); };
+        row.querySelector('.enum-option-input').addEventListener('input', updatePreview);
+        // Drag & drop
+        row.addEventListener('dragstart', (e) => {
+            e.dataTransfer.effectAllowed = 'move';
+            row.classList.add('dragging');
+        });
+        row.addEventListener('dragend', () => {
+            row.classList.remove('dragging');
+            updatePreview();
+        });
+        row.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            const dragging = enumOptionsList.querySelector('.dragging');
+            if (dragging && dragging !== row) {
+                const rect = row.getBoundingClientRect();
+                const mid = rect.top + rect.height / 2;
+                if (e.clientY < mid) {
+                    enumOptionsList.insertBefore(dragging, row);
+                } else {
+                    enumOptionsList.insertBefore(dragging, row.nextSibling);
+                }
+            }
+        });
+    }
+
+    if (addEnumOptionBtn) {
+        addEnumOptionBtn.onclick = () => { addEnumOptionField(''); updatePreview(); };
+    }
+
+    // Pre-fill enum options in edit mode
+    if (isEdit && currentType === 'enum' && existingMetric?.enum_options) {
+        for (const opt of existingMetric.enum_options) {
+            addEnumOptionField(opt.label, opt.id);
+        }
+        // Multi-select checkbox listener for preview
+        const multiSelectCb = document.getElementById('nm-multi-select');
+        if (multiSelectCb) multiSelectCb.addEventListener('change', updatePreview);
+        updatePreview();
+    }
+    // Create mode: auto-add 2 empty options when enum is selected
+    if (!isEdit) {
+        const multiSelectCb = document.getElementById('nm-multi-select');
+        if (multiSelectCb) multiSelectCb.addEventListener('change', updatePreview);
+        // Watch for type change to auto-populate
+        overlay.querySelectorAll('input[name="nm-type"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+                if (radio.value === 'enum' && enumOptionsList && enumOptionsList.children.length === 0) {
+                    addEnumOptionField('');
+                    addEnumOptionField('');
+                }
+            });
+        });
+    }
+
     function setupPreviewInteractions() {
         document.querySelectorAll('#preview-card .bool-btn, #preview-card-inline .bool-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -3165,6 +3416,19 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 const buttons = btn.parentElement.querySelectorAll('.scale-btn');
                 buttons.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
+            });
+        });
+        document.querySelectorAll('#preview-card .enum-btn, #preview-card-inline .enum-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const container = btn.parentElement;
+                const isMulti = container.classList.contains('multi');
+                if (isMulti) {
+                    btn.classList.toggle('active');
+                } else {
+                    container.querySelectorAll('.enum-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                }
             });
         });
     }
@@ -3226,7 +3490,6 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         if (previewCardInline) previewCardInline.innerHTML = cardHtml;
 
         setupPreviewInteractions();
-        if (typeof updateSlotsPreview === 'function') updateSlotsPreview();
     }
 
     // ─── Slot management ───
@@ -3237,20 +3500,6 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     setupPreviewInteractions();
 
     // ─── Slots choice cards ───
-    function updateSlotsPreview() {
-        const singlePreview = document.getElementById('slots-preview-single');
-        const multiPreview = document.getElementById('slots-preview-multiple');
-        if (!singlePreview || !multiPreview) return;
-        const boolHtml = `<div class="bool-buttons"><button class="bool-btn">Да</button><button class="bool-btn">Нет</button></div>`;
-        singlePreview.innerHTML = `<div class="metric-input">${boolHtml}</div>`;
-        multiPreview.innerHTML = `<div class="multiple-entry">
-            ${['Утро', 'День', 'Вечер'].map(l => `<div class="metric-slot">
-                <div class="period-header"><span class="period-label">${l}</span></div>
-                <div class="metric-input">${boolHtml}</div>
-            </div>`).join('')}
-        </div>`;
-    }
-
     overlay.querySelectorAll('input[name="nm-slots-mode"]').forEach(radio => {
         radio.addEventListener('change', () => {
             overlay.querySelectorAll('.slots-choice-card').forEach(c => c.classList.remove('selected'));
@@ -3271,9 +3520,6 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             updatePreview();
         });
     });
-
-    // Initial slots preview
-    updateSlotsPreview();
 
     function addSlotField(label = '') {
         const row = document.createElement('div');
@@ -3339,6 +3585,25 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     updateData.scale_max = sp.max;
                     updateData.scale_step = sp.step;
                 }
+                if (existingMetric.type === 'enum') {
+                    const multiSelectCb = document.getElementById('nm-multi-select');
+                    updateData.multi_select = multiSelectCb ? multiSelectCb.checked : false;
+                    // Collect enum options with their IDs (existing) or without (new)
+                    const optRows = enumOptionsList ? enumOptionsList.querySelectorAll('.enum-option-row') : [];
+                    const opts = [];
+                    Array.from(optRows).forEach(row => {
+                        const label = row.querySelector('.enum-option-input').value.trim();
+                        if (!label) return;
+                        const entry = { label };
+                        if (row.dataset.optionId) entry.id = parseInt(row.dataset.optionId);
+                        opts.push(entry);
+                    });
+                    if (opts.length < 2) {
+                        alert('Нужно минимум 2 варианта');
+                        return;
+                    }
+                    updateData.enum_options = opts;
+                }
                 // Send slot_labels if user configured slots (not for computed/integration)
                 if (existingMetric.type !== 'computed' && existingMetric.type !== 'integration') {
                     if (slotLabels.length >= 2) {
@@ -3375,6 +3640,27 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     createData.scale_min = sp.min;
                     createData.scale_max = sp.max;
                     createData.scale_step = sp.step;
+                }
+
+                if (selectedType === 'enum') {
+                    const optRows = enumOptionsList ? enumOptionsList.querySelectorAll('.enum-option-row') : [];
+                    const labels = [];
+                    optRows.forEach(row => {
+                        const label = row.querySelector('.enum-option-input').value.trim();
+                        if (label) labels.push(label);
+                    });
+                    if (labels.length < 2) {
+                        alert('Нужно минимум 2 варианта');
+                        return;
+                    }
+                    const uniqueLabels = new Set(labels);
+                    if (uniqueLabels.size !== labels.length) {
+                        alert('Названия вариантов должны быть уникальными');
+                        return;
+                    }
+                    createData.enum_options = labels;
+                    const multiSelectCb = document.getElementById('nm-multi-select');
+                    createData.multi_select = multiSelectCb ? multiSelectCb.checked : false;
                 }
 
                 if (selectedType === 'computed') {

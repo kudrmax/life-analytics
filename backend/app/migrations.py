@@ -12,6 +12,25 @@
 
 MIGRATIONS = [
     # (version, description, sql)
+    # NOTE: ALTER TYPE ... ADD VALUE is in init_db() (cannot run inside transaction)
+    (1, "add_enum_tables", """
+        CREATE TABLE IF NOT EXISTS enum_config (
+            metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            multi_select BOOLEAN NOT NULL DEFAULT FALSE
+        );
+        CREATE TABLE IF NOT EXISTS enum_options (
+            id SERIAL PRIMARY KEY,
+            metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            label VARCHAR(200) NOT NULL,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE
+        );
+        CREATE TABLE IF NOT EXISTS values_enum (
+            entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+            selected_option_ids INTEGER[] NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_enum_options_metric ON enum_options(metric_id);
+    """),
 ]
 
 

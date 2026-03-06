@@ -30,7 +30,8 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                   cc.formula, cc.result_type,
                   ic.provider, ic.metric_key, ic.value_type,
                   ifc.filter_name, iqc.filter_query,
-                  icatc.category_id, iapc.app_name AS config_app_name
+                  icatc.category_id, iapc.app_name AS config_app_name,
+                  ec.multi_select
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
            LEFT JOIN computed_config cc ON cc.metric_id = md.id
@@ -39,6 +40,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
            LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
            LEFT JOIN integration_category_config icatc ON icatc.metric_id = md.id
            LEFT JOIN integration_app_config iapc ON iapc.metric_id = md.id
+           LEFT JOIN enum_config ec ON ec.metric_id = md.id
            WHERE md.enabled = TRUE AND md.user_id = $1
            ORDER BY md.sort_order, md.id""",
         current_user["id"],
@@ -148,6 +150,29 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                 "scale_step": r["scale_step"],
             }
 
+    if entry_ids_by_type.get("enum"):
+        rows = await db.fetch(
+            "SELECT entry_id, selected_option_ids FROM values_enum WHERE entry_id = ANY($1)",
+            entry_ids_by_type["enum"],
+        )
+        for r in rows:
+            values_map[r["entry_id"]] = list(r["selected_option_ids"])
+
+    # Bulk-load enum options for enum metrics
+    enum_metric_ids = [m["id"] for m in metrics if m["type"] == "enum"]
+    enum_options_by_metric: dict[int, list] = defaultdict(list)
+    if enum_metric_ids:
+        eo_rows = await db.fetch(
+            """SELECT id, metric_id, label, sort_order FROM enum_options
+               WHERE metric_id = ANY($1) AND enabled = TRUE
+               ORDER BY metric_id, sort_order""",
+            enum_metric_ids,
+        )
+        for r in eo_rows:
+            enum_options_by_metric[r["metric_id"]].append({
+                "id": r["id"], "label": r["label"], "sort_order": r["sort_order"],
+            })
+
     qt.mark("values")
     # --- Build result using pre-loaded values ---
     result = []
@@ -174,6 +199,8 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "provider": m.get("provider"),
             "metric_key": m.get("metric_key"),
             "value_type": m.get("value_type"),
+            "multi_select": m.get("multi_select"),
+            "enum_options": enum_options_by_metric.get(mid) if m["type"] == "enum" else None,
         }
 
         if slots or extra_disabled:

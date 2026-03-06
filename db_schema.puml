@@ -237,6 +237,27 @@ entity "integration_app_config" as iapc {
     * app_name : VARCHAR(500)
 }
 
+entity "enum_config" as ec {
+    * **metric_id** : INTEGER <<PK>> <<FK>>
+    --
+    * multi_select : BOOLEAN
+}
+
+entity "enum_options" as eo {
+    * **id** : SERIAL <<PK>>
+    --
+    * metric_id : INTEGER <<FK>>
+    * sort_order : INTEGER
+    * label : VARCHAR(200)
+    * enabled : BOOLEAN
+}
+
+entity "values_enum" as ve {
+    * **entry_id** : INTEGER <<PK>> <<FK>>
+    --
+    * selected_option_ids : INTEGER[]
+}
+
 ' ── Relationships ──
 
 users ||--o{ md : "user_id"
@@ -258,6 +279,8 @@ md ||--o| ifc : "metric_id"
 md ||--o| iqc : "metric_id"
 md ||--o| icatc : "metric_id"
 md ||--o| iapc : "metric_id"
+md ||--o| ec : "metric_id"
+md ||--o{ eo : "metric_id"
 
 slots ||--o{ entries : "slot_id"
 
@@ -265,6 +288,7 @@ entries ||--o| vb : "entry_id"
 entries ||--o| vt : "entry_id"
 entries ||--o| vn : "entry_id"
 entries ||--o| vs : "entry_id"
+entries ||--o| ve : "entry_id"
 
 cr ||--o{ cp : "report_id"
 

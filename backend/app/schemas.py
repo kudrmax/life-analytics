@@ -9,6 +9,7 @@ class MetricType(str, Enum):
     scale = "scale"
     computed = "computed"
     integration = "integration"
+    enum = "enum"
 
 
 class MeasurementSlotOut(BaseModel):
@@ -37,6 +38,8 @@ class MetricDefinitionCreate(BaseModel):
     filter_query: str | None = None
     category_id: int | None = None
     app_name: str | None = None
+    enum_options: list[str] | None = None
+    multi_select: bool | None = None
 
 
 class MetricDefinitionUpdate(BaseModel):
@@ -51,6 +54,8 @@ class MetricDefinitionUpdate(BaseModel):
     slot_labels: list[str] | None = None
     formula: list[dict] | None = None
     result_type: str | None = None
+    enum_options: list[dict] | None = None  # [{id?: int, label: str}]
+    multi_select: bool | None = None
 
 
 class MetricDefinitionOut(BaseModel):
@@ -75,17 +80,19 @@ class MetricDefinitionOut(BaseModel):
     filter_query: str | None = None
     category_id: int | None = None
     config_app_name: str | None = None
+    enum_options: list[dict] | None = None  # [{id, label, sort_order, enabled}]
+    multi_select: bool | None = None
 
 
 class EntryCreate(BaseModel):
     metric_id: int
     date: str  # YYYY-MM-DD
-    value: bool | str | int  # bool for bool, "HH:MM" for time, int for number
+    value: bool | str | int | list[int]  # list[int] for enum option IDs
     slot_id: int | None = None
 
 
 class EntryUpdate(BaseModel):
-    value: bool | str | int
+    value: bool | str | int | list[int]
 
 
 class EntryOut(BaseModel):
@@ -93,7 +100,7 @@ class EntryOut(BaseModel):
     metric_id: int
     date: str
     recorded_at: str
-    value: bool | str | int | None
+    value: bool | str | int | list[int] | None
     slot_id: int | None = None
     slot_label: str = ""
 
