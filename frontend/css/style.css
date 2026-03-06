@@ -2432,6 +2432,19 @@ emoji-picker {
     padding-top: 8px;
 }
 
+.fill-time-header {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text);
+    margin: 1.5rem 0 0.5rem 0;
+    padding-bottom: 0.25rem;
+    border-bottom: 2px solid var(--border);
+}
+
+.fill-time-header:first-of-type {
+    margin-top: 0.5rem;
+}
+
 /* ─── Auto Metrics ─── */
 .auto-metrics-section {
     margin-top: 24px;

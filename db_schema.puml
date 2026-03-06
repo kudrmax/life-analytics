@@ -30,6 +30,7 @@ entity "metric_definitions" as md {
     * slug : VARCHAR(100)
     * name : VARCHAR(200)
     * category : VARCHAR(100)
+    * fill_time : VARCHAR(100)
     * type : metric_type
     * enabled : BOOLEAN
     * sort_order : INTEGER

@@ -183,6 +183,11 @@ async def init_db():
             ALTER TABLE metric_definitions ALTER COLUMN icon TYPE VARCHAR(600)
         """)
 
+        # Add fill_time column to metric_definitions
+        await conn.execute("""
+            ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS fill_time VARCHAR(100) NOT NULL DEFAULT ''
+        """)
+
         # Correlation reports
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS correlation_reports (

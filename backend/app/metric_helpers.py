@@ -23,6 +23,7 @@ async def build_metric_out(
         slug=row["slug"],
         name=row["name"],
         category=row["category"],
+        fill_time=row.get("fill_time", ""),
         icon=row.get("icon", ""),
         type=row["type"],
         enabled=row["enabled"],

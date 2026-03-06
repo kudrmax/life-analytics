@@ -188,6 +188,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "name": m["name"],
             "icon": m.get("icon", ""),
             "category": m["category"],
+            "fill_time": m.get("fill_time", ""),
             "type": m["type"],
             "scale_min": m["scale_min"],
             "scale_max": m["scale_max"],

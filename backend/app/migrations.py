@@ -31,6 +31,9 @@ MIGRATIONS = [
         );
         CREATE INDEX IF NOT EXISTS idx_enum_options_metric ON enum_options(metric_id);
     """),
+    (2, "add_fill_time_column", """
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS fill_time VARCHAR(100) NOT NULL DEFAULT '';
+    """),
 ]
 
 

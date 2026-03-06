@@ -326,12 +326,22 @@ async function renderTodayForm() {
     ]);
     if (myVersion !== _todayRenderVersion) return;
 
-    // Group by category
-    const categories = {};
+    // Group by fill_time -> category (two-level)
+    const fillTimeGroups = {};
     for (const m of summary.metrics) {
-        categories[m.category] = categories[m.category] || [];
-        categories[m.category].push(m);
+        const ft = m.fill_time || '';
+        if (!fillTimeGroups[ft]) fillTimeGroups[ft] = {};
+        const cat = m.category || '';
+        if (!fillTimeGroups[ft][cat]) fillTimeGroups[ft][cat] = [];
+        fillTimeGroups[ft][cat].push(m);
     }
+
+    const sortedFillTimes = Object.keys(fillTimeGroups).sort((a, b) => {
+        if (a === '' && b !== '') return 1;
+        if (a !== '' && b === '') return -1;
+        return 0;
+    });
+    const showFtHeaders = sortedFillTimes.length > 1 || (sortedFillTimes.length === 1 && sortedFillTimes[0] !== '');
 
     let html = '';
     const hasUserMetrics = summary.metrics.length > 0;
@@ -346,12 +356,25 @@ async function renderTodayForm() {
         </div>`;
     } else {
         html += '<h3 class="section-header">Ваши метрики</h3>';
-        for (const [cat, items] of Object.entries(categories)) {
-            html += `<div class="category"><h3>${cat}</h3>`;
-            for (const m of items) {
-                html += renderMetricInput(m);
+        for (const ft of sortedFillTimes) {
+            if (showFtHeaders) {
+                const ftLabel = ft || 'В любое время';
+                html += `<h2 class="fill-time-header">${ftLabel}</h2>`;
             }
-            html += '</div>';
+            const catGroups = fillTimeGroups[ft];
+            const sortedCats = Object.keys(catGroups).sort((a, b) => {
+                if (a === '' && b !== '') return 1;
+                if (a !== '' && b === '') return -1;
+                return 0;
+            });
+            for (const cat of sortedCats) {
+                const catLabel = (showFtHeaders && !cat) ? 'Без категорий' : cat;
+                html += `<div class="category"><h3>${catLabel}</h3>`;
+                for (const m of catGroups[cat]) {
+                    html += renderMetricInput(m);
+                }
+                html += '</div>';
+            }
         }
     }
 
@@ -2203,37 +2226,60 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             <div class="empty-state-text">Вы пока не создали метрики, поэтому тут пусто</div>
         </div>`;
     } else {
-        const categories = {};
+        const fillTimeGroups = {};
         for (const m of activeMetrics) {
-            categories[m.category] = categories[m.category] || [];
-            categories[m.category].push(m);
+            const ft = m.fill_time || '';
+            if (!fillTimeGroups[ft]) fillTimeGroups[ft] = {};
+            const cat = m.category || '';
+            if (!fillTimeGroups[ft][cat]) fillTimeGroups[ft][cat] = [];
+            fillTimeGroups[ft][cat].push(m);
         }
 
-        for (const [cat, items] of Object.entries(categories)) {
-            html += `<div class="category"><h3>${cat}</h3>`;
-            for (const m of items) {
-                const slotsBadge = m.slots && m.slots.length > 0
-                    ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
-                const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
-                    : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
-                    : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
-                    : m.type === 'enum' ? '<i data-lucide="list"></i> Варианты'
-                    : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
-                    : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
-                    : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
-                html += `<div class="setting-row">
-                    <div class="setting-info">
-                        <span class="setting-name">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span>
-                        <span class="setting-type">${typeIcon}</span>
-                    </div>
-                    <div class="setting-actions">
-                        <button class="btn-icon edit-btn" data-metric="${m.id}"><i data-lucide="pencil"></i></button>
-                        <button class="btn-icon archive-btn" data-metric="${m.id}"><i data-lucide="archive"></i></button>
-                        <button class="btn-icon delete-btn btn-icon-danger" data-metric="${m.id}"><i data-lucide="trash-2"></i></button>
-                    </div>
-                </div>`;
+        const sortedFillTimes = Object.keys(fillTimeGroups).sort((a, b) => {
+            if (a === '' && b !== '') return 1;
+            if (a !== '' && b === '') return -1;
+            return 0;
+        });
+        const showFtHeaders = sortedFillTimes.length > 1 || (sortedFillTimes.length === 1 && sortedFillTimes[0] !== '');
+
+        for (const ft of sortedFillTimes) {
+            if (showFtHeaders) {
+                const ftLabel = ft || 'В любое время';
+                html += `<h2 class="fill-time-header">${ftLabel}</h2>`;
             }
-            html += '</div>';
+            const catGroups = fillTimeGroups[ft];
+            const sortedCats = Object.keys(catGroups).sort((a, b) => {
+                if (a === '' && b !== '') return 1;
+                if (a !== '' && b === '') return -1;
+                return 0;
+            });
+            for (const cat of sortedCats) {
+                const catLabel = (showFtHeaders && !cat) ? 'Без категорий' : cat;
+                html += `<div class="category"><h3>${catLabel}</h3>`;
+                for (const m of catGroups[cat]) {
+                    const slotsBadge = m.slots && m.slots.length > 0
+                        ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
+                    const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
+                        : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
+                        : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
+                        : m.type === 'enum' ? '<i data-lucide="list"></i> Варианты'
+                        : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
+                        : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
+                        : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
+                    html += `<div class="setting-row">
+                        <div class="setting-info">
+                            <span class="setting-name">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span>
+                            <span class="setting-type">${typeIcon}</span>
+                        </div>
+                        <div class="setting-actions">
+                            <button class="btn-icon edit-btn" data-metric="${m.id}"><i data-lucide="pencil"></i></button>
+                            <button class="btn-icon archive-btn" data-metric="${m.id}"><i data-lucide="archive"></i></button>
+                            <button class="btn-icon delete-btn btn-icon-danger" data-metric="${m.id}"><i data-lucide="trash-2"></i></button>
+                        </div>
+                    </div>`;
+                }
+                html += '</div>';
+            }
         }
     }
 
@@ -2853,7 +2899,12 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
                 <div class="form-label">
                     <span class="label-text">Категория <span class="label-optional">(необязательно)</span></span>
-                    <input id="nm-cat" placeholder="Например: Утро" class="form-input" value="${existingMetric?.category || ''}">
+                    <input id="nm-cat" placeholder="Например: Здоровье" class="form-input" value="${existingMetric?.category || ''}">
+                </div>
+
+                <div class="form-label">
+                    <span class="label-text">Когда заполнять <span class="label-optional">(необязательно)</span></span>
+                    <input id="nm-fill-time" placeholder="Например: Утро, Вечер" class="form-input" value="${existingMetric?.fill_time || ''}">
                 </div>
 
                 ${isEdit ? `
@@ -3345,6 +3396,11 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         setupFormulaBuilderHandlers(overlay);
     }
 
+    // ─── Slot management (declared early — updatePreview references slotList) ───
+    const slotList = document.getElementById('nm-slot-labels');
+    const addSlotBtn = document.getElementById('nm-add-slot');
+    const slotsConfig = document.getElementById('nm-slots-config');
+
     // ─── Enum option management ───
     const enumOptionsList = document.getElementById('nm-enum-options');
     const addEnumOptionBtn = document.getElementById('nm-add-enum-option');
@@ -3505,11 +3561,6 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         setupPreviewInteractions();
     }
 
-    // ─── Slot management ───
-    const slotList = document.getElementById('nm-slot-labels');
-    const addSlotBtn = document.getElementById('nm-add-slot');
-    const slotsConfig = document.getElementById('nm-slots-config');
-
     setupPreviewInteractions();
 
     // ─── Slots choice cards ───
@@ -3575,7 +3626,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
             if (isEdit) {
                 const icon = existingMetric.type === 'integration' ? undefined : document.getElementById('nm-icon').value;
-                const updateData = { name, category };
+                const fillTime = document.getElementById('nm-fill-time').value;
+                const updateData = { name, category, fill_time: fillTime };
                 if (icon !== undefined) updateData.icon = icon;
                 if (existingMetric.type === 'computed') {
                     if (formulaTokens.length === 0) {
@@ -3638,7 +3690,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     || 'metric_' + Date.now();
 
                 const icon = document.getElementById('nm-icon').value;
-                const createData = { slug, name, category, icon, type: selectedType };
+                const fillTime = document.getElementById('nm-fill-time').value;
+                const createData = { slug, name, category, fill_time: fillTime, icon, type: selectedType };
 
                 if (selectedType === 'scale') {
                     const sp = getScaleParams();
