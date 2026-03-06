@@ -437,6 +437,8 @@ h3 {
 .enum-btn:hover { border-color: var(--accent); }
 .enum-buttons.single .enum-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .enum-buttons.multi .enum-btn.active { background: var(--green); border-color: var(--green); color: #fff; }
+.enum-btn-none { opacity: 0.6; font-style: italic; }
+.enum-btn-none.active { opacity: 1; font-style: normal; }
 
 /* ─── Enum Options (modal) ─── */
 .enum-options-list {

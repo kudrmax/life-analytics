@@ -790,12 +790,12 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     for opt in opts:
                         # Aggregate source (across all slots)
                         idx = len(sources)
-                        sources.append((mid, None, "bool", f"{m['name']}: {opt['label']}"))
+                        sources.append((mid, None, "enum_bool", f"{m['name']}: {opt['label']}"))
                         enum_source_info[idx] = (opt["id"], None)
                         if metric_slots:
                             for s in metric_slots:
                                 idx = len(sources)
-                                sources.append((mid, s["id"], "bool", f"{m['name']}: {opt['label']} — {s['label']}"))
+                                sources.append((mid, s["id"], "enum_bool", f"{m['name']}: {opt['label']} — {s['label']}"))
                                 enum_source_info[idx] = (opt["id"], s["id"])
                     continue
                 metric_slots = slots_by_metric.get(mid, [])

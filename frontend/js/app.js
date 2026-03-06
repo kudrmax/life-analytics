@@ -529,7 +529,7 @@ function renderMetricInput(m) {
             const entryId = entry ? entry.id : null;
 
             let input;
-            if (m.type === 'enum') input = renderEnum(val, m.enum_options, m.multi_select);
+            if (m.type === 'enum') input = renderEnum(val, m.enum_options, m.multi_select, !!entry);
             else if (m.type === 'time') input = renderTime(val);
             else if (m.type === 'number') input = renderNumber(val);
             else if (m.type === 'scale') {
@@ -571,7 +571,7 @@ function renderMetricInput(m) {
     const filledClass = isFilled ? 'filled' : '';
 
     let input;
-    if (m.type === 'enum') input = renderEnum(val, m.enum_options, m.multi_select);
+    if (m.type === 'enum') input = renderEnum(val, m.enum_options, m.multi_select, !!entry);
     else if (m.type === 'time') input = renderTime(val);
     else if (m.type === 'number') input = renderNumber(val);
     else if (m.type === 'scale') input = renderScale(val, m.scale_min, m.scale_max, m.scale_step);
@@ -626,11 +626,15 @@ function renderScale(val, min, max, step) {
     return `<div class="scale-buttons">${buttons}</div>`;
 }
 
-function renderEnum(selectedIds, options, multiSelect) {
+function renderEnum(selectedIds, options, multiSelect, hasEntry) {
     let buttons = '';
     for (const opt of (options || [])) {
         const isSelected = selectedIds && Array.isArray(selectedIds) && selectedIds.includes(opt.id);
         buttons += `<button class="enum-btn ${isSelected ? 'active' : ''}" data-option-id="${opt.id}" data-value="${opt.id}">${opt.label}</button>`;
+    }
+    if (multiSelect) {
+        const noneActive = hasEntry && Array.isArray(selectedIds) && selectedIds.length === 0;
+        buttons += `<button class="enum-btn enum-btn-none ${noneActive ? 'active' : ''}" data-option-id="none">Ничего</button>`;
     }
     return `<div class="enum-buttons ${multiSelect ? 'multi' : 'single'}" data-multi-select="${multiSelect ? 'true' : 'false'}">${buttons}</div>`;
 }
@@ -879,30 +883,38 @@ async function handleFormClick(e) {
         const container = slotEl || card;
         const enumContainer = container.querySelector('.enum-buttons');
         const isMulti = enumContainer?.dataset.multiSelect === 'true';
+        const isNoneBtn = btn.dataset.optionId === 'none';
 
         if (isMulti) {
-            btn.classList.toggle('active');
+            if (isNoneBtn) {
+                // "Ничего" — снять все обычные кнопки
+                container.querySelectorAll('.enum-btn:not(.enum-btn-none)').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            } else {
+                // Обычная кнопка — снять "Ничего"
+                const noneBtn = container.querySelector('.enum-btn-none');
+                if (noneBtn) noneBtn.classList.remove('active');
+                btn.classList.toggle('active');
+            }
         } else {
             container.querySelectorAll('.enum-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
         }
 
+        // Собрать выбранные option IDs (без "none")
         const activeIds = [];
-        container.querySelectorAll('.enum-btn.active').forEach(b => {
+        container.querySelectorAll('.enum-btn.active:not(.enum-btn-none)').forEach(b => {
             activeIds.push(parseInt(b.dataset.optionId));
         });
 
-        if (activeIds.length === 0) {
-            // All deselected in multi-select — delete entry
-            if (entryId) {
-                card.classList.remove('filled');
-                if (slotEl) slotEl.dataset.entryId = '';
-                else card.dataset.entryId = '';
-                api.deleteEntry(parseInt(entryId)).then(() => renderTodayForm());
-            }
+        const noneActive = container.querySelector('.enum-btn-none.active');
+
+        if (activeIds.length === 0 && !noneActive) {
+            // Single-select: нельзя снять кнопкой (только clear ×)
             return;
         }
 
+        // activeIds может быть [] если нажата "Ничего" — это валидный ответ
         card.classList.add('filled');
         saveDaily(metricId, entryId, activeIds, slotId).then(({ entryId: newId }) => {
             if (slotEl) slotEl.dataset.entryId = newId;
@@ -1647,6 +1659,7 @@ function corrTypeWords(type) {
     const r = w => `<span class="corr-word-neg">${w}</span>`;
     switch (type) {
         case 'bool': return [g('да'), r('нет')];
+        case 'enum_bool': return [g('выбрано'), r('не выбрано')];
         case 'time': return ['позже', 'раньше'];
         case 'scale': return [g('выше'), r('ниже')];
         default: return [g('больше'), r('меньше')];
