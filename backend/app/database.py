@@ -69,6 +69,31 @@ async def _init_db_schema(conn):
         )
     """)
 
+    # Categories (two-level hierarchy for metric grouping)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS categories (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name VARCHAR(200) NOT NULL,
+            parent_id INTEGER REFERENCES categories(id) ON DELETE CASCADE,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    await conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_top
+            ON categories(user_id, name) WHERE parent_id IS NULL
+    """)
+    await conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_sub
+            ON categories(user_id, name, parent_id) WHERE parent_id IS NOT NULL
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id)
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id)
+    """)
+
     # Metric definitions
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS metric_definitions (
@@ -76,7 +101,7 @@ async def _init_db_schema(conn):
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             slug VARCHAR(100) NOT NULL,
             name VARCHAR(200) NOT NULL,
-            category VARCHAR(100) NOT NULL DEFAULT '',
+            category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
             type metric_type NOT NULL,
             enabled BOOLEAN NOT NULL DEFAULT TRUE,
             sort_order INTEGER NOT NULL DEFAULT 0,
@@ -192,9 +217,10 @@ async def _init_db_schema(conn):
         ALTER TABLE metric_definitions ALTER COLUMN icon TYPE VARCHAR(600)
     """)
 
-    # Add fill_time column to metric_definitions
+    # Add category_id column to metric_definitions (for existing DBs that had category/fill_time columns)
     await conn.execute("""
-        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS fill_time VARCHAR(100) NOT NULL DEFAULT ''
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS
+            category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL
     """)
 
     # Correlation reports
@@ -373,7 +399,7 @@ async def _init_db_schema(conn):
             id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             app_name VARCHAR(500) NOT NULL,
-            category_id INTEGER NOT NULL REFERENCES activitywatch_categories(id) ON DELETE CASCADE,
+            activitywatch_category_id INTEGER NOT NULL REFERENCES activitywatch_categories(id) ON DELETE CASCADE,
             UNIQUE(user_id, app_name)
         )
     """)
@@ -382,7 +408,7 @@ async def _init_db_schema(conn):
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS integration_category_config (
             metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
-            category_id INTEGER NOT NULL REFERENCES activitywatch_categories(id) ON DELETE CASCADE
+            activitywatch_category_id INTEGER NOT NULL REFERENCES activitywatch_categories(id) ON DELETE CASCADE
         )
     """)
 

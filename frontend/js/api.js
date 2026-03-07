@@ -264,4 +264,29 @@ const api = {
     awGetAvailableMetrics() {
         return this.request('GET', '/api/integrations/activitywatch/available-metrics');
     },
+
+    // Categories
+    getCategories() {
+        return this.cachedGet('/api/categories');
+    },
+    async createCategory(data) {
+        const result = await this.request('POST', '/api/categories', data);
+        invalidateCache('/api/categories');
+        return result;
+    },
+    async updateCategory(id, data) {
+        const result = await this.request('PATCH', `/api/categories/${id}`, data);
+        invalidateCache('/api/categories');
+        return result;
+    },
+    async deleteCategory(id) {
+        const result = await this.request('DELETE', `/api/categories/${id}`);
+        invalidateCache('/api/categories', '/api/metrics', '/api/daily/');
+        return result;
+    },
+    async reorderCategories(items) {
+        const result = await this.request('POST', '/api/categories/reorder', items);
+        invalidateCache('/api/categories');
+        return result;
+    },
 };

@@ -23,7 +23,7 @@ async def list_metrics(
                       cc.formula, cc.result_type,
                       ic.provider, ic.metric_key, ic.value_type,
                       ifc.filter_name, iqc.filter_query,
-                      icatc.category_id, iapc.app_name AS config_app_name,
+                      icatc.activitywatch_category_id, iapc.app_name AS config_app_name,
                       ec.multi_select
                FROM metric_definitions md
                LEFT JOIN scale_config sc ON sc.metric_id = md.id
@@ -57,14 +57,14 @@ async def reorder_metrics(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Bulk update sort_order, category, fill_time for multiple metrics."""
+    """Bulk update sort_order and category_id for multiple metrics."""
     async with db.transaction():
         for item in items:
             await db.execute(
                 """UPDATE metric_definitions
-                   SET sort_order = $1, category = $2, fill_time = $3
-                   WHERE id = $4 AND user_id = $5""",
-                item["sort_order"], item["category"], item["fill_time"],
+                   SET sort_order = $1, category_id = $2
+                   WHERE id = $3 AND user_id = $4""",
+                item["sort_order"], item.get("category_id"),
                 item["id"], current_user["id"],
             )
     return {"ok": True}
@@ -81,7 +81,7 @@ async def get_metric(
                   cc.formula, cc.result_type,
                   ic.provider, ic.metric_key, ic.value_type,
                   ifc.filter_name, iqc.filter_query,
-                  icatc.category_id, iapc.app_name AS config_app_name,
+                  icatc.activitywatch_category_id, iapc.app_name AS config_app_name,
                   ec.multi_select
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
@@ -140,11 +140,11 @@ async def create_metric(
             if not aw_enabled:
                 raise HTTPException(400, "ActivityWatch is not enabled")
             if data.metric_key == "category_time":
-                if not data.category_id:
-                    raise HTTPException(400, "category_id is required for category_time")
+                if not data.activitywatch_category_id:
+                    raise HTTPException(400, "activitywatch_category_id is required for category_time")
                 cat = await db.fetchrow(
                     "SELECT id FROM activitywatch_categories WHERE id = $1 AND user_id = $2",
-                    data.category_id, current_user["id"],
+                    data.activitywatch_category_id, current_user["id"],
                 )
                 if not cat:
                     raise HTTPException(400, "Category not found")
@@ -181,16 +181,25 @@ async def create_metric(
     else:
         icon = data.icon
 
+    # Inline category creation
+    cat_id = data.category_id
+    if data.new_category_name:
+        cat_id = await db.fetchval(
+            """INSERT INTO categories (user_id, name, parent_id, sort_order)
+               VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 FROM categories WHERE user_id = $1), 0))
+               RETURNING id""",
+            current_user["id"], data.new_category_name.strip(), data.new_category_parent_id,
+        )
+
     metric_id = await db.fetchval(
         """INSERT INTO metric_definitions
-           (user_id, slug, name, category, fill_time, icon, type, enabled, sort_order)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           (user_id, slug, name, category_id, icon, type, enabled, sort_order)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            RETURNING id""",
         current_user["id"],
         data.slug,
         data.name,
-        data.category,
-        data.fill_time,
+        cat_id,
         icon,
         data.type.value,
         data.enabled,
@@ -218,8 +227,8 @@ async def create_metric(
             )
         elif data.metric_key == "category_time":
             await db.execute(
-                "INSERT INTO integration_category_config (metric_id, category_id) VALUES ($1, $2)",
-                metric_id, data.category_id,
+                "INSERT INTO integration_category_config (metric_id, activitywatch_category_id) VALUES ($1, $2)",
+                metric_id, data.activitywatch_category_id,
             )
         elif data.metric_key == "app_time":
             await db.execute(
@@ -296,10 +305,8 @@ async def update_metric(
     updates = {}
     if data.name is not None:
         updates["name"] = data.name
-    if data.category is not None:
-        updates["category"] = data.category
-    if data.fill_time is not None:
-        updates["fill_time"] = data.fill_time
+    if data.category_id is not None:
+        updates["category_id"] = data.category_id if data.category_id != 0 else None
     if data.icon is not None and row["type"] != "integration":
         updates["icon"] = data.icon
     if data.enabled is not None:

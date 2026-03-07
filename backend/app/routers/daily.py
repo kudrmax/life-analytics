@@ -30,7 +30,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                   cc.formula, cc.result_type,
                   ic.provider, ic.metric_key, ic.value_type,
                   ifc.filter_name, iqc.filter_query,
-                  icatc.category_id, iapc.app_name AS config_app_name,
+                  icatc.activitywatch_category_id, iapc.app_name AS config_app_name,
                   ec.multi_select
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
@@ -195,8 +195,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "slug": m["slug"],
             "name": m["name"],
             "icon": m.get("icon", ""),
-            "category": m["category"],
-            "fill_time": m.get("fill_time", ""),
+            "category_id": m.get("category_id"),
             "type": m["type"],
             "scale_min": m["scale_min"],
             "scale_max": m["scale_max"],

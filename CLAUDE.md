@@ -61,7 +61,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `schemas.py` — Pydantic models for all request/response types
 - `metric_helpers.py` — shared value read/write logic across routers; `build_metric_out` converts DB rows to response models with slots
 
-**Routers** (all under `/api/`): `auth`, `metrics`, `entries`, `daily`, `analytics`, `export_import`, `integrations`
+**Routers** (all under `/api/`): `auth`, `metrics`, `entries`, `daily`, `analytics`, `export_import`, `integrations`, `categories`
 
 ### Database Schema (PostgreSQL)
 
@@ -69,7 +69,8 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 
 **Tables:**
 - `users` — id, username (unique), password_hash, created_at
-- `metric_definitions` — id, user_id (FK), slug, name, category, icon, type (enum), enabled, sort_order; UNIQUE(user_id, slug)
+- `categories` — id, user_id (FK), name, parent_id (FK, nullable, self-ref for 2-level hierarchy), sort_order; partial unique indexes on (user_id, name) for top-level and (user_id, name, parent_id) for children
+- `metric_definitions` — id, user_id (FK), slug, name, category_id (FK to categories, nullable), icon, type (enum), enabled, sort_order; UNIQUE(user_id, slug)
 - `measurement_slots` — id, metric_id (FK), sort_order, label, enabled (for multi-slot metrics like Утро/День/Вечер)
 - `entries` — id, metric_id (FK), user_id (FK), date, recorded_at, slot_id (FK, nullable)
 - `values_bool` — entry_id (PK/FK), value BOOLEAN
@@ -256,7 +257,7 @@ Lightweight timing is instrumented across all layers. No extra dependencies — 
 3. Include in `main.py`: `app.include_router(new_router.router)`
 
 **Export/Import format:**
-- ZIP with `metrics.csv` (id, slug, name, category, type, enabled, sort_order, scale_min, scale_max, scale_step, icon, slot_labels as JSON) + `entries.csv` (date, metric_slug, value as JSON, slot_sort_order, slot_label)
+- ZIP with `metrics.csv` (id, slug, name, category_path, type, enabled, sort_order, scale_min, scale_max, scale_step, icon, slot_labels as JSON) + `entries.csv` (date, metric_slug, value as JSON, slot_sort_order, slot_label)
 - Import: creates/updates metrics by slug, recreates slots, skips duplicate entries
 
 **Backup setup (production):**

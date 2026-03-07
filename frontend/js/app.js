@@ -105,7 +105,7 @@ function navigateTo(page, params = {}) {
         nav.style.display = (page === 'login' || page === 'register') ? 'none' : '';
     }
 
-    const activePage = page === 'metric-detail' ? 'charts' : page;
+    const activePage = page === 'metric-detail' ? 'charts' : page === 'categories' ? 'settings' : page;
     document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === activePage));
     const main = document.getElementById('main');
 
@@ -118,6 +118,7 @@ function navigateTo(page, params = {}) {
         case 'analysis': renderAnalysis(main); break;
         case 'metric-detail': renderMetricDetail(main, params.metricId); break;
         case 'settings': renderSettings(main, params); break;
+        case 'categories': renderCategoryManager(main); break;
     }
 }
 
@@ -326,22 +327,28 @@ async function renderTodayForm() {
     ]);
     if (myVersion !== _todayRenderVersion) return;
 
-    // Group by fill_time -> category (two-level)
-    const fillTimeGroups = {};
-    for (const m of summary.metrics) {
-        const ft = m.fill_time || '';
-        if (!fillTimeGroups[ft]) fillTimeGroups[ft] = {};
-        const cat = m.category || '';
-        if (!fillTimeGroups[ft][cat]) fillTimeGroups[ft][cat] = [];
-        fillTimeGroups[ft][cat].push(m);
+    // Load categories tree for grouping
+    let categories = [];
+    try { categories = await api.getCategories(); } catch(e) { console.warn('Failed to load categories', e); }
+
+    // Build flat lookup: id -> category (including children)
+    const catById = {};
+    for (const c of categories) {
+        catById[c.id] = c;
+        for (const ch of (c.children || [])) catById[ch.id] = ch;
     }
 
-    const sortedFillTimes = Object.keys(fillTimeGroups).sort((a, b) => {
-        if (a === '' && b !== '') return 1;
-        if (a !== '' && b === '') return -1;
-        return 0;
-    });
-    const showFtHeaders = sortedFillTimes.length > 1 || (sortedFillTimes.length === 1 && sortedFillTimes[0] !== '');
+    // Group metrics by category_id
+    const metricsByCat = {};
+    const uncategorized = [];
+    for (const m of summary.metrics) {
+        if (m.category_id && catById[m.category_id]) {
+            if (!metricsByCat[m.category_id]) metricsByCat[m.category_id] = [];
+            metricsByCat[m.category_id].push(m);
+        } else {
+            uncategorized.push(m);
+        }
+    }
 
     let html = '';
     const hasUserMetrics = summary.metrics.length > 0;
@@ -356,25 +363,33 @@ async function renderTodayForm() {
         </div>`;
     } else {
         html += '<h3 class="section-header">Ваши метрики</h3>';
-        for (const ft of sortedFillTimes) {
-            if (showFtHeaders) {
-                const ftLabel = ft || 'В любое время';
-                html += `<h2 class="fill-time-header">${ftLabel}</h2>`;
-            }
-            const catGroups = fillTimeGroups[ft];
-            const sortedCats = Object.keys(catGroups).sort((a, b) => {
-                if (a === '' && b !== '') return 1;
-                if (a !== '' && b === '') return -1;
-                return 0;
-            });
-            for (const cat of sortedCats) {
-                const catLabel = (showFtHeaders && !cat) ? 'Без категорий' : cat;
-                html += `<div class="category"><h3>${catLabel}</h3>`;
-                for (const m of catGroups[cat]) {
-                    html += renderMetricInput(m);
-                }
+        const hasCategories = categories.length > 0;
+
+        for (const topCat of categories) {
+            // Top-level: check if it or its children have metrics
+            const topMetrics = metricsByCat[topCat.id] || [];
+            const childrenWithMetrics = (topCat.children || []).filter(ch => (metricsByCat[ch.id] || []).length > 0);
+            if (topMetrics.length === 0 && childrenWithMetrics.length === 0) continue;
+
+            html += `<h2 class="fill-time-header">${topCat.name}</h2>`;
+            if (topMetrics.length > 0) {
+                html += `<div class="category">`;
+                for (const m of topMetrics) html += renderMetricInput(m);
                 html += '</div>';
             }
+            for (const ch of (topCat.children || [])) {
+                const chMetrics = metricsByCat[ch.id] || [];
+                if (chMetrics.length === 0) continue;
+                html += `<div class="category"><h3>${ch.name}</h3>`;
+                for (const m of chMetrics) html += renderMetricInput(m);
+                html += '</div>';
+            }
+        }
+        if (uncategorized.length > 0) {
+            if (hasCategories) html += `<h2 class="fill-time-header">Без категории</h2>`;
+            html += `<div class="category">`;
+            for (const m of uncategorized) html += renderMetricInput(m);
+            html += '</div>';
         }
     }
 
@@ -2289,6 +2304,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     html += '<h2>Настройки метрик</h2>';
     html += '<div class="settings-actions">';
     html += '<button class="btn-primary" id="add-metric"><i data-lucide="plus"></i> Новая метрика</button>';
+    html += '<button class="btn-small" id="manage-categories-btn"><i data-lucide="folders"></i> Категории</button>';
     html += '<button class="btn-small" id="export-btn"><i data-lucide="download"></i> Экспорт</button>';
     html += '<button class="btn-small" id="import-btn"><i data-lucide="upload"></i> Импорт</button>';
     html += '</div>';
@@ -2303,62 +2319,69 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             <div class="empty-state-text">Вы пока не создали метрики, поэтому тут пусто</div>
         </div>`;
     } else {
-        const fillTimeGroups = {};
+        // Load categories for grouping
+        let settingsCategories = [];
+        try { settingsCategories = await api.getCategories(); } catch(e) {}
+        const settingsCatById = {};
+        for (const c of settingsCategories) {
+            settingsCatById[c.id] = c;
+            for (const ch of (c.children || [])) settingsCatById[ch.id] = ch;
+        }
+        const settingsMetricsByCat = {};
+        const settingsUncategorized = [];
         for (const m of activeMetrics) {
-            const ft = m.fill_time || '';
-            if (!fillTimeGroups[ft]) fillTimeGroups[ft] = {};
-            const cat = m.category || '';
-            if (!fillTimeGroups[ft][cat]) fillTimeGroups[ft][cat] = [];
-            fillTimeGroups[ft][cat].push(m);
+            if (m.category_id && settingsCatById[m.category_id]) {
+                if (!settingsMetricsByCat[m.category_id]) settingsMetricsByCat[m.category_id] = [];
+                settingsMetricsByCat[m.category_id].push(m);
+            } else {
+                settingsUncategorized.push(m);
+            }
+        }
+        const hasSettingsCategories = settingsCategories.length > 0;
+
+        function renderSettingRow(m) {
+            const slotsBadge = m.slots && m.slots.length > 0
+                ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
+            const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
+                : m.type === 'duration' ? '<i data-lucide="timer"></i> Длительность'
+                : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
+                : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
+                : m.type === 'enum' ? '<i data-lucide="list"></i> Варианты'
+                : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
+                : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
+                : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
+            return `<div class="setting-row" data-metric-id="${m.id}">
+                <span class="drag-handle">⠿</span>
+                <div class="setting-info">
+                    <span class="setting-name">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span>
+                    <span class="setting-type">${typeIcon}</span>
+                </div>
+                <div class="setting-actions">
+                    <button class="btn-icon edit-btn" data-metric="${m.id}"><i data-lucide="pencil"></i></button>
+                    <button class="btn-icon archive-btn" data-metric="${m.id}"><i data-lucide="archive"></i></button>
+                    <button class="btn-icon delete-btn btn-icon-danger" data-metric="${m.id}"><i data-lucide="trash-2"></i></button>
+                </div>
+            </div>`;
         }
 
-        const sortedFillTimes = Object.keys(fillTimeGroups).sort((a, b) => {
-            if (a === '' && b !== '') return 1;
-            if (a !== '' && b === '') return -1;
-            return 0;
-        });
-        const showFtHeaders = sortedFillTimes.length > 1 || (sortedFillTimes.length === 1 && sortedFillTimes[0] !== '');
-
-        for (const ft of sortedFillTimes) {
-            if (showFtHeaders) {
-                const ftLabel = ft || 'В любое время';
-                html += `<h2 class="fill-time-header">${ftLabel}</h2>`;
-            }
-            const catGroups = fillTimeGroups[ft];
-            const sortedCats = Object.keys(catGroups).sort((a, b) => {
-                if (a === '' && b !== '') return 1;
-                if (a !== '' && b === '') return -1;
-                return 0;
-            });
-            for (const cat of sortedCats) {
-                const catLabel = (showFtHeaders && !cat) ? 'Без категорий' : cat;
-                html += `<div class="category" data-fill-time="${ft}" data-category="${cat}"><h3>${catLabel}</h3>`;
-                for (const m of catGroups[cat]) {
-                    const slotsBadge = m.slots && m.slots.length > 0
-                        ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
-                    const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
-                        : m.type === 'duration' ? '<i data-lucide="timer"></i> Длительность'
-                        : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
-                        : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
-                        : m.type === 'enum' ? '<i data-lucide="list"></i> Варианты'
-                        : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
-                        : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
-                        : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
-                    html += `<div class="setting-row" data-metric-id="${m.id}">
-                        <span class="drag-handle">⠿</span>
-                        <div class="setting-info">
-                            <span class="setting-name">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span>
-                            <span class="setting-type">${typeIcon}</span>
-                        </div>
-                        <div class="setting-actions">
-                            <button class="btn-icon edit-btn" data-metric="${m.id}"><i data-lucide="pencil"></i></button>
-                            <button class="btn-icon archive-btn" data-metric="${m.id}"><i data-lucide="archive"></i></button>
-                            <button class="btn-icon delete-btn btn-icon-danger" data-metric="${m.id}"><i data-lucide="trash-2"></i></button>
-                        </div>
-                    </div>`;
-                }
+        for (const topCat of settingsCategories) {
+            const topMetrics = settingsMetricsByCat[topCat.id] || [];
+            html += `<h2 class="fill-time-header">${topCat.name}</h2>`;
+            html += `<div class="category" data-category-id="${topCat.id}">`;
+            for (const m of topMetrics) html += renderSettingRow(m);
+            html += '</div>';
+            for (const ch of (topCat.children || [])) {
+                const chMetrics = settingsMetricsByCat[ch.id] || [];
+                html += `<div class="category" data-category-id="${ch.id}"><h3>${ch.name}</h3>`;
+                for (const m of chMetrics) html += renderSettingRow(m);
                 html += '</div>';
             }
+        }
+        if (settingsUncategorized.length > 0 || !hasSettingsCategories) {
+            if (hasSettingsCategories) html += `<h2 class="fill-time-header">Без категории</h2>`;
+            html += `<div class="category" data-category-id="">`;
+            for (const m of settingsUncategorized) html += renderSettingRow(m);
+            html += '</div>';
         }
     }
 
@@ -2418,6 +2441,11 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     });
 
     document.getElementById('add-metric').addEventListener('click', showAddMetricModal);
+
+    // Manage categories button
+    document.getElementById('manage-categories-btn')?.addEventListener('click', () => {
+        navigateTo('categories');
+    });
 
     if (openAddModal) showAddMetricModal();
 
@@ -2604,12 +2632,12 @@ function setupMetricDragDrop(container) {
         const items = [];
         const rows = container.querySelectorAll('.setting-row[data-metric-id]');
         rows.forEach((row, index) => {
-            const catDiv = row.closest('.category[data-category]');
+            const catDiv = row.closest('.category[data-category-id]');
+            const catIdStr = catDiv ? catDiv.dataset.categoryId : '';
             items.push({
                 id: parseInt(row.dataset.metricId),
                 sort_order: index * 10,
-                category: catDiv ? catDiv.dataset.category : '',
-                fill_time: catDiv ? catDiv.dataset.fillTime : '',
+                category_id: catIdStr ? parseInt(catIdStr) : null,
             });
         });
         return items;
@@ -2690,14 +2718,12 @@ function setupMetricDragDrop(container) {
             }
             dragRow.classList.remove('dragging');
 
-            // Remove empty category divs and orphaned fill-time headers
-            container.querySelectorAll('.category[data-category]').forEach(catDiv => {
+            // Remove empty category divs and orphaned headers
+            container.querySelectorAll('.category[data-category-id]').forEach(catDiv => {
                 if (!catDiv.querySelector('.setting-row[data-metric-id]')) {
-                    // Check if previous sibling is a fill-time header that will become orphaned
                     const prev = catDiv.previousElementSibling;
                     catDiv.remove();
                     if (prev && prev.classList.contains('fill-time-header')) {
-                        // Remove header if no more categories follow it
                         const next = prev.nextElementSibling;
                         if (!next || !next.classList.contains('category') || next.classList.contains('archive-section')) {
                             prev.remove();
@@ -2730,6 +2756,274 @@ function setupMetricDragDrop(container) {
         clearIndicators();
         dragRow = null;
         isDragging = false;
+    });
+}
+
+async function renderCategoryManager(container) {
+    let categories = [];
+    try { categories = await api.getCategories(); } catch(e) {}
+
+    let html = '<div class="cat-manager-header">';
+    html += '<button class="btn-icon" id="cat-back-btn"><i data-lucide="arrow-left"></i></button>';
+    html += '<h2>Категории</h2>';
+    html += '<button class="btn-small btn-primary" id="cat-add-btn"><i data-lucide="plus"></i> Добавить</button>';
+    html += '</div>';
+
+    html += '<div id="cat-list">';
+    if (categories.length === 0) {
+        html += '<div class="empty-state"><div class="empty-state-text">Нет категорий</div></div>';
+    } else {
+        for (const cat of categories) {
+            html += `<div class="cat-item" data-cat-id="${cat.id}" data-parent-id="">
+                <span class="drag-handle">⠿</span>
+                <span class="cat-item-name">${cat.name}</span>
+                <div class="cat-item-actions">
+                    <button class="btn-icon cat-edit" data-cat-id="${cat.id}"><i data-lucide="pencil"></i></button>
+                    <button class="btn-icon btn-icon-danger cat-del" data-cat-id="${cat.id}"><i data-lucide="trash-2"></i></button>
+                </div>
+            </div>`;
+            for (const ch of (cat.children || [])) {
+                html += `<div class="cat-item cat-item-child" data-cat-id="${ch.id}" data-parent-id="${cat.id}">
+                    <span class="drag-handle">⠿</span>
+                    <span class="cat-item-name">${ch.name}</span>
+                    <div class="cat-item-actions">
+                        <button class="btn-icon cat-edit" data-cat-id="${ch.id}"><i data-lucide="pencil"></i></button>
+                        <button class="btn-icon btn-icon-danger cat-del" data-cat-id="${ch.id}"><i data-lucide="trash-2"></i></button>
+                    </div>
+                </div>`;
+            }
+        }
+    }
+    html += '</div>';
+    container.innerHTML = html;
+    if (window.lucide) lucide.createIcons();
+
+    document.getElementById('cat-back-btn').addEventListener('click', () => navigateTo('settings'));
+
+    document.getElementById('cat-add-btn').addEventListener('click', async () => {
+        const name = prompt('Название категории:');
+        if (!name || !name.trim()) return;
+        try {
+            await api.createCategory({ name: name.trim() });
+            await renderCategoryManager(container);
+        } catch (e) { alert('Ошибка: ' + e.message); }
+    });
+
+    container.querySelectorAll('.cat-edit').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const catId = parseInt(btn.dataset.catId);
+            const nameEl = btn.closest('.cat-item').querySelector('.cat-item-name');
+            const currentName = nameEl?.textContent?.trim() || '';
+            const newName = prompt('Новое название:', currentName);
+            if (!newName || !newName.trim() || newName.trim() === currentName) return;
+            try {
+                await api.updateCategory(catId, { name: newName.trim() });
+                await renderCategoryManager(container);
+            } catch (e) { alert('Ошибка: ' + e.message); }
+        });
+    });
+
+    container.querySelectorAll('.cat-del').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const catId = parseInt(btn.dataset.catId);
+            if (!confirm('Удалить категорию? Подкатегории будут удалены. Метрики сохранятся без категории.')) return;
+            try {
+                await api.deleteCategory(catId);
+                await renderCategoryManager(container);
+            } catch (e) { alert('Ошибка: ' + e.message); }
+        });
+    });
+
+    setupCategoryDragDrop(container);
+}
+
+function setupCategoryDragDrop(container) {
+    let dragItem = null;
+    let clone = null;
+    let startX = 0, startY = 0;
+    let offsetX = 0, offsetY = 0;
+    let isDragging = false;
+    let nestingLevel = 0; // 0 = top-level, 1 = child
+    const DRAG_THRESHOLD = 5;
+    const NEST_THRESHOLD = 40;
+
+    function getDropTarget(y) {
+        const items = container.querySelectorAll('.cat-item:not(.dragging)');
+        let closest = null;
+        let closestDist = Infinity;
+        let insertBefore = true;
+        for (const item of items) {
+            const rect = item.getBoundingClientRect();
+            const mid = rect.top + rect.height / 2;
+            const dist = Math.abs(y - mid);
+            if (dist < closestDist) {
+                closestDist = dist;
+                closest = item;
+                insertBefore = y < mid;
+            }
+        }
+        return { target: closest, before: insertBefore };
+    }
+
+    function clearIndicators() {
+        container.querySelectorAll('.drag-over-before, .drag-over-after').forEach(el => {
+            el.classList.remove('drag-over-before', 'drag-over-after');
+        });
+    }
+
+    function collectCategoryOrder() {
+        const items = [];
+        const catItems = container.querySelectorAll('.cat-item');
+        let lastTopId = null;
+        let topOrder = 0;
+        let childOrder = 0;
+        for (const el of catItems) {
+            const id = parseInt(el.dataset.catId);
+            const isChild = el.classList.contains('cat-item-child');
+            if (isChild && lastTopId) {
+                items.push({ id, sort_order: childOrder * 10, parent_id: lastTopId });
+                childOrder++;
+            } else {
+                lastTopId = id;
+                childOrder = 0;
+                items.push({ id, sort_order: topOrder * 10, parent_id: null });
+                topOrder++;
+            }
+        }
+        return items;
+    }
+
+    // Check if making this item a child is valid (it must not itself have children)
+    function hasChildren(catId) {
+        const items = container.querySelectorAll('.cat-item');
+        let found = false;
+        for (const el of items) {
+            if (found) {
+                if (el.dataset.parentId === String(catId)) return true;
+                if (!el.classList.contains('cat-item-child')) return false;
+            }
+            if (parseInt(el.dataset.catId) === catId) found = true;
+        }
+        return false;
+    }
+
+    container.addEventListener('pointerdown', (e) => {
+        const handle = e.target.closest('.drag-handle');
+        if (!handle) return;
+        const item = handle.closest('.cat-item');
+        if (!item) return;
+
+        e.preventDefault();
+        dragItem = item;
+        startX = e.clientX;
+        startY = e.clientY;
+        isDragging = false;
+        nestingLevel = item.classList.contains('cat-item-child') ? 1 : 0;
+
+        handle.setPointerCapture(e.pointerId);
+    });
+
+    container.addEventListener('pointermove', (e) => {
+        if (!dragItem) return;
+
+        if (!isDragging) {
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+            isDragging = true;
+
+            const rect = dragItem.getBoundingClientRect();
+            offsetX = startX - rect.left;
+            offsetY = startY - rect.top;
+            clone = dragItem.cloneNode(true);
+            clone.className = 'cat-item drag-clone';
+            clone.style.width = rect.width + 'px';
+            clone.style.left = rect.left + 'px';
+            clone.style.top = rect.top + 'px';
+            document.body.appendChild(clone);
+            dragItem.classList.add('dragging');
+        }
+
+        if (clone) {
+            clone.style.left = (e.clientX - offsetX) + 'px';
+            clone.style.top = (e.clientY - offsetY) + 'px';
+        }
+
+        // Determine nesting from horizontal offset
+        const deltaX = e.clientX - startX;
+        const prevNesting = nestingLevel;
+        if (deltaX > NEST_THRESHOLD && nestingLevel === 0) {
+            nestingLevel = 1;
+        } else if (deltaX < -NEST_THRESHOLD && nestingLevel === 1) {
+            nestingLevel = 0;
+        }
+        if (nestingLevel !== prevNesting && clone) {
+            clone.classList.toggle('cat-item-child', nestingLevel === 1);
+        }
+
+        clearIndicators();
+        const { target, before } = getDropTarget(e.clientY);
+        if (target) {
+            target.classList.add(before ? 'drag-over-before' : 'drag-over-after');
+        }
+    });
+
+    container.addEventListener('pointerup', async (e) => {
+        if (!dragItem) return;
+        clearIndicators();
+
+        if (isDragging) {
+            const { target, before } = getDropTarget(e.clientY);
+            const catId = parseInt(dragItem.dataset.catId);
+
+            // Don't allow nesting if item has children
+            if (nestingLevel === 1 && hasChildren(catId)) {
+                nestingLevel = 0;
+            }
+
+            if (target && target !== dragItem) {
+                const parent = target.parentElement;
+                if (before) {
+                    parent.insertBefore(dragItem, target);
+                } else {
+                    parent.insertBefore(dragItem, target.nextSibling);
+                }
+            }
+
+            // Apply nesting class
+            if (nestingLevel === 1) {
+                dragItem.classList.add('cat-item-child');
+            } else {
+                dragItem.classList.remove('cat-item-child');
+            }
+
+            if (clone) { clone.remove(); clone = null; }
+            dragItem.classList.remove('dragging');
+
+            // Ensure first item is always top-level
+            const firstItem = container.querySelector('.cat-item');
+            if (firstItem) firstItem.classList.remove('cat-item-child');
+
+            const items = collectCategoryOrder();
+            try {
+                await api.reorderCategories(items);
+            } catch (err) {
+                console.error('Category reorder failed:', err);
+            }
+        }
+
+        dragItem = null;
+        isDragging = false;
+        nestingLevel = 0;
+    });
+
+    container.addEventListener('pointercancel', () => {
+        if (clone) { clone.remove(); clone = null; }
+        if (dragItem) dragItem.classList.remove('dragging');
+        clearIndicators();
+        dragItem = null;
+        isDragging = false;
+        nestingLevel = 0;
     });
 }
 
@@ -3149,12 +3443,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
                 <div class="form-label">
                     <span class="label-text">Категория <span class="label-optional">(необязательно)</span></span>
-                    <input id="nm-cat" placeholder="Например: Здоровье" class="form-input" value="${existingMetric?.category || ''}">
-                </div>
-
-                <div class="form-label">
-                    <span class="label-text">Когда заполнять <span class="label-optional">(необязательно)</span></span>
-                    <input id="nm-fill-time" placeholder="Например: Утро, Вечер" class="form-input" value="${existingMetric?.fill_time || ''}">
+                    <select id="nm-category-id" class="form-input">
+                        <option value="">Без категории</option>
+                    </select>
                 </div>
 
                 ${isEdit ? `
@@ -3446,6 +3737,29 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     document.body.appendChild(overlay);
     if (window.lucide) lucide.createIcons();
 
+    // ─── Populate category select ───
+    (async () => {
+        try {
+            const cats = await api.getCategories();
+            const sel = document.getElementById('nm-category-id');
+            if (!sel) return;
+            for (const c of cats) {
+                const opt = document.createElement('option');
+                opt.value = c.id;
+                opt.textContent = c.name;
+                if (existingMetric?.category_id === c.id) opt.selected = true;
+                sel.appendChild(opt);
+                for (const ch of (c.children || [])) {
+                    const chOpt = document.createElement('option');
+                    chOpt.value = ch.id;
+                    chOpt.textContent = `  └ ${ch.name}`;
+                    if (existingMetric?.category_id === ch.id) chOpt.selected = true;
+                    sel.appendChild(chOpt);
+                }
+            }
+        } catch(e) { console.warn('Failed to load categories for modal', e); }
+    })();
+
     // ─── Emoji picker setup ───
     const iconBtn = document.getElementById('nm-icon-btn');
     const iconInput = document.getElementById('nm-icon');
@@ -3602,9 +3916,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 const selected = awMetricSelect.selectedOptions[0];
                 const configFields = (selected?.dataset.configFields || '').split(',').filter(Boolean);
                 let html = '';
-                if (configFields.includes('category_id')) {
+                if (configFields.includes('activitywatch_category_id')) {
                     html = `<label class="form-label">
-                        <span class="label-text">Категория</span>
+                        <span class="label-text">Категория AW</span>
                         <select id="nm-aw-category-id" class="form-input">
                             ${awCategories.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
                         </select>
@@ -3871,7 +4185,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     document.getElementById('nm-cancel').onclick = () => overlay.remove();
     document.getElementById('nm-save').onclick = async () => {
         const name = document.getElementById('nm-name').value;
-        const category = document.getElementById('nm-cat').value;
+        const categorySelect = document.getElementById('nm-category-id');
+        const categoryIdVal = categorySelect ? categorySelect.value : '';
 
         if (!name) {
             alert('Заполните название');
@@ -3883,8 +4198,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
             if (isEdit) {
                 const icon = existingMetric.type === 'integration' ? undefined : document.getElementById('nm-icon').value;
-                const fillTime = document.getElementById('nm-fill-time').value;
-                const updateData = { name, category, fill_time: fillTime };
+                const updateData = { name, category_id: categoryIdVal ? parseInt(categoryIdVal) : 0 };
                 if (icon !== undefined) updateData.icon = icon;
                 if (existingMetric.type === 'computed') {
                     if (formulaTokens.length === 0) {
@@ -3947,8 +4261,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     || 'metric_' + Date.now();
 
                 const icon = document.getElementById('nm-icon').value;
-                const fillTime = document.getElementById('nm-fill-time').value;
-                const createData = { slug, name, category, fill_time: fillTime, icon, type: selectedType };
+                const createData = { slug, name, icon, type: selectedType };
+                if (categoryIdVal) createData.category_id = parseInt(categoryIdVal);
 
                 if (selectedType === 'scale') {
                     const sp = getScaleParams();
@@ -4043,7 +4357,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                                 alert('Выберите категорию');
                                 return;
                             }
-                            createData.category_id = parseInt(catEl.value);
+                            createData.activitywatch_category_id = parseInt(catEl.value);
                         }
                         if (awSelect.value === 'app_time') {
                             const appEl = document.getElementById('nm-aw-app-name');

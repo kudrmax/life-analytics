@@ -19,11 +19,30 @@ class MeasurementSlotOut(BaseModel):
     sort_order: int
 
 
+class CategoryCreate(BaseModel):
+    name: str
+    parent_id: int | None = None
+
+
+class CategoryUpdate(BaseModel):
+    name: str | None = None
+    parent_id: int | None = None
+
+
+class CategoryOut(BaseModel):
+    id: int
+    name: str
+    parent_id: int | None = None
+    sort_order: int
+    children: list["CategoryOut"] = []
+
+
 class MetricDefinitionCreate(BaseModel):
     slug: str
     name: str
-    category: str = ""
-    fill_time: str = ""
+    category_id: int | None = None
+    new_category_name: str | None = None
+    new_category_parent_id: int | None = None
     icon: str = ""
     type: MetricType
     enabled: bool = True
@@ -38,7 +57,7 @@ class MetricDefinitionCreate(BaseModel):
     metric_key: str | None = None
     filter_name: str | None = None
     filter_query: str | None = None
-    category_id: int | None = None
+    activitywatch_category_id: int | None = None
     app_name: str | None = None
     enum_options: list[str] | None = None
     multi_select: bool | None = None
@@ -46,8 +65,7 @@ class MetricDefinitionCreate(BaseModel):
 
 class MetricDefinitionUpdate(BaseModel):
     name: str | None = None
-    category: str | None = None
-    fill_time: str | None = None
+    category_id: int | None = None
     icon: str | None = None
     enabled: bool | None = None
     sort_order: int | None = None
@@ -65,8 +83,7 @@ class MetricDefinitionOut(BaseModel):
     id: int
     slug: str
     name: str
-    category: str
-    fill_time: str = ""
+    category_id: int | None = None
     icon: str = ""
     type: MetricType
     enabled: bool
@@ -82,7 +99,7 @@ class MetricDefinitionOut(BaseModel):
     value_type: str | None = None
     filter_name: str | None = None
     filter_query: str | None = None
-    category_id: int | None = None
+    activitywatch_category_id: int | None = None
     config_app_name: str | None = None
     enum_options: list[dict] | None = None  # [{id, label, sort_order, enabled}]
     multi_select: bool | None = None

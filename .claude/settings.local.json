@@ -62,7 +62,8 @@
       "WebFetch(domain:ru.tophosts.net)",
       "WebFetch(domain:hosting101.ru)",
       "WebFetch(domain:firstbyte.ru)",
-      "WebFetch(domain:timeweb.com)"
+      "WebFetch(domain:timeweb.com)",
+      "Bash(make build-up:*)"
     ]
   }
 }

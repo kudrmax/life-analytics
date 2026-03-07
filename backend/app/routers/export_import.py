@@ -27,7 +27,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         metrics_csv = StringIO()
         metrics_writer = csv.writer(metrics_csv)
         metrics_writer.writerow([
-            'id', 'slug', 'name', 'category', 'fill_time', 'icon', 'type',
+            'id', 'slug', 'name', 'category_path', 'icon', 'type',
             'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step',
             'slot_labels', 'formula', 'result_type', 'provider', 'metric_key', 'value_type',
             'filter_name', 'filter_query', 'enum_options', 'multi_select',
@@ -89,6 +89,21 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             for r in all_enum_opts:
                 enum_id_to_label[r["metric_id"]][r["id"]] = r["label"]
 
+        # Build category id -> path lookup
+        cat_rows = await db.fetch(
+            "SELECT id, name, parent_id FROM categories WHERE user_id = $1",
+            current_user["id"],
+        )
+        cat_by_id = {r["id"]: r for r in cat_rows}
+
+        def _cat_path(cat_id):
+            if not cat_id or cat_id not in cat_by_id:
+                return ''
+            c = cat_by_id[cat_id]
+            if c["parent_id"] and c["parent_id"] in cat_by_id:
+                return f"{cat_by_id[c['parent_id']]['name']} > {c['name']}"
+            return c["name"]
+
         for m in metrics:
             slot_labels = slots_by_metric.get(m["id"], [])
             # Export formula (slug-based, no IDs for portability)
@@ -106,7 +121,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
                 formula_export = json.dumps(portable)
                 result_type_export = cc["result_type"] or ''
             metrics_writer.writerow([
-                m["id"], m["slug"], m["name"], m["category"], m.get("fill_time", ""), m.get("icon", ""), m["type"],
+                m["id"], m["slug"], m["name"], _cat_path(m.get("category_id")), m.get("icon", ""), m["type"],
                 1 if m["enabled"] else 0, m["sort_order"],
                 m["scale_min"] if m["scale_min"] is not None else '',
                 m["scale_max"] if m["scale_max"] is not None else '',
@@ -224,6 +239,33 @@ async def import_data(
             if 'entries.csv' not in zip_file.namelist():
                 raise HTTPException(400, "ZIP must contain entries.csv")
 
+            # Helper: find or create category from path string
+            async def _resolve_category_path(path_str: str, uid: int) -> int | None:
+                path_str = (path_str or '').strip()
+                if not path_str:
+                    return None
+                parts = [p.strip() for p in path_str.split('>')]
+                parent_id = None
+                cat_id = None
+                for part in parts:
+                    if not part:
+                        continue
+                    existing = await db.fetchrow(
+                        "SELECT id FROM categories WHERE user_id = $1 AND name = $2 AND parent_id IS NOT DISTINCT FROM $3",
+                        uid, part, parent_id,
+                    )
+                    if existing:
+                        cat_id = existing["id"]
+                    else:
+                        cat_id = await db.fetchval(
+                            """INSERT INTO categories (user_id, name, parent_id, sort_order)
+                               VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order)+1 FROM categories WHERE user_id=$1), 0))
+                               RETURNING id""",
+                            uid, part, parent_id,
+                        )
+                    parent_id = cat_id
+                return cat_id
+
             # Import metrics
             metrics_csv_text = zip_file.read('metrics.csv').decode('utf-8')
             reader = csv.DictReader(StringIO(metrics_csv_text))
@@ -236,11 +278,29 @@ async def import_data(
                         continue
 
                     name = row.get('name', slug)
-                    category = row.get('category', '')
                     icon = row.get('icon', '')
-                    fill_time = row.get('fill_time', '')
                     enabled = row.get('enabled', '1') in ('1', 'True', 'true', True)
                     sort_order = int(row.get('sort_order', 0))
+
+                    # Resolve category_id from CSV
+                    # New format: category_path ("Parent > Child")
+                    # Old format: category + fill_time columns
+                    csv_category_path = row.get('category_path', '')
+                    csv_category = row.get('category', '')
+                    csv_fill_time = row.get('fill_time', '')
+                    if csv_category_path:
+                        import_cat_id = await _resolve_category_path(csv_category_path, current_user["id"])
+                    elif csv_fill_time or csv_category:
+                        # Legacy format: build path from fill_time > category
+                        if csv_fill_time and csv_category:
+                            legacy_path = f"{csv_fill_time} > {csv_category}"
+                        elif csv_fill_time:
+                            legacy_path = csv_fill_time
+                        else:
+                            legacy_path = csv_category
+                        import_cat_id = await _resolve_category_path(legacy_path, current_user["id"])
+                    else:
+                        import_cat_id = None
 
                     existing = await db.fetchrow(
                         "SELECT id FROM metric_definitions WHERE slug = $1 AND user_id = $2",
@@ -286,9 +346,9 @@ async def import_data(
                     if existing:
                         await db.execute(
                             """UPDATE metric_definitions
-                               SET name = $1, category = $2, fill_time = $3, enabled = $4, sort_order = $5, icon = $6
-                               WHERE id = $7 AND user_id = $8""",
-                            name, category, fill_time, enabled, sort_order, icon,
+                               SET name = $1, category_id = $2, enabled = $3, sort_order = $4, icon = $5
+                               WHERE id = $6 AND user_id = $7""",
+                            name, import_cat_id, enabled, sort_order, icon,
                             existing["id"], current_user["id"],
                         )
                         # Update scale_config if needed
@@ -347,9 +407,9 @@ async def import_data(
                     else:
                         new_id = await db.fetchval(
                             """INSERT INTO metric_definitions
-                               (user_id, slug, name, category, fill_time, icon, type, enabled, sort_order)
-                               VALUES ($1, $2, $3, $4, $5, $6, $7::metric_type, $8, $9) RETURNING id""",
-                            current_user["id"], slug, name, category, fill_time, icon,
+                               (user_id, slug, name, category_id, icon, type, enabled, sort_order)
+                               VALUES ($1, $2, $3, $4, $5, $6::metric_type, $7, $8) RETURNING id""",
+                            current_user["id"], slug, name, import_cat_id, icon,
                             metric_type, enabled, sort_order,
                         )
                         # Create scale_config for new scale metrics

@@ -264,7 +264,7 @@ async def compute_integration_metrics(
 
     rows = await conn.fetch(
         """SELECT md.id AS metric_id, ic.metric_key, ic.value_type,
-                  icc.category_id, iac.app_name AS config_app_name
+                  icc.activitywatch_category_id, iac.app_name AS config_app_name
            FROM metric_definitions md
            JOIN integration_config ic ON ic.metric_id = md.id
            LEFT JOIN integration_category_config icc ON icc.metric_id = md.id
@@ -328,14 +328,14 @@ async def compute_integration_metrics(
                 )
             value = unique_apps or 0
         elif key == "category_time":
-            cat_id = r["category_id"]
+            cat_id = r["activitywatch_category_id"]
             if cat_id:
                 secs = await conn.fetchval(
                     """SELECT COALESCE(SUM(au.duration_seconds), 0)
                        FROM activitywatch_app_usage au
                        JOIN activitywatch_app_category_map acm
                            ON acm.app_name = au.app_name AND acm.user_id = au.user_id
-                       WHERE au.user_id = $1 AND au.date = $2 AND acm.category_id = $3
+                       WHERE au.user_id = $1 AND au.date = $2 AND acm.activitywatch_category_id = $3
                              AND au.source = 'window'""",
                     user_id, for_date, cat_id,
                 )

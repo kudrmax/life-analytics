@@ -444,13 +444,13 @@ async def aw_list_apps(
 ):
     rows = await db.fetch(
         """SELECT DISTINCT au.app_name,
-                  acm.category_id,
+                  acm.activitywatch_category_id,
                   ac.name AS category_name,
                   ac.color AS category_color
            FROM activitywatch_app_usage au
            LEFT JOIN activitywatch_app_category_map acm
                ON acm.user_id = au.user_id AND acm.app_name = au.app_name
-           LEFT JOIN activitywatch_categories ac ON ac.id = acm.category_id
+           LEFT JOIN activitywatch_categories ac ON ac.id = acm.activitywatch_category_id
            WHERE au.user_id = $1 AND au.source = 'window'
            ORDER BY au.app_name""",
         current_user["id"],
@@ -458,7 +458,7 @@ async def aw_list_apps(
     return [
         {
             "app_name": r["app_name"],
-            "category_id": r["category_id"],
+            "category_id": r["activitywatch_category_id"],
             "category_name": r["category_name"],
             "category_color": r["category_color"],
         }
@@ -487,9 +487,9 @@ async def aw_set_app_category(
         if not cat:
             raise HTTPException(404, "Category not found")
         await db.execute(
-            """INSERT INTO activitywatch_app_category_map (user_id, app_name, category_id)
+            """INSERT INTO activitywatch_app_category_map (user_id, app_name, activitywatch_category_id)
                VALUES ($1, $2, $3)
-               ON CONFLICT (user_id, app_name) DO UPDATE SET category_id = EXCLUDED.category_id""",
+               ON CONFLICT (user_id, app_name) DO UPDATE SET activitywatch_category_id = EXCLUDED.activitywatch_category_id""",
             current_user["id"], app_name, category_id,
         )
     return {"status": "updated"}
@@ -520,9 +520,9 @@ async def aw_batch_set_category(
             )
         else:
             await db.execute(
-                """INSERT INTO activitywatch_app_category_map (user_id, app_name, category_id)
+                """INSERT INTO activitywatch_app_category_map (user_id, app_name, activitywatch_category_id)
                    VALUES ($1, $2, $3)
-                   ON CONFLICT (user_id, app_name) DO UPDATE SET category_id = EXCLUDED.category_id""",
+                   ON CONFLICT (user_id, app_name) DO UPDATE SET activitywatch_category_id = EXCLUDED.activitywatch_category_id""",
                 current_user["id"], app_name, category_id,
             )
     return {"status": "updated", "count": len(app_names)}
