@@ -57,7 +57,7 @@ async def run_migrations(pool):
                 async with conn.transaction():
                     await conn.execute(sql)
                     await conn.execute(
-                        "INSERT INTO schema_migrations (version, description) VALUES ($1, $2)",
+                        "INSERT INTO schema_migrations (version, description) VALUES ($1, $2) ON CONFLICT DO NOTHING",
                         version,
                         description,
                     )

@@ -2255,7 +2255,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             });
             for (const cat of sortedCats) {
                 const catLabel = (showFtHeaders && !cat) ? 'Без категорий' : cat;
-                html += `<div class="category"><h3>${catLabel}</h3>`;
+                html += `<div class="category" data-fill-time="${ft}" data-category="${cat}"><h3>${catLabel}</h3>`;
                 for (const m of catGroups[cat]) {
                     const slotsBadge = m.slots && m.slots.length > 0
                         ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
@@ -2266,7 +2266,8 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                         : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
                         : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
                         : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
-                    html += `<div class="setting-row">
+                    html += `<div class="setting-row" data-metric-id="${m.id}">
+                        <span class="drag-handle">⠿</span>
                         <div class="setting-info">
                             <span class="setting-name">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span>
                             <span class="setting-type">${typeIcon}</span>
@@ -2484,7 +2485,154 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             }
         });
     });
+    setupMetricDragDrop(container);
     console.debug(`[render] settings  ${(performance.now() - _t0).toFixed(0)}ms`);
+}
+
+function setupMetricDragDrop(container) {
+    let dragRow = null;
+    let clone = null;
+    let startX = 0, startY = 0;
+    let isDragging = false;
+    const DRAG_THRESHOLD = 5;
+
+    function getDropTarget(y) {
+        const rows = container.querySelectorAll('.setting-row[data-metric-id]:not(.dragging)');
+        let closest = null;
+        let closestDist = Infinity;
+        let insertBefore = true;
+        for (const row of rows) {
+            const rect = row.getBoundingClientRect();
+            const mid = rect.top + rect.height / 2;
+            const dist = Math.abs(y - mid);
+            if (dist < closestDist) {
+                closestDist = dist;
+                closest = row;
+                insertBefore = y < mid;
+            }
+        }
+        return { target: closest, before: insertBefore };
+    }
+
+    function clearIndicators() {
+        container.querySelectorAll('.drag-over-before, .drag-over-after').forEach(el => {
+            el.classList.remove('drag-over-before', 'drag-over-after');
+        });
+    }
+
+    function collectOrder() {
+        const items = [];
+        const rows = container.querySelectorAll('.setting-row[data-metric-id]');
+        rows.forEach((row, index) => {
+            const catDiv = row.closest('.category[data-category]');
+            items.push({
+                id: parseInt(row.dataset.metricId),
+                sort_order: index * 10,
+                category: catDiv ? catDiv.dataset.category : '',
+                fill_time: catDiv ? catDiv.dataset.fillTime : '',
+            });
+        });
+        return items;
+    }
+
+    container.addEventListener('pointerdown', (e) => {
+        const handle = e.target.closest('.drag-handle');
+        if (!handle) return;
+        const row = handle.closest('.setting-row[data-metric-id]');
+        if (!row) return;
+
+        e.preventDefault();
+        dragRow = row;
+        startX = e.clientX;
+        startY = e.clientY;
+        isDragging = false;
+
+        handle.setPointerCapture(e.pointerId);
+    });
+
+    container.addEventListener('pointermove', (e) => {
+        if (!dragRow) return;
+
+        if (!isDragging) {
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+            isDragging = true;
+
+            // Create clone
+            const rect = dragRow.getBoundingClientRect();
+            clone = dragRow.cloneNode(true);
+            clone.className = 'setting-row drag-clone';
+            clone.style.width = rect.width + 'px';
+            clone.style.left = rect.left + 'px';
+            clone.style.top = rect.top + 'px';
+            document.body.appendChild(clone);
+
+            dragRow.classList.add('dragging');
+        }
+
+        if (clone) {
+            clone.style.left = (e.clientX - (clone.offsetWidth / 2)) + 'px';
+            clone.style.top = (e.clientY - 20) + 'px';
+        }
+
+        clearIndicators();
+        const { target, before } = getDropTarget(e.clientY);
+        if (target) {
+            target.classList.add(before ? 'drag-over-before' : 'drag-over-after');
+        }
+    });
+
+    container.addEventListener('pointerup', async (e) => {
+        if (!dragRow) return;
+
+        clearIndicators();
+
+        if (isDragging) {
+            const { target, before } = getDropTarget(e.clientY);
+
+            if (target && target !== dragRow) {
+                // Move DOM element to new position
+                const targetParent = target.parentElement;
+                if (before) {
+                    targetParent.insertBefore(dragRow, target);
+                } else {
+                    targetParent.insertBefore(dragRow, target.nextSibling);
+                }
+            }
+
+            // Remove clone
+            if (clone) {
+                clone.remove();
+                clone = null;
+            }
+            dragRow.classList.remove('dragging');
+
+            // Save new order to server
+            const items = collectOrder();
+            try {
+                await api.reorderMetrics(items);
+            } catch (err) {
+                console.error('Reorder failed:', err);
+            }
+        }
+
+        dragRow = null;
+        isDragging = false;
+    });
+
+    container.addEventListener('pointercancel', () => {
+        if (clone) {
+            clone.remove();
+            clone = null;
+        }
+        if (dragRow) {
+            dragRow.classList.remove('dragging');
+        }
+        clearIndicators();
+        dragRow = null;
+        isDragging = false;
+    });
 }
 
 async function _loadIntegrationsSection() {

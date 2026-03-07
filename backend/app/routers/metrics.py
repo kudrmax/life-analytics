@@ -51,6 +51,25 @@ async def list_metrics(
     ]
 
 
+@router.post("/reorder")
+async def reorder_metrics(
+    items: list[dict],
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Bulk update sort_order, category, fill_time for multiple metrics."""
+    async with db.transaction():
+        for item in items:
+            await db.execute(
+                """UPDATE metric_definitions
+                   SET sort_order = $1, category = $2, fill_time = $3
+                   WHERE id = $4 AND user_id = $5""",
+                item["sort_order"], item["category"], item["fill_time"],
+                item["id"], current_user["id"],
+            )
+    return {"ok": True}
+
+
 @router.get("/{metric_id}", response_model=MetricDefinitionOut)
 async def get_metric(
     metric_id: int,

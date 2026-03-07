@@ -121,6 +121,11 @@ const api = {
         invalidateCache('/api/metrics', '/api/daily/');
         return result;
     },
+    async reorderMetrics(items) {
+        const result = await this.request('POST', '/api/metrics/reorder', items);
+        invalidateCache('/api/metrics', '/api/daily/');
+        return result;
+    },
 
     // Entries
     getEntries(date, metricId = null) {
