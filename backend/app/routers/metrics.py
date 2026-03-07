@@ -248,8 +248,8 @@ async def create_metric(
     if data.type == MetricType.computed:
         if not data.formula:
             raise HTTPException(400, "formula is required for computed metrics")
-        if data.result_type not in ("bool", "int", "float", "time"):
-            raise HTTPException(400, "result_type must be one of: bool, int, float, time")
+        if data.result_type not in ("bool", "int", "float", "time", "duration"):
+            raise HTTPException(400, "result_type must be one of: bool, int, float, time, duration")
         ref_ids = get_referenced_metric_ids(data.formula)
         if ref_ids:
             source_rows = await db.fetch(
@@ -356,7 +356,7 @@ async def update_metric(
         new_formula = data.formula if data.formula is not None else (json.loads(cfg["formula"]) if cfg and cfg["formula"] else [])
         new_result_type = data.result_type if data.result_type is not None else (cfg["result_type"] if cfg else "float")
         if new_result_type not in ("bool", "int", "float", "time"):
-            raise HTTPException(400, "result_type must be one of: bool, int, float, time")
+            raise HTTPException(400, "result_type must be one of: bool, int, float, time, duration")
         ref_ids = get_referenced_metric_ids(new_formula)
         if ref_ids:
             source_rows = await db.fetch(

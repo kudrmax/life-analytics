@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up down logs logs-backend migrate restart update status nginx-test nginx-restart backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db
+.PHONY: help up build-up down logs logs-backend migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db
 
 .DEFAULT_GOAL := help
 
@@ -11,7 +11,8 @@ help: ## Показать эту справку
 	@echo "  Life Analytics — доступные команды:"
 	@echo ""
 	@echo "  Docker:"
-	@echo "    make up              Запустить все сервисы (build + detached)"
+	@echo "    make up              Запустить сервисы (быстро, офлайн)"
+	@echo "    make build-up        Пересобрать образы и запустить"
 	@echo "    make down            Остановить все сервисы"
 	@echo "    make logs            Логи всех сервисов"
 	@echo "    make logs-backend    Логи только backend"
@@ -20,8 +21,6 @@ help: ## Показать эту справку
 	@echo "  Production (на сервере):"
 	@echo "    make update          git pull + пересобрать и перезапустить"
 	@echo "    make restart         Перезапустить backend"
-	@echo "    make nginx-test      Проверить конфиг nginx"
-	@echo "    make nginx-restart   Перезапустить nginx"
 	@echo ""
 	@echo "  Production (с локальной машины, нужен VPS_HOST):"
 	@echo "    make deploy          Ручной деплой на VPS через SSH"
@@ -41,6 +40,9 @@ help: ## Показать эту справку
 # ─── Docker ───
 
 up:
+	docker compose up -d
+
+build-up:
 	docker compose up -d --build
 
 down:
@@ -66,13 +68,6 @@ restart:
 
 status:
 	docker compose ps
-
-nginx-test:
-	nginx -t
-
-nginx-restart:
-	systemctl restart nginx
-	@echo "Nginx restarted!"
 
 # ─── Remote (с локальной машины) ───
 

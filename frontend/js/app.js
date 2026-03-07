@@ -524,7 +524,7 @@ function renderMetricInput(m) {
             displayVal = '—';
         } else if (rt === 'bool') {
             displayVal = val ? 'Да' : 'Нет';
-        } else if (rt === 'time') {
+        } else if (rt === 'time' || rt === 'duration') {
             displayVal = String(val);
         } else if (rt === 'int') {
             displayVal = String(Math.round(val));
@@ -554,6 +554,7 @@ function renderMetricInput(m) {
             let input;
             if (m.type === 'enum') input = renderEnum(val, m.enum_options, m.multi_select, !!entry);
             else if (m.type === 'time') input = renderTime(val);
+            else if (m.type === 'duration') input = renderDuration(val);
             else if (m.type === 'number') input = renderNumber(val);
             else if (m.type === 'scale') {
                 const sMin = (entry && entry.scale_min != null) ? entry.scale_min : m.scale_min;
@@ -596,6 +597,7 @@ function renderMetricInput(m) {
     let input;
     if (m.type === 'enum') input = renderEnum(val, m.enum_options, m.multi_select, !!entry);
     else if (m.type === 'time') input = renderTime(val);
+    else if (m.type === 'duration') input = renderDuration(val);
     else if (m.type === 'number') input = renderNumber(val);
     else if (m.type === 'scale') input = renderScale(val, m.scale_min, m.scale_max, m.scale_step);
     else input = renderBoolean(val);
@@ -632,6 +634,20 @@ function renderNumber(val) {
         <button class="number-btn" data-action="increment">&plus;</button>
         ${zeroBtn}
     </div>`;
+}
+
+function formatDuration(minutes) {
+    if (minutes === null || minutes === undefined) return '—';
+    const m = typeof minutes === 'number' ? minutes : parseInt(minutes);
+    if (isNaN(m)) return '—';
+    return `${Math.floor(m / 60)}ч ${m % 60}м`;
+}
+
+function renderDuration(val) {
+    if (val !== null && val !== undefined) {
+        return `<button type="button" class="time-picker-btn has-value" data-action="pick-duration">${formatDuration(val)}</button>`;
+    }
+    return `<button type="button" class="time-picker-btn" data-action="pick-duration">Указать длительность</button>`;
 }
 
 function renderTime(val) {
@@ -1008,6 +1024,35 @@ async function handleFormClick(e) {
         });
         return;
     }
+
+    // Duration picker (reuses clock picker, converts HH:MM → minutes)
+    const durTrigger = btn.closest('[data-action="pick-duration"]');
+    if (durTrigger) {
+        if (document.querySelector('.cp-overlay')) return;
+        // Convert current minutes to HH:MM for picker
+        let currentVal = '';
+        if (durTrigger.classList.contains('has-value')) {
+            const container = slotEl || card;
+            const entry = container.dataset.entryId;
+            // Parse from displayed text "Xч Yм"
+            const text = durTrigger.textContent.trim();
+            const match = text.match(/(\d+)ч\s*(\d+)м/);
+            if (match) {
+                currentVal = `${String(parseInt(match[1])).padStart(2, '0')}:${String(parseInt(match[2])).padStart(2, '0')}`;
+            }
+        }
+        showClockPicker(currentVal, async (hhmmVal) => {
+            try {
+                const parts = hhmmVal.split(':').map(Number);
+                const minutes = parts[0] * 60 + parts[1];
+                await saveDaily(metricId, entryId, minutes, slotId);
+                await renderTodayForm();
+            } catch (error) {
+                alert('Ошибка: ' + error.message);
+            }
+        });
+        return;
+    }
 }
 
 function _ensureClearButton(card, slotEl, entryId) {
@@ -1260,7 +1305,7 @@ function _formatEntryValue(entry, type, resultType, enumOptions) {
         if (v === null || v === undefined) return '—';
         const rt = resultType || 'float';
         if (rt === 'bool') return v ? 'Да' : 'Нет';
-        if (rt === 'time') return String(v);
+        if (rt === 'time' || rt === 'duration') return String(v);
         if (rt === 'int') return String(Math.round(v));
         return typeof v === 'number' ? v.toFixed(2) : String(v);
     }
@@ -1268,6 +1313,9 @@ function _formatEntryValue(entry, type, resultType, enumOptions) {
         const v = entry.value;
         if (v === null || v === undefined) return '—';
         return String(v);
+    }
+    if (type === 'duration') {
+        return formatDuration(entry.value);
     }
     if (type === 'time') {
         return entry.value || '—';
@@ -1866,7 +1914,7 @@ function buildChartConfig(points, metricType, colors, options = {}) {
     const labels = points.map(p => formatShortDate(p.date));
     const values = points.map(p => p.value);
     const showPoints = points.length <= 30;
-    const chartType = (metricType === 'int' || metricType === 'float') ? 'number' : metricType;
+    const chartType = (metricType === 'int' || metricType === 'float') ? 'number' : metricType === 'duration' ? 'duration' : metricType;
     const xConfig = { ticks: { maxTicksLimit: compact ? 4 : 7, maxRotation: 0 }, grid: { display: false } };
 
     if (chartType === 'bool') {
@@ -1900,6 +1948,9 @@ function buildChartConfig(points, metricType, colors, options = {}) {
     if (chartType === 'time') {
         yConfig.min = 0; yConfig.max = 1439;
         yConfig.ticks = { callback: v => minutesToHHMM(v), stepSize: 360 };
+    } else if (chartType === 'duration') {
+        yConfig.min = 0;
+        yConfig.ticks = { callback: v => { const h = Math.floor(v / 60); const m = v % 60; return m === 0 ? `${h}ч` : `${h}ч ${m}м`; } };
     } else if (chartType === 'scale') {
         yConfig.min = 0; yConfig.max = 100;
         yConfig.ticks = { callback: v => v + '%' };
@@ -1932,6 +1983,10 @@ function buildChartConfig(points, metricType, colors, options = {}) {
     if (chartType === 'time') {
         config.options.plugins.tooltip = {
             callbacks: { label: ctx => minutesToHHMM(ctx.parsed.y) }
+        };
+    } else if (chartType === 'duration') {
+        config.options.plugins.tooltip = {
+            callbacks: { label: ctx => { const v = ctx.parsed.y; return `${Math.floor(v / 60)}ч ${Math.round(v % 60)}м`; } }
         };
     }
     return config;
@@ -2165,6 +2220,13 @@ function renderDetailStats(stats, metricType) {
             <div class="stat-card"><div class="stat-value">${stats.earliest}</div><div class="stat-label">Раньше всего</div></div>
             <div class="stat-card"><div class="stat-value">${stats.latest}</div><div class="stat-label">Позже всего</div></div>
         `;
+    } else if (metricType === 'duration') {
+        cards += `
+            <div class="stat-card"><div class="stat-value">${stats.average}</div><div class="stat-label">Среднее</div></div>
+            <div class="stat-card"><div class="stat-value">${stats.min}</div><div class="stat-label">Мин</div></div>
+            <div class="stat-card"><div class="stat-value">${stats.max}</div><div class="stat-label">Макс</div></div>
+            ${stats.median !== undefined ? `<div class="stat-card"><div class="stat-value">${stats.median}</div><div class="stat-label">Медиана</div></div>` : ''}
+        `;
     } else if (metricType === 'number' || metricType === 'int' || metricType === 'float') {
         cards += `
             <div class="stat-card"><div class="stat-value">${stats.average}</div><div class="stat-label">Среднее</div></div>
@@ -2260,6 +2322,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                     const slotsBadge = m.slots && m.slots.length > 0
                         ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
                     const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
+                        : m.type === 'duration' ? '<i data-lucide="timer"></i> Длительность'
                         : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                         : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
                         : m.type === 'enum' ? '<i data-lucide="list"></i> Варианты'
@@ -2295,6 +2358,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             const slotsBadge = m.slots && m.slots.length > 0
                 ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
             const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
+                : m.type === 'duration' ? '<i data-lucide="timer"></i> Длительность'
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                 : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
@@ -3018,6 +3082,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             return `<span class="label-text">Тип: Время</span>
                     <span class="label-hint">Запись времени суток (например, отход ко сну)</span>`;
         }
+        if (type === 'duration') {
+            return `<span class="label-text">Тип: Длительность</span>
+                    <span class="label-hint">Продолжительность (сон, тренировка, чтение)</span>`;
+        }
         if (type === 'number') {
             return `<span class="label-text">Тип: Число</span>
                     <span class="label-hint">Целое число с кнопками +/−</span>`;
@@ -3140,6 +3208,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <option value="int" ${existingMetric?.result_type === 'int' ? 'selected' : ''}>Целое число</option>
                             <option value="bool" ${existingMetric?.result_type === 'bool' ? 'selected' : ''}>Да/Нет</option>
                             <option value="time" ${existingMetric?.result_type === 'time' ? 'selected' : ''}>Время</option>
+                            <option value="duration" ${existingMetric?.result_type === 'duration' ? 'selected' : ''}>Длительность</option>
                         </select>
                     </div>
                     <span class="label-hint">Поддерживаются +, −, ×, ÷ и скобки.</span>
@@ -3181,6 +3250,11 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <input type="radio" name="nm-type" value="time" ${currentType === 'time' ? 'checked' : ''}>
                             <div class="type-card-icon"><i data-lucide="clock"></i></div>
                             <div class="type-card-info"><div class="type-card-name">Время</div><div class="type-card-desc">Часы и минуты</div></div>
+                        </div>
+                        <div class="type-card ${currentType === 'duration' ? 'selected' : ''}">
+                            <input type="radio" name="nm-type" value="duration" ${currentType === 'duration' ? 'checked' : ''}>
+                            <div class="type-card-icon"><i data-lucide="timer"></i></div>
+                            <div class="type-card-info"><div class="type-card-name">Длительность</div><div class="type-card-desc">Часы и минуты (сколько)</div></div>
                         </div>
                         <div class="type-card ${currentType === 'number' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="number" ${currentType === 'number' ? 'checked' : ''}>
@@ -3289,6 +3363,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <option value="int">Целое число</option>
                             <option value="bool">Да/Нет</option>
                             <option value="time">Время</option>
+                            <option value="duration">Длительность</option>
                         </select>
                     </div>
                     <span class="label-hint">Поддерживаются +, −, ×, ÷ и скобки. Время можно комбинировать только с временем.</span>

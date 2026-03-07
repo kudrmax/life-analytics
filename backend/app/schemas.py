@@ -10,6 +10,7 @@ class MetricType(str, Enum):
     computed = "computed"
     integration = "integration"
     enum = "enum"
+    duration = "duration"
 
 
 class MeasurementSlotOut(BaseModel):

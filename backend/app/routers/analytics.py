@@ -42,7 +42,7 @@ def _extract_numeric(value_row, metric_type: str = "bool") -> float | None:
     if metric_type == "time":
         # v is a datetime (TIMESTAMPTZ)
         return v.hour * 60 + v.minute
-    elif metric_type == "number":
+    elif metric_type == "number" or metric_type == "duration":
         return float(v)
     elif metric_type == "scale":
         v_min = value_row["scale_min"]
@@ -80,6 +80,8 @@ def _get_value_table(mt: str) -> tuple[str, str]:
         return "values_time", ""
     elif mt == "number":
         return "values_number", ""
+    elif mt == "duration":
+        return "values_duration", ""
     elif mt == "scale":
         return "values_scale", ", v.scale_min, v.scale_max, v.scale_step"
     elif mt == "enum":
@@ -211,6 +213,13 @@ async def _values_by_date_for_computed(
                 if isinstance(raw, str) and ":" in raw:
                     h, m = map(int, raw.split(":"))
                     result[d] = float(h * 60 + m)
+                else:
+                    result[d] = float(raw)
+            elif result_type == "duration":
+                # raw is "Xч Yм" string — parse back to minutes
+                if isinstance(raw, str) and "ч" in raw:
+                    parts = raw.replace("м", "").split("ч")
+                    result[d] = float(int(parts[0].strip()) * 60 + int(parts[1].strip()))
                 else:
                     result[d] = float(raw)
             else:
@@ -539,6 +548,16 @@ async def metric_stats(
                     "earliest": f"{int(min(values)) // 60:02d}:{int(min(values)) % 60:02d}",
                     "latest": f"{int(max(values)) // 60:02d}:{int(max(values)) % 60:02d}",
                 })
+        elif rt == "duration":
+            if values:
+                def _fmt_dur(m):
+                    m = int(round(m))
+                    return f"{m // 60}ч {m % 60}м"
+                result.update({
+                    "average": _fmt_dur(mean(values)),
+                    "min": _fmt_dur(min(values)),
+                    "max": _fmt_dur(max(values)),
+                })
         else:
             if values:
                 result.update({
@@ -664,6 +683,20 @@ async def metric_stats(
             })
         else:
             result.update({"average": "--:--", "earliest": "--:--", "latest": "--:--"})
+
+    elif mt == "duration":
+        if values:
+            def _fmt_dur(m):
+                m = int(round(m))
+                return f"{m // 60}ч {m % 60}м"
+            result.update({
+                "average": _fmt_dur(mean(values)),
+                "min": _fmt_dur(min(values)),
+                "max": _fmt_dur(max(values)),
+                "median": _fmt_dur(median(values)),
+            })
+        else:
+            result.update({"average": "0ч 0м", "min": "0ч 0м", "max": "0ч 0м", "median": "0ч 0м"})
 
     elif mt == "number":
         if values:
@@ -848,8 +881,8 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 if mid not in aggregate_indices:
                     continue
 
-                # "nonzero" for number
-                if m["type"] == "number":
+                # "nonzero" for number and duration
+                if m["type"] in ("number", "duration"):
                     idx = len(sources)
                     sources.append((None, None, "bool", f"{m['name']}: не ноль"))
                     auto_info[idx] = ("nonzero", mid)

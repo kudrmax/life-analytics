@@ -126,6 +126,13 @@ async def get_entry_value(
         if not row:
             return None
         return row["value"]
+    elif metric_type == "duration":
+        row = await conn.fetchrow(
+            "SELECT value FROM values_duration WHERE entry_id = $1", entry_id
+        )
+        if not row:
+            return None
+        return row["value"]
     elif metric_type == "enum":
         row = await conn.fetchrow(
             "SELECT selected_option_ids FROM values_enum WHERE entry_id = $1", entry_id
@@ -171,6 +178,11 @@ async def insert_value(
             "INSERT INTO values_scale (entry_id, value, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4, $5)",
             entry_id, int(value), s_min, s_max, s_step,
         )
+    elif metric_type == "duration":
+        await conn.execute(
+            "INSERT INTO values_duration (entry_id, value) VALUES ($1, $2)",
+            entry_id, int(value),
+        )
     elif metric_type == "enum":
         option_ids = value if isinstance(value, list) else [value]
         await conn.execute(
@@ -206,6 +218,11 @@ async def update_value(
     elif metric_type == "scale":
         await conn.execute(
             "UPDATE values_scale SET value = $1 WHERE entry_id = $2",
+            int(value), entry_id,
+        )
+    elif metric_type == "duration":
+        await conn.execute(
+            "UPDATE values_duration SET value = $1 WHERE entry_id = $2",
             int(value), entry_id,
         )
     elif metric_type == "enum":

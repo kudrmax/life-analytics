@@ -248,7 +248,7 @@ async def import_data(
                     )
 
                     metric_type = row.get('type', 'bool')
-                    if metric_type not in ('bool', 'time', 'number', 'scale', 'computed', 'integration', 'enum'):
+                    if metric_type not in ('bool', 'time', 'number', 'duration', 'scale', 'computed', 'integration', 'enum'):
                         metric_type = 'bool'
 
                     # Parse enum config from CSV
@@ -541,7 +541,7 @@ async def import_data(
                         if not isinstance(value, str):
                             entries_skipped += 1
                             continue
-                    elif mt == "number":
+                    elif mt == "number" or mt == "duration":
                         try:
                             value = int(value)
                         except (ValueError, TypeError):
