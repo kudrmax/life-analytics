@@ -10,7 +10,7 @@ from starlette.requests import Request
 
 from app.database import create_pool, close_pool, init_db, pool as app_pool
 from app.migrations import run_migrations
-from app.routers import metrics, entries, daily, analytics, auth, export_import, integrations
+from app.routers import metrics, entries, daily, analytics, auth, export_import, integrations, categories
 
 SLOW_REQUEST_MS = int(os.environ.get("SLOW_REQUEST_MS", "500"))
 _timing_logger = logging.getLogger("timing")
@@ -67,6 +67,7 @@ app.include_router(daily.router)
 app.include_router(analytics.router)
 app.include_router(export_import.router)
 app.include_router(integrations.router)
+app.include_router(categories.router)
 
 
 @app.get("/api/health")

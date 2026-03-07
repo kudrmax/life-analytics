@@ -23,14 +23,28 @@ entity "users" as users {
     * created_at : TIMESTAMPTZ
 }
 
+entity "categories" as cat {
+    * **id** : SERIAL <<PK>>
+    --
+    * user_id : INTEGER <<FK>>
+    * name : VARCHAR(200)
+    parent_id : INTEGER <<FK>>
+    * sort_order : INTEGER
+    --
+    <<UNIQUE INDEX>> (user_id, name)
+    WHERE parent_id IS NULL
+    --
+    <<UNIQUE INDEX>> (user_id, name, parent_id)
+    WHERE parent_id IS NOT NULL
+}
+
 entity "metric_definitions" as md {
     * **id** : SERIAL <<PK>>
     --
     * user_id : INTEGER <<FK>>
     * slug : VARCHAR(100)
     * name : VARCHAR(200)
-    * category : VARCHAR(100)
-    * fill_time : VARCHAR(100)
+    category_id : INTEGER <<FK>>
     * type : metric_type
     * enabled : BOOLEAN
     * sort_order : INTEGER
@@ -221,7 +235,7 @@ entity "activitywatch_app_category_map" as aacm {
     --
     * user_id : INTEGER <<FK>>
     * app_name : VARCHAR(500)
-    * category_id : INTEGER <<FK>>
+    * activitywatch_category_id : INTEGER <<FK>>
     --
     <<UNIQUE>> (user_id, app_name)
 }
@@ -229,7 +243,7 @@ entity "activitywatch_app_category_map" as aacm {
 entity "integration_category_config" as icatc {
     * **metric_id** : INTEGER <<PK>> <<FK>>
     --
-    * category_id : INTEGER <<FK>>
+    * activitywatch_category_id : INTEGER <<FK>>
 }
 
 entity "integration_app_config" as iapc {
@@ -267,6 +281,7 @@ entity "values_enum" as ve {
 
 ' ── Relationships ──
 
+users ||--o{ cat : "user_id"
 users ||--o{ md : "user_id"
 users ||--o{ entries : "user_id"
 users ||--o{ cr : "user_id"
@@ -276,6 +291,9 @@ users ||--o{ ads : "user_id"
 users ||--o{ aau : "user_id"
 users ||--o{ acat : "user_id"
 users ||--o{ aacm : "user_id"
+
+cat ||--o{ cat : "parent_id"
+cat ||--o{ md : "category_id"
 
 md ||--o{ entries : "metric_id"
 md ||--o{ slots : "metric_id"
@@ -300,7 +318,7 @@ entries ||--o| ve : "entry_id"
 
 cr ||--o{ cp : "report_id"
 
-acat ||--o{ aacm : "category_id"
-acat ||--o{ icatc : "category_id"
+acat ||--o{ aacm : "activitywatch_category_id"
+acat ||--o{ icatc : "activitywatch_category_id"
 
 @enduml

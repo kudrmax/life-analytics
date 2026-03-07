@@ -2486,6 +2486,45 @@ emoji-picker {
     margin-top: 0.5rem;
 }
 
+/* ─── Category Manager ─── */
+.cat-manager-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+.cat-manager-header h2 { flex: 1; margin: 0; }
+
+.cat-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 4px;
+    transition: border-color 0.15s;
+}
+.cat-item-child { margin-left: 32px; }
+.cat-item-name { flex: 1; font-weight: 500; }
+.cat-item-actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.15s; }
+.cat-item:hover .cat-item-actions { opacity: 1; }
+
+.cat-item.dragging { opacity: 0.3; }
+.cat-item.drag-clone {
+    position: fixed;
+    z-index: 1000;
+    pointer-events: none;
+    opacity: 0.85;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+}
+.cat-item.drag-over-before { border-top: 2px solid var(--accent); }
+.cat-item.drag-over-after { border-bottom: 2px solid var(--accent); }
+
 /* ─── Auto Metrics ─── */
 .auto-metrics-section {
     margin-top: 24px;

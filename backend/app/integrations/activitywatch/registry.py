@@ -57,7 +57,7 @@ ACTIVITYWATCH_METRICS = {
         'name': 'Время в категории',
         'description': 'Суммарное время приложений из категории (мин)',
         'value_type': 'number',
-        'config_fields': ['category_id'],
+        'config_fields': ['activitywatch_category_id'],
     },
     'app_time': {
         'name': 'Время в приложении',
