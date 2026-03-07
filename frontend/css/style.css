@@ -1364,6 +1364,19 @@ input[type="month"], input[type="date"] {
 .corr-section-low {
     opacity: 0.7;
 }
+details.corr-section-low summary { cursor: pointer; list-style: none; }
+details.corr-section-low summary::-webkit-details-marker { display: none; }
+details.corr-section-low summary h4::before { content: '\25B6  '; font-size: 12px; }
+details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-size: 12px; }
+.corr-empty-notice {
+    padding: 16px;
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-dim);
+    font-size: 14px;
+    text-align: center;
+}
+.corr-empty-notice p { margin: 4px 0; }
 
 .corr-running {
     text-align: center;

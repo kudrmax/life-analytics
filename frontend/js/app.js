@@ -1892,9 +1892,9 @@ function renderCorrelationReport(report, container) {
 
     let html = '';
 
+    html += '<div class="corr-section">';
+    html += '<h4>Статистически значимо <span class="corr-sig corr-sig-yes">p&lt;0.05</span></h4>';
     if (sig.length > 0) {
-        html += '<div class="corr-section">';
-        html += '<h4>Статистически значимо <span class="corr-sig corr-sig-yes">p&lt;0.05</span></h4>';
         if (strong.length > 0) {
             html += '<div class="corr-subsection-header">Сильная корреляция</div>';
             for (const p of strong) html += renderCorrPair(p, report);
@@ -1907,14 +1907,19 @@ function renderCorrelationReport(report, container) {
             html += '<div class="corr-subsection-header">Слабая корреляция</div>';
             for (const p of weak) html += renderCorrPair(p, report);
         }
+    } else {
+        html += '<div class="corr-empty-notice">';
+        html += '<p>Пока нет уверенных корреляций.</p>';
+        html += '<p>Продолжайте заполнять метрики — нужно минимум 10 дней данных, чтобы увидеть закономерности.</p>';
         html += '</div>';
     }
+    html += '</div>';
 
     if (insig.length > 0) {
-        html += '<div class="corr-section corr-section-low">';
-        html += '<h4>Незначимо или мало данных</h4>';
+        html += '<details class="corr-section corr-section-low">';
+        html += '<summary><h4>Незначимо или мало данных</h4></summary>';
         for (const p of insig) html += renderCorrPair(p, report);
-        html += '</div>';
+        html += '</details>';
     }
 
     container.innerHTML = html;
