@@ -2447,6 +2447,149 @@ emoji-picker {
     font-weight: 400;
 }
 
+/* ─── Notes (text metrics) ─── */
+.notes-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.note-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 8px;
+    background: var(--surface2);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+}
+
+.note-text {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.note-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.note-time {
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.btn-icon-tiny {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-dim);
+    padding: 2px;
+    display: inline-flex;
+    align-items: center;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+}
+
+.btn-icon-tiny:hover {
+    opacity: 1;
+}
+
+.btn-icon-tiny svg {
+    width: 13px;
+    height: 13px;
+}
+
+.btn-icon-tiny.btn-icon-danger:hover {
+    color: var(--red);
+}
+
+.note-input-row {
+    display: flex;
+    gap: 6px;
+    align-items: flex-end;
+}
+
+.note-textarea {
+    flex: 1;
+    resize: vertical;
+    min-height: 32px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    line-height: 1.4;
+}
+
+.note-textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.note-edit-textarea {
+    width: 100%;
+    margin-bottom: 4px;
+}
+
+.note-edit-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.btn-save-note {
+    white-space: nowrap;
+    align-self: flex-end;
+}
+
+.note-count-badge {
+    font-size: 11px;
+    padding: 1px 7px;
+    background: var(--accent);
+    color: #fff;
+    border-radius: 10px;
+    font-weight: 600;
+    margin-left: 6px;
+}
+
+.notes-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 8px;
+}
+
+.notes-table th,
+.notes-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+}
+
+.notes-table th {
+    font-weight: 600;
+    color: var(--text-dim);
+    font-size: 12px;
+}
+
+.notes-table td {
+    color: var(--text);
+}
+
+#copy-notes-btn {
+    margin-top: 8px;
+    margin-bottom: 4px;
+}
+
 /* ─── Empty State ─── */
 .empty-state {
     text-align: center;

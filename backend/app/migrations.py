@@ -162,6 +162,17 @@ MIGRATIONS = [
             END IF;
         END $migrate$;
     """),
+    (4, "add_notes_table", """
+        CREATE TABLE IF NOT EXISTS notes (
+            id SERIAL PRIMARY KEY,
+            metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            date DATE NOT NULL,
+            text TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_notes_metric_user_date ON notes(metric_id, user_id, date);
+    """),
 ]
 
 

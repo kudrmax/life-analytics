@@ -181,6 +181,26 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                 "id": r["id"], "label": r["label"], "sort_order": r["sort_order"],
             })
 
+    # Batch-load notes for text metrics
+    text_metric_ids = [m["id"] for m in metrics if m["type"] == "text"]
+    notes_count_map: dict[int, int] = {}
+    notes_by_metric: dict[int, list] = defaultdict(list)
+    if text_metric_ids:
+        nc_rows = await db.fetch(
+            "SELECT metric_id, COUNT(*) AS cnt FROM notes WHERE metric_id = ANY($1) AND user_id = $2 AND date = $3 GROUP BY metric_id",
+            text_metric_ids, current_user["id"], d,
+        )
+        for r in nc_rows:
+            notes_count_map[r["metric_id"]] = r["cnt"]
+        n_rows = await db.fetch(
+            "SELECT id, metric_id, text, created_at FROM notes WHERE metric_id = ANY($1) AND user_id = $2 AND date = $3 ORDER BY created_at",
+            text_metric_ids, current_user["id"], d,
+        )
+        for r in n_rows:
+            notes_by_metric[r["metric_id"]].append({
+                "id": r["id"], "text": r["text"], "created_at": str(r["created_at"]),
+            })
+
     qt.mark("values")
     # --- Build result using pre-loaded values ---
     result = []
@@ -209,6 +229,8 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "value_type": m.get("value_type"),
             "multi_select": m.get("multi_select"),
             "enum_options": enum_options_by_metric.get(mid) if m["type"] == "enum" else None,
+            "notes": notes_by_metric.get(mid, []) if m["type"] == "text" else None,
+            "note_count": notes_count_map.get(mid, 0) if m["type"] == "text" else None,
         }
 
         if slots or extra_disabled:
@@ -323,6 +345,16 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
         m_info = metrics_by_id.get(item["metric_id"])
         if not m_info or m_info["type"] == "computed":
             continue
+
+        # "note_count" — для text
+        if m_info["type"] == "text":
+            auto_metrics.append({
+                "name": f"{m_info['name']}: кол-во заметок",
+                "auto_type": "note_count",
+                "source_metric_id": item["metric_id"],
+                "source_metric_name": m_info["name"],
+                "value": notes_count_map.get(item["metric_id"], 0),
+            })
 
         # "nonzero" — для number и duration
         if m_info["type"] in ("number", "duration"):

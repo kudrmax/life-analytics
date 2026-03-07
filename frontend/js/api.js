@@ -265,6 +265,26 @@ const api = {
         return this.request('GET', '/api/integrations/activitywatch/available-metrics');
     },
 
+    // Notes (text metrics)
+    async createNote(data) {
+        const result = await this.request('POST', '/api/notes', data);
+        invalidateCache('/api/daily/');
+        return result;
+    },
+    async updateNote(id, data) {
+        const result = await this.request('PUT', `/api/notes/${id}`, data);
+        invalidateCache('/api/daily/');
+        return result;
+    },
+    async deleteNote(id) {
+        const result = await this.request('DELETE', `/api/notes/${id}`);
+        invalidateCache('/api/daily/');
+        return result;
+    },
+    listNotes(metricId, start, end) {
+        return this.request('GET', `/api/notes?metric_id=${metricId}&start=${start}&end=${end}`);
+    },
+
     // Categories
     getCategories() {
         return this.cachedGet('/api/categories');

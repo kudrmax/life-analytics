@@ -267,6 +267,18 @@ entity "enum_options" as eo {
     * enabled : BOOLEAN
 }
 
+entity "notes" as notes {
+    * **id** : SERIAL <<PK>>
+    --
+    * metric_id : INTEGER <<FK>>
+    * user_id : INTEGER <<FK>>
+    * date : DATE
+    * text : TEXT
+    * created_at : TIMESTAMPTZ
+    --
+    <<INDEX>> (metric_id, user_id, date)
+}
+
 entity "values_duration" as vdu {
     * **entry_id** : INTEGER <<PK>> <<FK>>
     --
@@ -291,6 +303,7 @@ users ||--o{ ads : "user_id"
 users ||--o{ aau : "user_id"
 users ||--o{ acat : "user_id"
 users ||--o{ aacm : "user_id"
+users ||--o{ notes : "user_id"
 
 cat ||--o{ cat : "parent_id"
 cat ||--o{ md : "category_id"
@@ -306,6 +319,7 @@ md ||--o| icatc : "metric_id"
 md ||--o| iapc : "metric_id"
 md ||--o| ec : "metric_id"
 md ||--o{ eo : "metric_id"
+md ||--o{ notes : "metric_id"
 
 slots ||--o{ entries : "slot_id"
 

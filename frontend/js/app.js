@@ -406,8 +406,11 @@ async function renderTodayForm() {
         html += '<div class="auto-metrics-note">Вычисляются автоматически</div>';
         for (const am of autoMetrics) {
             const isBool = am.auto_type === 'nonzero';
+            const isNoteCount = am.auto_type === 'note_count';
             let displayVal;
-            if (isBool) {
+            if (isNoteCount) {
+                displayVal = String(am.value);
+            } else if (isBool) {
                 displayVal = am.value ? 'Да' : 'Нет';
             } else if (am.auto_type === 'day_of_week') {
                 const days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
@@ -468,6 +471,11 @@ async function renderTodayForm() {
     let filled = 0;
     for (const m of summary.metrics) {
         if (m.type === 'computed' || m.type === 'integration') continue;
+        if (m.type === 'text') {
+            total += 1;
+            filled += (m.note_count > 0) ? 1 : 0;
+            continue;
+        }
         if (m.slots && m.slots.length > 0) {
             total += m.slots.length;
             filled += m.slots.filter(s => s.entry !== null).length;
@@ -525,6 +533,36 @@ function renderMetricInput(m) {
                 <button class="btn-small btn-fetch" data-action="fetch-integration" data-provider="${m.provider || 'todoist'}">${btnLabel}</button>
             </div>
             ${configHint}
+        </div>`;
+    }
+
+    // Text metric — notes
+    if (m.type === 'text') {
+        const notes = m.notes || [];
+        const noteCount = m.note_count || 0;
+        const isFilled = noteCount > 0;
+        let notesHtml = '';
+        for (const n of notes) {
+            const time = n.created_at ? new Date(n.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+            notesHtml += `<div class="note-item" data-note-id="${n.id}">
+                <div class="note-text">${_escapeHtml(n.text)}</div>
+                <div class="note-meta">
+                    <span class="note-time">${time}</span>
+                    <button class="btn-icon-tiny" data-action="edit-note" data-note-id="${n.id}" title="Редактировать"><i data-lucide="pencil"></i></button>
+                    <button class="btn-icon-tiny btn-icon-danger" data-action="delete-note" data-note-id="${n.id}" title="Удалить"><i data-lucide="trash-2"></i></button>
+                </div>
+            </div>`;
+        }
+        return `<div class="metric-card ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="text">
+            <div class="metric-header">
+                <label class="metric-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</label>
+                ${noteCount > 0 ? `<span class="note-count-badge">${noteCount}</span>` : ''}
+            </div>
+            <div class="notes-list">${notesHtml}</div>
+            <div class="note-input-row">
+                <textarea class="note-textarea" placeholder="Написать заметку..." rows="1"></textarea>
+                <button class="btn-small btn-save-note" data-action="save-note">Сохранить</button>
+            </div>
         </div>`;
     }
 
@@ -825,7 +863,7 @@ function attachInputHandlers() {
 }
 
 async function handleFormClick(e) {
-    const btn = e.target;
+    const btn = e.target.closest('[data-action]') || e.target;
 
     // ActivityWatch sync
     if (btn.dataset.action === 'aw-sync') {
@@ -848,6 +886,75 @@ async function handleFormClick(e) {
             btn.disabled = false;
             btn.textContent = origText;
         }
+        return;
+    }
+
+    // Save note
+    if (btn.dataset.action === 'save-note') {
+        const card = btn.closest('.metric-card');
+        if (!card) return;
+        const textarea = card.querySelector('.note-textarea');
+        const text = textarea.value.trim();
+        if (!text) return;
+        btn.disabled = true;
+        try {
+            await api.createNote({ metric_id: parseInt(card.dataset.metricId), date: currentDate, text });
+            await renderTodayForm();
+        } catch (error) {
+            alert('Ошибка: ' + error.message);
+            btn.disabled = false;
+        }
+        return;
+    }
+
+    // Delete note
+    if (btn.dataset.action === 'delete-note') {
+        const noteId = parseInt(btn.dataset.noteId);
+        try {
+            await api.deleteNote(noteId);
+            await renderTodayForm();
+        } catch (error) {
+            alert('Ошибка: ' + error.message);
+        }
+        return;
+    }
+
+    // Edit note — switch to inline editing
+    if (btn.dataset.action === 'edit-note') {
+        const noteId = btn.dataset.noteId;
+        const noteItem = btn.closest('.note-item');
+        if (!noteItem) return;
+        const noteTextEl = noteItem.querySelector('.note-text');
+        const currentText = noteTextEl.textContent;
+        noteItem.innerHTML = `<textarea class="note-textarea note-edit-textarea" rows="2">${_escapeHtml(currentText)}</textarea>
+            <div class="note-edit-actions">
+                <button class="btn-small" data-action="save-edit-note" data-note-id="${noteId}">Сохранить</button>
+                <button class="btn-small btn-secondary" data-action="cancel-edit-note">Отмена</button>
+            </div>`;
+        noteItem.querySelector('.note-edit-textarea').focus();
+        return;
+    }
+
+    // Save edited note
+    if (btn.dataset.action === 'save-edit-note') {
+        const noteItem = btn.closest('.note-item');
+        const textarea = noteItem.querySelector('.note-edit-textarea');
+        const text = textarea.value.trim();
+        if (!text) return;
+        btn.disabled = true;
+        try {
+            await api.updateNote(parseInt(btn.dataset.noteId), { text });
+            await renderTodayForm();
+        } catch (error) {
+            alert('Ошибка: ' + error.message);
+            btn.disabled = false;
+        }
+        return;
+    }
+
+    // Cancel edit note
+    if (btn.dataset.action === 'cancel-edit-note') {
+        await renderTodayForm();
         return;
     }
 
@@ -1139,6 +1246,11 @@ function updateProgress() {
     form.querySelectorAll('.metric-card').forEach(card => {
         const type = card.dataset.metricType;
         if (type === 'computed' || type === 'integration') return;
+        if (type === 'text') {
+            total++;
+            if (card.querySelector('.note-item')) filled++;
+            return;
+        }
         const slots = card.querySelectorAll('.metric-slot');
         if (slots.length > 0) {
             slots.forEach(s => {
@@ -1273,6 +1385,11 @@ async function showDayDetail(date) {
     let filled = 0;
     for (const m of summary.metrics) {
         if (m.type === 'computed' || m.type === 'integration') continue;
+        if (m.type === 'text') {
+            total += 1;
+            filled += (m.note_count > 0) ? 1 : 0;
+            continue;
+        }
         if (m.slots && m.slots.length > 0) {
             total += m.slots.length;
             filled += m.slots.filter(s => s.entry !== null).length;
@@ -1295,6 +1412,16 @@ async function showDayDetail(date) {
     let hasAny = false;
 
     for (const m of summary.metrics) {
+        if (m.type === 'text') {
+            const notes = m.notes || [];
+            if (notes.length === 0) continue;
+            hasAny = true;
+            for (const n of notes) {
+                const time = n.created_at ? new Date(n.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+                html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span><span class="summary-value">${_escapeHtml(n.text)} <span class="note-time">${time}</span></span></div>`;
+            }
+            continue;
+        }
         if (m.slots && m.slots.length > 0) {
             const filledSlots = m.slots.filter(s => s.entry !== null);
             if (filledSlots.length === 0) continue;
@@ -1472,7 +1599,7 @@ async function loadChartsTrends(start, end) {
     for (const { metric, points, trend: trendObj } of trendData) {
         const canvas = document.getElementById(`trend-chart-${metric.id}`);
         if (!canvas) continue;
-        const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type;
+        const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type === 'text' ? 'number' : metric.type;
         if (mt === 'enum' && trendObj?.option_series) {
             const optColors = ['#6c8cff', '#4caf50', '#ff9800', '#e91e63', '#9c27b0', '#00bcd4', '#795548', '#607d8b'];
             const options = trendObj.options || [];
@@ -2156,6 +2283,7 @@ async function renderMetricDetail(container, metricId) {
         </div>
         <div class="detail-chart-container"><canvas id="detail-chart"></canvas></div>
         <div id="detail-stats"></div>
+        ${metric.type === 'text' ? '<div id="detail-notes-table"></div>' : ''}
     `;
 
     if (window.lucide) lucide.createIcons();
@@ -2197,7 +2325,7 @@ async function loadMetricDetail(metricId, metric, start, end) {
         red: style.getPropertyValue('--red').trim(),
     };
 
-    const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type;
+    const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type === 'text' ? 'number' : metric.type;
 
     if (mt === 'enum' && trend.option_series) {
         // Enum: stacked bar chart with per-option datasets
@@ -2231,6 +2359,56 @@ async function loadMetricDetail(metricId, metric, start, end) {
     // Render stats (use result_type for computed)
     const statsType = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type;
     renderDetailStats(stats, statsType);
+
+    // Notes table for text metrics
+    if (metric.type === 'text') {
+        const notesTableEl = document.getElementById('detail-notes-table');
+        if (notesTableEl) {
+            try {
+                const notes = await api.listNotes(metricId, start, end);
+                if (notes.length > 0) {
+                    let tableHtml = '<h3>Заметки</h3>';
+                    tableHtml += '<button class="btn-small" id="copy-notes-btn"><i data-lucide="copy"></i> Копировать</button>';
+                    tableHtml += '<table class="notes-table"><thead><tr><th>Дата</th><th>Время</th><th>Заметка</th></tr></thead><tbody>';
+                    for (const n of notes) {
+                        const time = n.created_at ? new Date(n.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+                        tableHtml += `<tr><td>${n.date}</td><td>${time}</td><td>${_escapeHtml(n.text)}</td></tr>`;
+                    }
+                    tableHtml += '</tbody></table>';
+                    notesTableEl.innerHTML = tableHtml;
+                    if (window.lucide) lucide.createIcons();
+                    document.getElementById('copy-notes-btn')?.addEventListener('click', async () => {
+                        const lines = ['| Дата | Время | Заметка |', '|---|---|---|'];
+                        for (const n of notes) {
+                            const time = n.created_at ? new Date(n.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+                            lines.push(`| ${n.date} | ${time} | ${n.text} |`);
+                        }
+                        const text = lines.join('\n');
+                        try {
+                            if (navigator.clipboard && navigator.clipboard.writeText) {
+                                await navigator.clipboard.writeText(text);
+                            } else {
+                                const ta = document.createElement('textarea');
+                                ta.value = text;
+                                ta.style.position = 'fixed';
+                                ta.style.opacity = '0';
+                                document.body.appendChild(ta);
+                                ta.select();
+                                document.execCommand('copy');
+                                document.body.removeChild(ta);
+                            }
+                            const cbtn = document.getElementById('copy-notes-btn');
+                            if (cbtn) { cbtn.textContent = 'Скопировано!'; setTimeout(() => { cbtn.innerHTML = '<i data-lucide="copy"></i> Копировать'; if (window.lucide) lucide.createIcons(); }, 1500); }
+                        } catch (err) {
+                            console.warn('Copy failed', err);
+                            alert('Не удалось скопировать. Попробуйте выделить текст вручную.');
+                        }
+                    });
+                }
+            } catch (e) { console.warn('Failed to load notes', e); }
+        }
+    }
+
     console.debug(`[render] metric-detail(${metricId})  ${(performance.now() - _t0).toFixed(0)}ms`);
 }
 
@@ -2274,6 +2452,12 @@ function renderDetailStats(stats, metricType) {
             <div class="stat-card"><div class="stat-value">${stats.average}%</div><div class="stat-label">Среднее</div></div>
             <div class="stat-card"><div class="stat-value">${stats.min}%</div><div class="stat-label">Мин</div></div>
             <div class="stat-card"><div class="stat-value">${stats.max}%</div><div class="stat-label">Макс</div></div>
+        `;
+    } else if (metricType === 'text') {
+        cards += `
+            <div class="stat-card"><div class="stat-value">${stats.total_notes || 0}</div><div class="stat-label">Всего заметок</div></div>
+            <div class="stat-card"><div class="stat-value">${stats.average_per_day || 0}</div><div class="stat-label">Среднее/день</div></div>
+            <div class="stat-card"><div class="stat-value">${stats.max_per_day || 0}</div><div class="stat-label">Макс/день</div></div>
         `;
     } else if (metricType === 'enum') {
         if (stats.most_common) {
@@ -2352,6 +2536,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                 : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
                 : m.type === 'enum' ? '<i data-lucide="list"></i> Варианты'
+                : m.type === 'text' ? '<i data-lucide="file-text"></i> Заметка'
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
                 : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
@@ -2404,6 +2589,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'duration' ? '<i data-lucide="timer"></i> Длительность'
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
                 : m.type === 'scale' ? '<i data-lucide="sliders-horizontal"></i> Шкала'
+                : m.type === 'text' ? '<i data-lucide="file-text"></i> Заметка'
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
                 : m.type === 'integration' ? '<span class="metric-icon">' + TODOIST_ICON + '</span> Todoist'
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
@@ -3378,6 +3564,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             const isMulti = document.getElementById('nm-multi-select')?.checked;
             return `<div class="enum-buttons ${isMulti ? 'multi' : 'single'}">${labels.map(l => `<button class="enum-btn">${l}</button>`).join('')}</div>`;
         }
+        if (type === 'text') {
+            return `<textarea class="note-textarea" placeholder="Написать заметку..." rows="2" disabled></textarea>`;
+        }
         if (type === 'computed') {
             return `<div class="computed-value empty">= ?</div>`;
         }
@@ -3411,6 +3600,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         if (type === 'enum') {
             return `<span class="label-text">Тип: Варианты</span>
                     <span class="label-hint">Выбор из заданного списка вариантов</span>`;
+        }
+        if (type === 'text') {
+            return `<span class="label-text">Тип: Заметка</span>
+                    <span class="label-hint">Текстовые заметки, можно добавлять несколько в день</span>`;
         }
         if (type === 'computed') {
             return `<span class="label-text">Тип: Формула</span>
@@ -3525,7 +3718,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     <span class="label-hint">Поддерживаются +, −, ×, ÷ и скобки.</span>
                 </div>
                 ` : ''}
-                ${currentType !== 'computed' && currentType !== 'integration' ? `
+                ${currentType !== 'computed' && currentType !== 'integration' && currentType !== 'text' ? `
                 <div class="form-section" id="nm-slots-section">
                     <span class="label-text">Сколько раз в день замерять?</span>
                     <div class="slots-choice-grid">
@@ -3581,6 +3774,11 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <input type="radio" name="nm-type" value="duration" ${currentType === 'duration' ? 'checked' : ''}>
                             <div class="type-card-icon"><i data-lucide="timer"></i></div>
                             <div class="type-card-info"><div class="type-card-name">Длительность</div><div class="type-card-desc">Часы и минуты (сколько)</div></div>
+                        </div>
+                        <div class="type-card ${currentType === 'text' ? 'selected' : ''}">
+                            <input type="radio" name="nm-type" value="text" ${currentType === 'text' ? 'checked' : ''}>
+                            <div class="type-card-icon"><i data-lucide="file-text"></i></div>
+                            <div class="type-card-info"><div class="type-card-name">Заметка</div><div class="type-card-desc">Текст, несколько в день</div></div>
                         </div>
                         <div class="type-card ${currentType === 'computed' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="computed" ${currentType === 'computed' ? 'checked' : ''}>
@@ -3680,7 +3878,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     <span class="label-hint">Поддерживаются +, −, ×, ÷ и скобки. Время можно комбинировать только с временем.</span>
                     </div>
                 </div>
-                <div class="form-section" id="nm-slots-section" style="display: ${currentType === 'computed' || currentType === 'integration' ? 'none' : ''}">
+                <div class="form-section" id="nm-slots-section" style="display: ${currentType === 'computed' || currentType === 'integration' || currentType === 'text' ? 'none' : ''}">
                     <span class="label-text">Сколько раз в день замерять?</span>
                     <div class="slots-choice-grid">
                         <label class="slots-choice-card selected" data-slots="single">
@@ -3861,7 +4059,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 if (computedConfig) computedConfig.style.display = selectedType === 'computed' ? 'block' : 'none';
                 if (integrationConfig) integrationConfig.style.display = (selectedType === 'integration' && selectedProvider === 'todoist') ? 'block' : 'none';
                 if (awConfig) awConfig.style.display = (selectedType === 'integration' && selectedProvider === 'activitywatch') ? 'block' : 'none';
-                if (slotsSection) slotsSection.style.display = (selectedType === 'computed' || selectedType === 'integration') ? 'none' : '';
+                if (slotsSection) slotsSection.style.display = (selectedType === 'computed' || selectedType === 'integration' || selectedType === 'text') ? 'none' : '';
                 if (emojiWrapper) emojiWrapper.style.display = selectedType === 'integration' ? 'none' : '';
                 if (selectedType === 'computed') {
                     const availableMetrics = metrics.filter(m => m.type !== 'computed' && m.enabled);
