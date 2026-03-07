@@ -241,6 +241,9 @@ async def init_db():
         await conn.execute("""
             ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'enum'
         """)
+        await conn.execute("""
+            ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'duration'
+        """)
 
         # User integrations (OAuth tokens for external services)
         await conn.execute("""
@@ -398,6 +401,14 @@ async def init_db():
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 label VARCHAR(200) NOT NULL,
                 enabled BOOLEAN NOT NULL DEFAULT TRUE
+            )
+        """)
+
+        # Value table for duration metrics (minutes as INTEGER)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS values_duration (
+                entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+                value INTEGER NOT NULL
             )
         """)
 

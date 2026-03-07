@@ -10,8 +10,8 @@ Life Analytics — multi-user daily metrics tracker. FastAPI + PostgreSQL backen
 
 ```bash
 # Run everything (Docker Compose — preferred)
-./run.sh                    # or: docker compose up --build
-make up                     # detached mode with rebuild
+make up                     # запустить сервисы (быстро, офлайн)
+make build-up               # пересобрать образы и запустить (после изменений кода)
 
 # Run locally (without Docker — needs local PostgreSQL)
 cd backend && source venv/bin/activate
@@ -65,7 +65,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 
 ### Database Schema (PostgreSQL)
 
-**Enum:** `metric_type` = 'bool' | 'time' | 'number' | 'scale' | 'computed' | 'integration'
+**Enum:** `metric_type` = 'bool' | 'time' | 'number' | 'duration' | 'scale' | 'computed' | 'integration'
 
 **Tables:**
 - `users` — id, username (unique), password_hash, created_at
@@ -75,6 +75,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `values_bool` — entry_id (PK/FK), value BOOLEAN
 - `values_time` — entry_id (PK/FK), value TIMESTAMPTZ
 - `values_number` — entry_id (PK/FK), value INTEGER
+- `values_duration` — entry_id (PK/FK), value INTEGER (minutes)
 - `values_scale` — entry_id (PK/FK), value INTEGER, scale_min, scale_max, scale_step (stores context at time of entry)
 - `scale_config` — metric_id (PK/FK), scale_min, scale_max, scale_step (current config for rendering)
 - `correlation_reports` — id, user_id (FK), status ('running'/'done'/'error'), period_start, period_end, created_at, finished_at
@@ -97,8 +98,8 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 
 ### Frontend (Vanilla JS SPA)
 
-- `index.html` — single entry point with nav, Lucide icons (CDN), emoji-picker-element (CDN), Chart.js (CDN)
-- `config.js` — `window.API_BASE` (set by run.sh for local dev, empty for Docker/nginx proxy)
+- `index.html` — single entry point with nav, Lucide icons, emoji-picker-element, Chart.js (all vendored in `vendor/`)
+- `config.js` — `window.API_BASE` (empty for Docker/nginx proxy)
 - `js/api.js` — API client, token in localStorage (`la_auth_token`), auto-redirect on 401
 - `js/app.js` — all page logic: routing, rendering, event handling
 - `css/style.css` — dark/light theme via CSS custom properties

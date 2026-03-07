@@ -150,6 +150,14 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                 "scale_step": r["scale_step"],
             }
 
+    if entry_ids_by_type.get("duration"):
+        rows = await db.fetch(
+            "SELECT entry_id, value FROM values_duration WHERE entry_id = ANY($1)",
+            entry_ids_by_type["duration"],
+        )
+        for r in rows:
+            values_map[r["entry_id"]] = r["value"]
+
     if entry_ids_by_type.get("enum"):
         rows = await db.fetch(
             "SELECT entry_id, selected_option_ids FROM values_enum WHERE entry_id = ANY($1)",
@@ -317,8 +325,8 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
         if not m_info or m_info["type"] == "computed":
             continue
 
-        # "nonzero" — только для number
-        if m_info["type"] == "number":
+        # "nonzero" — для number и duration
+        if m_info["type"] in ("number", "duration"):
             if item["slots"]:
                 vals = [s["entry"]["value"] for s in item["slots"] if s["entry"] is not None]
                 is_nonzero = any(v != 0 for v in vals) if vals else False

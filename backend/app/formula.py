@@ -114,6 +114,8 @@ def convert_metric_value(
         if s_max == s_min:
             return 0.0
         return (v - s_min) / (s_max - s_min)
+    if metric_type == "duration":
+        return float(raw_value)
     if metric_type == "time":
         # raw_value is "HH:MM" string
         if isinstance(raw_value, str) and ":" in raw_value:
@@ -149,6 +151,10 @@ def _format_result(value: float, result_type: str):
         if minutes < 0:
             minutes += 1440
         return f"{minutes // 60:02d}:{minutes % 60:02d}"
+    if result_type == "duration":
+        total = max(0, int(round(value)))
+        h, m = divmod(total, 60)
+        return f"{h}ч {m}м"
     return round(value, 4)
 
 

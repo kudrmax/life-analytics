@@ -253,6 +253,12 @@ entity "enum_options" as eo {
     * enabled : BOOLEAN
 }
 
+entity "values_duration" as vdu {
+    * **entry_id** : INTEGER <<PK>> <<FK>>
+    --
+    * value : INTEGER
+}
+
 entity "values_enum" as ve {
     * **entry_id** : INTEGER <<PK>> <<FK>>
     --
@@ -289,6 +295,7 @@ entries ||--o| vb : "entry_id"
 entries ||--o| vt : "entry_id"
 entries ||--o| vn : "entry_id"
 entries ||--o| vs : "entry_id"
+entries ||--o| vdu : "entry_id"
 entries ||--o| ve : "entry_id"
 
 cr ||--o{ cp : "report_id"
