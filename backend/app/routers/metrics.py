@@ -276,8 +276,8 @@ async def create_metric(
             metric_id, json.dumps(data.formula), data.result_type,
         )
 
-    # Create measurement slots if 2+ labels provided (skip for computed/integration)
-    labels = data.slot_labels or [] if data.type not in (MetricType.computed, MetricType.integration) else []
+    # Create measurement slots if 2+ labels provided (skip for computed/integration/text)
+    labels = data.slot_labels or [] if data.type not in (MetricType.computed, MetricType.integration, MetricType.text) else []
     if len(labels) >= 2:
         for i, label in enumerate(labels):
             await db.execute(

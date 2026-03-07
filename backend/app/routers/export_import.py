@@ -161,8 +161,8 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
                 continue
 
             mt = type_lookup.get(e["metric_id"], "bool")
-            if mt == "computed":
-                continue  # computed metrics have no stored entries
+            if mt == "computed" or mt == "text":
+                continue  # computed/text metrics have no stored entries
             value = await get_entry_value(db, e["id"], mt)
             # Convert enum option IDs to labels for portability
             if mt == "enum" and isinstance(value, list):
@@ -202,6 +202,23 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             for r in aw_app_rows:
                 aw_apps_writer.writerow([str(r["date"]), r["app_name"], r["source"], r["duration_seconds"]])
             zip_file.writestr('aw_apps.csv', aw_apps_csv.getvalue())
+
+        # Export notes (text metrics)
+        notes_rows = await db.fetch(
+            """SELECT n.date, md.slug AS metric_slug, n.text, n.created_at
+               FROM notes n
+               JOIN metric_definitions md ON md.id = n.metric_id
+               WHERE n.user_id = $1
+               ORDER BY n.date, n.created_at""",
+            current_user["id"],
+        )
+        if notes_rows:
+            notes_csv = StringIO()
+            notes_writer = csv.writer(notes_csv)
+            notes_writer.writerow(['date', 'metric_slug', 'text', 'created_at'])
+            for r in notes_rows:
+                notes_writer.writerow([str(r["date"]), r["metric_slug"], r["text"], str(r["created_at"])])
+            zip_file.writestr('notes.csv', notes_csv.getvalue())
 
     zip_buffer.seek(0)
     filename = f"life_analytics_{current_user['username']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
@@ -308,7 +325,7 @@ async def import_data(
                     )
 
                     metric_type = row.get('type', 'bool')
-                    if metric_type not in ('bool', 'time', 'number', 'duration', 'scale', 'computed', 'integration', 'enum'):
+                    if metric_type not in ('bool', 'time', 'number', 'duration', 'scale', 'computed', 'integration', 'enum', 'text'):
                         metric_type = 'bool'
 
                     # Parse enum config from CSV
@@ -534,7 +551,7 @@ async def import_data(
                     if not metric_id:
                         entries_skipped += 1
                         continue
-                    if slug_to_type.get(slug) == "computed":
+                    if slug_to_type.get(slug) in ("computed", "text"):
                         entries_skipped += 1
                         continue
 
@@ -656,6 +673,29 @@ async def import_data(
                            SET duration_seconds = EXCLUDED.duration_seconds""",
                         current_user["id"], d, row['app_name'], row.get('source', 'window'), int(row['duration_seconds']),
                     )
+
+            # Import notes (text metrics)
+            if 'notes.csv' in zip_file.namelist():
+                notes_text = zip_file.read('notes.csv').decode('utf-8')
+                for row in csv.DictReader(StringIO(notes_text)):
+                    slug = row.get('metric_slug', '')
+                    mid = slug_to_id.get(slug)
+                    if not mid:
+                        continue
+                    d = date_type.fromisoformat(row['date'])
+                    text = row.get('text', '')
+                    if not text:
+                        continue
+                    # Deduplicate by metric + date + text
+                    existing = await db.fetchval(
+                        "SELECT id FROM notes WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND text = $4",
+                        mid, current_user["id"], d, text,
+                    )
+                    if not existing:
+                        await db.execute(
+                            "INSERT INTO notes (metric_id, user_id, date, text) VALUES ($1, $2, $3, $4)",
+                            mid, current_user["id"], d, text,
+                        )
 
     except zipfile.BadZipFile:
         raise HTTPException(400, "Invalid ZIP file")

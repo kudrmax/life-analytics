@@ -11,6 +11,7 @@ class MetricType(str, Enum):
     computed = "computed"
     integration = "integration"
     duration = "duration"
+    text = "text"
 
 
 class MeasurementSlotOut(BaseModel):
@@ -161,3 +162,22 @@ class AWSyncRequest(BaseModel):
     window_events: list[AWEvent]
     afk_events: list[AWEvent]
     web_events: list[AWEvent] | None = None
+
+
+# Notes schemas (text metric type)
+class NoteCreate(BaseModel):
+    metric_id: int
+    date: str  # YYYY-MM-DD
+    text: str
+
+
+class NoteUpdate(BaseModel):
+    text: str
+
+
+class NoteOut(BaseModel):
+    id: int
+    metric_id: int
+    date: str
+    text: str
+    created_at: str

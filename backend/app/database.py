@@ -279,6 +279,9 @@ async def _init_db_schema(conn):
     await conn.execute("""
         ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'duration'
     """)
+    await conn.execute("""
+        ALTER TYPE metric_type ADD VALUE IF NOT EXISTS 'text'
+    """)
 
     # User integrations (OAuth tokens for external services)
     await conn.execute("""
@@ -455,6 +458,18 @@ async def _init_db_schema(conn):
         )
     """)
 
+    # Notes table for text metrics (multiple notes per metric per day)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS notes (
+            id SERIAL PRIMARY KEY,
+            metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            date DATE NOT NULL,
+            text TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+    """)
+
     # Indexes
     await conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_enum_options_metric
@@ -499,6 +514,10 @@ async def _init_db_schema(conn):
     await conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_activitywatch_app_category_map_user
         ON activitywatch_app_category_map(user_id)
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_notes_metric_user_date
+        ON notes(metric_id, user_id, date)
     """)
 
 

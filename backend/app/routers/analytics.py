@@ -383,6 +383,26 @@ async def trends(
         aggregated = await _values_by_date_for_computed(
             db, formula, result_type, ref_ids, start_d, end_d, current_user["id"],
         )
+    elif mt == "text":
+        # Text metrics: count notes per day
+        rows = await db.fetch(
+            """SELECT date, COUNT(*) AS cnt FROM notes
+               WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4
+               GROUP BY date ORDER BY date""",
+            metric_id, current_user["id"], start_d, end_d,
+        )
+        points = [{"date": str(r["date"]), "value": r["cnt"]} for r in rows]
+        qt.mark("values")
+        qt.log()
+        return {
+            "metric_id": metric_id,
+            "metric_name": metric["name"],
+            "metric_type": "text",
+            "start": start,
+            "end": end,
+            "points": points,
+        }
+
     elif mt == "enum":
         # Return per-option boolean series
         opts = await db.fetch(
@@ -566,6 +586,30 @@ async def metric_stats(
                     "max": round(max(values), 2),
                 })
         return result
+
+    if mt == "text":
+        rows = await db.fetch(
+            """SELECT date, COUNT(*) AS cnt FROM notes
+               WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4
+               GROUP BY date ORDER BY date""",
+            metric_id, current_user["id"], start_date, end_date,
+        )
+        qt.mark("values")
+        total_notes = sum(r["cnt"] for r in rows)
+        days_with_notes = len(rows)
+        fill_rate = round(days_with_notes / total_days * 100, 1) if total_days > 0 else 0
+        counts = [r["cnt"] for r in rows]
+        qt.log()
+        return {
+            "metric_id": metric_id,
+            "metric_type": "text",
+            "total_entries": days_with_notes,
+            "total_days": total_days,
+            "fill_rate": fill_rate,
+            "total_notes": total_notes,
+            "average_per_day": round(total_notes / days_with_notes, 1) if days_with_notes > 0 else 0,
+            "max_per_day": max(counts) if counts else 0,
+        }
 
     if mt == "enum":
         rows = await db.fetch(
@@ -813,6 +857,8 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             for m in metrics_rows:
                 mid = m["id"]
                 mt = m["type"]
+                if mt == "text":
+                    continue  # text metrics handled via auto note_count source
                 if mt == "computed":
                     sources.append((mid, None, mt, m["name"]))
                     continue
@@ -887,6 +933,13 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     sources.append((None, None, "bool", f"{m['name']}: не ноль"))
                     auto_info[idx] = ("nonzero", mid)
 
+            # "note_count" for text metrics (not in main sources)
+            for m in metrics_rows:
+                if m["type"] == "text":
+                    idx = len(sources)
+                    sources.append((None, None, "number", f"{m['name']}: кол-во заметок"))
+                    auto_info[idx] = ("note_count", m["id"])
+
             # Calendar auto sources
             for cal_name, cal_type in [("День недели", "day_of_week"), ("Месяц", "month"), ("Неделя года", "week_number")]:
                 idx = len(sources)
@@ -915,6 +968,14 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 if auto_type == "nonzero":
                     parent_data = source_data[aggregate_indices[parent_mid]]
                     source_data[idx] = {d: (1.0 if v > 0 else 0.0) for d, v in parent_data.items()}
+                elif auto_type == "note_count":
+                    nc_rows = await conn.fetch(
+                        """SELECT date, COUNT(*) AS cnt FROM notes
+                           WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4
+                           GROUP BY date""",
+                        parent_mid, user_id, start_date, end_date,
+                    )
+                    source_data[idx] = {str(r["date"]): float(r["cnt"]) for r in nc_rows}
                 elif auto_type == "day_of_week":
                     source_data[idx] = {d: float(date_type.fromisoformat(d).isoweekday()) for d in all_dates}
                 elif auto_type == "month":
