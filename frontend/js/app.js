@@ -715,6 +715,7 @@ async function handleNumberChange(e) {
 
     card.classList.add('filled');
     saveDaily(metricId, entryId, parsed, slotId).then(({ entryId: newId }) => {
+        if (!newId) return;
         if (slotEl) slotEl.dataset.entryId = newId;
         else card.dataset.entryId = newId;
         _ensureClearButton(card, slotEl, newId);
@@ -888,6 +889,7 @@ async function handleFormClick(e) {
         btn.classList.add('active', boolVal ? 'yes' : 'no');
         card.classList.add('filled');
         saveDaily(metricId, entryId, boolVal, slotId).then(({ entryId: newId }) => {
+            if (!newId) return;
             if (slotEl) slotEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
             _ensureClearButton(card, slotEl, newId);
@@ -906,6 +908,7 @@ async function handleFormClick(e) {
         btn.classList.add('active');
         card.classList.add('filled');
         saveDaily(metricId, entryId, parseInt(btn.dataset.value), slotId).then(({ entryId: newId }) => {
+            if (!newId) return;
             if (slotEl) slotEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
             _ensureClearButton(card, slotEl, newId);
@@ -956,6 +959,7 @@ async function handleFormClick(e) {
         // activeIds может быть [] если нажата "Ничего" — это валидный ответ
         card.classList.add('filled');
         saveDaily(metricId, entryId, activeIds, slotId).then(({ entryId: newId }) => {
+            if (!newId) return;
             if (slotEl) slotEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
             _ensureClearButton(card, slotEl, newId);
@@ -975,6 +979,7 @@ async function handleFormClick(e) {
         card.classList.add('filled');
         btn.remove();
         saveDaily(metricId, entryId, 0, slotId).then(({ entryId: newId }) => {
+            if (!newId) return;
             if (slotEl) slotEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
             _ensureClearButton(card, slotEl, newId);
@@ -998,6 +1003,7 @@ async function handleFormClick(e) {
         const zeroBtn = container.querySelector('.number-zero-btn');
         if (zeroBtn) zeroBtn.remove();
         saveDaily(metricId, entryId, newVal, slotId).then(({ entryId: newId }) => {
+            if (!newId) return;
             if (slotEl) slotEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
             _ensureClearButton(card, slotEl, newId);
@@ -1087,19 +1093,28 @@ function _ensureClearButton(card, slotEl, entryId) {
     }
 }
 
+const _savingKeys = new Set();
+
 async function saveDaily(metricId, entryId, value, slotId) {
+    const key = `${metricId}-${slotId || 'null'}`;
     if (entryId) {
         await api.updateEntry(parseInt(entryId), { value });
         return { entryId: parseInt(entryId) };
     } else {
-        const payload = {
-            metric_id: parseInt(metricId),
-            date: currentDate,
-            value,
-        };
-        if (slotId) payload.slot_id = parseInt(slotId);
-        const result = await api.createEntry(payload);
-        return { entryId: result.id };
+        if (_savingKeys.has(key)) return {};
+        _savingKeys.add(key);
+        try {
+            const payload = {
+                metric_id: parseInt(metricId),
+                date: currentDate,
+                value,
+            };
+            if (slotId) payload.slot_id = parseInt(slotId);
+            const result = await api.createEntry(payload);
+            return { entryId: result.id };
+        } finally {
+            _savingKeys.delete(key);
+        }
     }
 }
 
