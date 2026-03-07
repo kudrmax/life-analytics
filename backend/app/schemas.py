@@ -4,12 +4,12 @@ from enum import Enum
 
 class MetricType(str, Enum):
     bool = "bool"
+    enum = "enum"
     time = "time"
     number = "number"
     scale = "scale"
     computed = "computed"
     integration = "integration"
-    enum = "enum"
     duration = "duration"
 
 
