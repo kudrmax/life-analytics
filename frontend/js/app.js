@@ -2493,6 +2493,7 @@ function setupMetricDragDrop(container) {
     let dragRow = null;
     let clone = null;
     let startX = 0, startY = 0;
+    let offsetX = 0, offsetY = 0;
     let isDragging = false;
     const DRAG_THRESHOLD = 5;
 
@@ -2559,8 +2560,10 @@ function setupMetricDragDrop(container) {
             if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
             isDragging = true;
 
-            // Create clone
+            // Create clone, remember cursor offset relative to element
             const rect = dragRow.getBoundingClientRect();
+            offsetX = startX - rect.left;
+            offsetY = startY - rect.top;
             clone = dragRow.cloneNode(true);
             clone.className = 'setting-row drag-clone';
             clone.style.width = rect.width + 'px';
@@ -2572,8 +2575,8 @@ function setupMetricDragDrop(container) {
         }
 
         if (clone) {
-            clone.style.left = (e.clientX - (clone.offsetWidth / 2)) + 'px';
-            clone.style.top = (e.clientY - 20) + 'px';
+            clone.style.left = (e.clientX - offsetX) + 'px';
+            clone.style.top = (e.clientY - offsetY) + 'px';
         }
 
         clearIndicators();
@@ -2607,6 +2610,22 @@ function setupMetricDragDrop(container) {
                 clone = null;
             }
             dragRow.classList.remove('dragging');
+
+            // Remove empty category divs and orphaned fill-time headers
+            container.querySelectorAll('.category[data-category]').forEach(catDiv => {
+                if (!catDiv.querySelector('.setting-row[data-metric-id]')) {
+                    // Check if previous sibling is a fill-time header that will become orphaned
+                    const prev = catDiv.previousElementSibling;
+                    catDiv.remove();
+                    if (prev && prev.classList.contains('fill-time-header')) {
+                        // Remove header if no more categories follow it
+                        const next = prev.nextElementSibling;
+                        if (!next || !next.classList.contains('category') || next.classList.contains('archive-section')) {
+                            prev.remove();
+                        }
+                    }
+                }
+            });
 
             // Save new order to server
             const items = collectOrder();
