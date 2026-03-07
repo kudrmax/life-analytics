@@ -3246,15 +3246,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <div class="type-card-icon"><i data-lucide="check-circle"></i></div>
                             <div class="type-card-info"><div class="type-card-name">Да / Нет</div><div class="type-card-desc">Было или нет</div></div>
                         </div>
-                        <div class="type-card ${currentType === 'time' ? 'selected' : ''}">
-                            <input type="radio" name="nm-type" value="time" ${currentType === 'time' ? 'checked' : ''}>
-                            <div class="type-card-icon"><i data-lucide="clock"></i></div>
-                            <div class="type-card-info"><div class="type-card-name">Время</div><div class="type-card-desc">Часы и минуты</div></div>
-                        </div>
-                        <div class="type-card ${currentType === 'duration' ? 'selected' : ''}">
-                            <input type="radio" name="nm-type" value="duration" ${currentType === 'duration' ? 'checked' : ''}>
-                            <div class="type-card-icon"><i data-lucide="timer"></i></div>
-                            <div class="type-card-info"><div class="type-card-name">Длительность</div><div class="type-card-desc">Часы и минуты (сколько)</div></div>
+                        <div class="type-card ${currentType === 'enum' ? 'selected' : ''}">
+                            <input type="radio" name="nm-type" value="enum" ${currentType === 'enum' ? 'checked' : ''}>
+                            <div class="type-card-icon"><i data-lucide="list"></i></div>
+                            <div class="type-card-info"><div class="type-card-name">Варианты</div><div class="type-card-desc">Выбор из списка</div></div>
                         </div>
                         <div class="type-card ${currentType === 'number' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="number" ${currentType === 'number' ? 'checked' : ''}>
@@ -3266,10 +3261,15 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <div class="type-card-icon"><i data-lucide="sliders-horizontal"></i></div>
                             <div class="type-card-info"><div class="type-card-name">Шкала</div><div class="type-card-desc">Оценка от 1 до N</div></div>
                         </div>
-                        <div class="type-card ${currentType === 'enum' ? 'selected' : ''}">
-                            <input type="radio" name="nm-type" value="enum" ${currentType === 'enum' ? 'checked' : ''}>
-                            <div class="type-card-icon"><i data-lucide="list"></i></div>
-                            <div class="type-card-info"><div class="type-card-name">Варианты</div><div class="type-card-desc">Выбор из списка</div></div>
+                        <div class="type-card ${currentType === 'time' ? 'selected' : ''}">
+                            <input type="radio" name="nm-type" value="time" ${currentType === 'time' ? 'checked' : ''}>
+                            <div class="type-card-icon"><i data-lucide="clock"></i></div>
+                            <div class="type-card-info"><div class="type-card-name">Время</div><div class="type-card-desc">Часы и минуты</div></div>
+                        </div>
+                        <div class="type-card ${currentType === 'duration' ? 'selected' : ''}">
+                            <input type="radio" name="nm-type" value="duration" ${currentType === 'duration' ? 'checked' : ''}>
+                            <div class="type-card-icon"><i data-lucide="timer"></i></div>
+                            <div class="type-card-info"><div class="type-card-name">Длительность</div><div class="type-card-desc">Часы и минуты (сколько)</div></div>
                         </div>
                         <div class="type-card ${currentType === 'computed' ? 'selected' : ''}">
                             <input type="radio" name="nm-type" value="computed" ${currentType === 'computed' ? 'checked' : ''}>
