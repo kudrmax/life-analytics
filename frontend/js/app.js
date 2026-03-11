@@ -1890,7 +1890,7 @@ function corrTypeWords(type) {
     const r = w => `<span class="corr-word-neg">${w}</span>`;
     switch (type) {
         case 'bool': return [g('да'), r('нет')];
-        case 'enum_bool': return [g('выбрано'), r('не выбрано')];
+        case 'enum_bool': return [g('да'), r('нет')];
         case 'time': return ['позже', 'раньше'];
         case 'scale': return [g('выше'), r('ниже')];
         default: return [g('больше'), r('меньше')];
@@ -1975,7 +1975,11 @@ function renderCorrPair(p, report) {
 
     const typeLeft = isLagged ? p.type_b : p.type_a;
     const typeRight = isLagged ? p.type_a : p.type_b;
-    const [hintA, hintB] = corrHintWords(typeLeft, typeRight, r);
+    let [hintA, hintB] = corrHintWords(typeLeft, typeRight, r);
+    const optLeft = isLagged ? (p.option_b || '') : (p.option_a || '');
+    const optRight = isLagged ? (p.option_a || '') : (p.option_b || '');
+    if (typeLeft === 'enum_bool' && optLeft) hintA = `<span class="corr-word-pos">✓ ${optLeft}</span>`;
+    if (typeRight === 'enum_bool' && optRight) hintB = r > 0 ? `<span class="corr-word-pos">✓ ${optRight}</span>` : `<span class="corr-word-neg">✗ ${optRight}</span>`;
 
     const labelA = renderCorrMetricLabel(isLagged ? p.label_b : p.label_a, isLagged ? p.icon_b : p.icon_a, isLagged ? p.slot_label_b : p.slot_label_a, hintA, isLagged ? 'вчера' : '');
     const labelB = renderCorrMetricLabel(isLagged ? p.label_a : p.label_b, isLagged ? p.icon_a : p.icon_b, isLagged ? p.slot_label_a : p.slot_label_b, hintB, isLagged ? 'сегодня' : '');
