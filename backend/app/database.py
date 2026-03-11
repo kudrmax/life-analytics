@@ -249,7 +249,8 @@ async def _init_db_schema(conn):
             type_a VARCHAR(20) NOT NULL DEFAULT '',
             type_b VARCHAR(20) NOT NULL DEFAULT '',
             correlation FLOAT,
-            data_points INTEGER NOT NULL DEFAULT 0
+            data_points INTEGER NOT NULL DEFAULT 0,
+            p_value FLOAT
         )
     """)
 
@@ -268,6 +269,9 @@ async def _init_db_schema(conn):
     """)
     await conn.execute("""
         ALTER TABLE correlation_pairs ALTER COLUMN metric_b_id DROP NOT NULL
+    """)
+    await conn.execute("""
+        ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS p_value FLOAT
     """)
 
     await conn.execute("""

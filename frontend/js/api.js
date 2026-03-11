@@ -175,6 +175,10 @@ const api = {
     getCorrelationReport() {
         return this.request('GET', '/api/analytics/correlation-report');
     },
+    getCorrelationPairs(reportId, { category = 'all', offset = 0, limit = 50 } = {}) {
+        const params = new URLSearchParams({ category, offset, limit });
+        return this.request('GET', `/api/analytics/correlation-report/${reportId}/pairs?${params}`);
+    },
     getCorrelationPairChart(pairId) {
         return this.request('GET', `/api/analytics/correlation-pair-chart?pair_id=${pairId}`);
     },

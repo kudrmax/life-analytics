@@ -173,6 +173,9 @@ MIGRATIONS = [
         );
         CREATE INDEX IF NOT EXISTS idx_notes_metric_user_date ON notes(metric_id, user_id, date);
     """),
+    (5, "add_p_value_to_correlation_pairs", """
+        ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS p_value FLOAT;
+    """),
 ]
 
 

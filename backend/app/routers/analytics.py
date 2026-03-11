@@ -998,7 +998,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             report_id,
                             si[0], sj[0], si[1], sj[1],
                             si[3], sj[3], si[2], sj[2],
-                            r, n, 0,
+                            r, n, 0, round(_p_value(r, n), 4),
                         ))
 
                     # lag=1: yesterday's j → today's i
@@ -1008,7 +1008,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             report_id,
                             si[0], sj[0], si[1], sj[1],
                             si[3], sj[3], si[2], sj[2],
-                            r_lag, n_lag, 1,
+                            r_lag, n_lag, 1, round(_p_value(r_lag, n_lag), 4),
                         ))
 
                     # lag=1: yesterday's i → today's j
@@ -1018,7 +1018,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             report_id,
                             sj[0], si[0], sj[1], si[1],
                             sj[3], si[3], sj[2], si[2],
-                            r_lag2, n_lag2, 1,
+                            r_lag2, n_lag2, 1, round(_p_value(r_lag2, n_lag2), 4),
                         ))
 
             qt.mark(f"compute_{len(pairs_to_insert)}_pairs")
@@ -1027,8 +1027,8 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 await conn.executemany(
                     """INSERT INTO correlation_pairs
                        (report_id, metric_a_id, metric_b_id, slot_a_id, slot_b_id,
-                        label_a, label_b, type_a, type_b, correlation, data_points, lag_days)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)""",
+                        label_a, label_b, type_a, type_b, correlation, data_points, lag_days, p_value)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)""",
                     pairs_to_insert,
                 )
 
@@ -1084,105 +1084,168 @@ async def get_latest_correlation_report(
 
     report = None
     if done_row:
-        pairs = await db.fetch(
-            """SELECT cp.id AS pair_id,
-                      cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days,
-                      cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
-                      cp.label_a, cp.label_b,
-                      ma.name AS name_a, ma.icon AS icon_a,
-                      mb.name AS name_b, mb.icon AS icon_b,
-                      sa.label AS slot_label_a,
-                      sb.label AS slot_label_b
-               FROM correlation_pairs cp
-               LEFT JOIN metric_definitions ma ON ma.id = cp.metric_a_id
-               LEFT JOIN metric_definitions mb ON mb.id = cp.metric_b_id
-               LEFT JOIN measurement_slots sa ON sa.id = cp.slot_a_id
-               LEFT JOIN measurement_slots sb ON sb.id = cp.slot_b_id
-               WHERE cp.report_id = $1
-               ORDER BY abs(cp.correlation) DESC""",
+        counts_row = await db.fetchrow(
+            """SELECT
+                   COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE data_points >= 10 AND p_value IS NOT NULL AND p_value < 0.05
+                                    AND ABS(correlation) > 0.7) AS sig_strong,
+                   COUNT(*) FILTER (WHERE data_points >= 10 AND p_value IS NOT NULL AND p_value < 0.05
+                                    AND ABS(correlation) > 0.3 AND ABS(correlation) <= 0.7) AS sig_medium,
+                   COUNT(*) FILTER (WHERE data_points >= 10 AND p_value IS NOT NULL AND p_value < 0.05
+                                    AND ABS(correlation) <= 0.3) AS sig_weak,
+                   COUNT(*) FILTER (WHERE data_points < 10 OR p_value IS NULL OR p_value >= 0.05) AS insig
+               FROM correlation_pairs WHERE report_id = $1""",
             done_row["id"],
         )
-
-        # Resolve icons for auto metrics (metric_id is NULL)
-        AUTO_CALENDAR_ICONS = {"День недели": "📅", "Месяц": "🗓️", "Неделя года": "📆"}
-        metric_icons = {}
-        if any(p["metric_a_id"] is None or p["metric_b_id"] is None for p in pairs):
-            user_metrics = await db.fetch(
-                "SELECT name, icon FROM metric_definitions WHERE user_id = $1",
-                current_user["id"],
-            )
-            metric_icons = {m["name"]: m["icon"] for m in user_metrics if m["icon"]}
-
-        def _resolve_icon(icon, label):
-            if icon:
-                return icon
-            if label in AUTO_CALENDAR_ICONS:
-                return AUTO_CALENDAR_ICONS[label]
-            if label and label.endswith(": не ноль"):
-                parent_name = label[:-len(": не ноль")]
-                return metric_icons.get(parent_name, "")
-            return ""
-
-        def _pair_label(
-            name: str | None,
-            label: str | None,
-            pair_type: str | None,
-        ) -> str:
-            if pair_type == "enum_bool":
-                if name:
-                    return name
-                if label:
-                    colon_idx = label.find(": ")
-                    return label[:colon_idx] if colon_idx != -1 else label
-                return "Удалённая метрика"
-            return name or label or "Удалённая метрика"
-
-        def _pair_option(
-            label: str | None,
-            pair_type: str | None,
-            slot_id: int | None,
-        ) -> str:
-            if pair_type != "enum_bool" or not label:
-                return ""
-            raw = label
-            if slot_id:
-                dash_idx = raw.rfind(" — ")
-                if dash_idx != -1:
-                    raw = raw[:dash_idx]
-            colon_idx = raw.find(": ")
-            return raw[colon_idx + 2:] if colon_idx != -1 else ""
-
         report = {
             "id": done_row["id"],
             "status": "done",
             "period_start": str(done_row["period_start"]),
             "period_end": str(done_row["period_end"]),
             "created_at": done_row["created_at"].isoformat(),
-            "pairs": [
-                {
-                    "label_a": _pair_label(p["name_a"], p["label_a"], p["type_a"]),
-                    "label_b": _pair_label(p["name_b"], p["label_b"], p["type_b"]),
-                    "option_a": _pair_option(p["label_a"], p["type_a"], p["slot_a_id"]),
-                    "option_b": _pair_option(p["label_b"], p["type_b"], p["slot_b_id"]),
-                    "type_a": p["type_a"],
-                    "type_b": p["type_b"],
-                    "icon_a": _resolve_icon(p["icon_a"], p["label_a"]),
-                    "icon_b": _resolve_icon(p["icon_b"], p["label_b"]),
-                    "slot_label_a": p["slot_label_a"] or "",
-                    "slot_label_b": p["slot_label_b"] or "",
-                    "correlation": p["correlation"],
-                    "data_points": p["data_points"],
-                    "lag_days": p["lag_days"],
-                    "p_value": round(_p_value(p["correlation"], p["data_points"]), 4) if p["correlation"] is not None else None,
-                    "metric_a_id": p["metric_a_id"],
-                    "metric_b_id": p["metric_b_id"],
-                    "pair_id": p["pair_id"],
-                }
-                for p in pairs
-            ],
+            "counts": {
+                "total": counts_row["total"],
+                "sig_strong": counts_row["sig_strong"],
+                "sig_medium": counts_row["sig_medium"],
+                "sig_weak": counts_row["sig_weak"],
+                "insig": counts_row["insig"],
+            },
         }
 
     return {"running": running, "report": report}
+
+
+# ─── Helpers for pair formatting (shared by pairs endpoint) ───
+
+AUTO_CALENDAR_ICONS: dict[str, str] = {"День недели": "📅", "Месяц": "🗓️", "Неделя года": "📆"}
+
+
+def _resolve_icon(icon: str | None, label: str | None, metric_icons: dict[str, str]) -> str:
+    if icon:
+        return icon
+    if label and label in AUTO_CALENDAR_ICONS:
+        return AUTO_CALENDAR_ICONS[label]
+    if label and label.endswith(": не ноль"):
+        parent_name = label[:-len(": не ноль")]
+        return metric_icons.get(parent_name, "")
+    return ""
+
+
+def _pair_label(name: str | None, label: str | None, pair_type: str | None) -> str:
+    if pair_type == "enum_bool":
+        if name:
+            return name
+        if label:
+            colon_idx = label.find(": ")
+            return label[:colon_idx] if colon_idx != -1 else label
+        return "Удалённая метрика"
+    return name or label or "Удалённая метрика"
+
+
+def _pair_option(label: str | None, pair_type: str | None, slot_id: int | None) -> str:
+    if pair_type != "enum_bool" or not label:
+        return ""
+    raw = label
+    if slot_id:
+        dash_idx = raw.rfind(" — ")
+        if dash_idx != -1:
+            raw = raw[:dash_idx]
+    colon_idx = raw.find(": ")
+    return raw[colon_idx + 2:] if colon_idx != -1 else ""
+
+
+def _format_pair(p: dict, metric_icons: dict[str, str]) -> dict:
+    return {
+        "label_a": _pair_label(p["name_a"], p["label_a"], p["type_a"]),
+        "label_b": _pair_label(p["name_b"], p["label_b"], p["type_b"]),
+        "option_a": _pair_option(p["label_a"], p["type_a"], p["slot_a_id"]),
+        "option_b": _pair_option(p["label_b"], p["type_b"], p["slot_b_id"]),
+        "type_a": p["type_a"],
+        "type_b": p["type_b"],
+        "icon_a": _resolve_icon(p["icon_a"], p["label_a"], metric_icons),
+        "icon_b": _resolve_icon(p["icon_b"], p["label_b"], metric_icons),
+        "slot_label_a": p["slot_label_a"] or "",
+        "slot_label_b": p["slot_label_b"] or "",
+        "correlation": p["correlation"],
+        "data_points": p["data_points"],
+        "lag_days": p["lag_days"],
+        "p_value": p["p_value"] if p["p_value"] is not None else (round(_p_value(p["correlation"], p["data_points"]), 4) if p["correlation"] is not None else None),
+        "metric_a_id": p["metric_a_id"],
+        "metric_b_id": p["metric_b_id"],
+        "pair_id": p["pair_id"],
+    }
+
+
+_CATEGORY_FILTERS: dict[str, str] = {
+    "sig_strong": "AND data_points >= 10 AND p_value IS NOT NULL AND p_value < 0.05 AND ABS(correlation) > 0.7",
+    "sig_medium": "AND data_points >= 10 AND p_value IS NOT NULL AND p_value < 0.05 AND ABS(correlation) > 0.3 AND ABS(correlation) <= 0.7",
+    "sig_weak": "AND data_points >= 10 AND p_value IS NOT NULL AND p_value < 0.05 AND ABS(correlation) <= 0.3",
+    "insig": "AND (data_points < 10 OR p_value IS NULL OR p_value >= 0.05)",
+    "all": "",
+}
+
+
+@router.get("/correlation-report/{report_id}/pairs")
+async def get_correlation_pairs(
+    report_id: int,
+    category: str = "all",
+    offset: int = 0,
+    limit: int = 50,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    # Verify report belongs to user
+    report_row = await db.fetchrow(
+        "SELECT id FROM correlation_reports WHERE id = $1 AND user_id = $2",
+        report_id, current_user["id"],
+    )
+    if not report_row:
+        return {"pairs": [], "total": 0, "has_more": False}
+
+    cat_filter = _CATEGORY_FILTERS.get(category, "")
+
+    # Count total for this category
+    total_row = await db.fetchrow(
+        f"SELECT COUNT(*) AS cnt FROM correlation_pairs WHERE report_id = $1 {cat_filter}",
+        report_id,
+    )
+    total = total_row["cnt"]
+
+    # Fetch page of pairs
+    pairs = await db.fetch(
+        f"""SELECT cp.id AS pair_id,
+                   cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days, cp.p_value,
+                   cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
+                   cp.label_a, cp.label_b,
+                   ma.name AS name_a, ma.icon AS icon_a,
+                   mb.name AS name_b, mb.icon AS icon_b,
+                   sa.label AS slot_label_a,
+                   sb.label AS slot_label_b
+            FROM correlation_pairs cp
+            LEFT JOIN metric_definitions ma ON ma.id = cp.metric_a_id
+            LEFT JOIN metric_definitions mb ON mb.id = cp.metric_b_id
+            LEFT JOIN measurement_slots sa ON sa.id = cp.slot_a_id
+            LEFT JOIN measurement_slots sb ON sb.id = cp.slot_b_id
+            WHERE cp.report_id = $1 {cat_filter}
+            ORDER BY ABS(cp.correlation) DESC
+            LIMIT $2 OFFSET $3""",
+        report_id, limit, offset,
+    )
+
+    # Resolve icons for auto metrics
+    metric_icons: dict[str, str] = {}
+    if any(p["metric_a_id"] is None or p["metric_b_id"] is None for p in pairs):
+        user_metrics = await db.fetch(
+            "SELECT name, icon FROM metric_definitions WHERE user_id = $1",
+            current_user["id"],
+        )
+        metric_icons = {m["name"]: m["icon"] for m in user_metrics if m["icon"]}
+
+    return {
+        "pairs": [_format_pair(p, metric_icons) for p in pairs],
+        "total": total,
+        "has_more": offset + limit < total,
+    }
 
 
 async def _reconstruct_source_data(

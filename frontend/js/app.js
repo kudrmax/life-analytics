@@ -1747,6 +1747,15 @@ async function loadAnalysisCorrelation(start, end) {
         loadCorrelationReport(start, end);
     });
 
+    // Event delegation: one listener for all corr detail buttons
+    document.getElementById('corr-reports').addEventListener('click', (e) => {
+        const btn = e.target.closest('.corr-detail-btn');
+        if (!btn) return;
+        e.stopPropagation();
+        const d = corrPairData.get(btn.dataset.pairId);
+        if (d) toggleCorrDetail(btn.dataset.pairId, d.mAId, d.mBId, d.lA, d.iA, d.lB, d.iB, d.pStart, d.pEnd);
+    });
+
     loadCorrelationReport(start, end);
     console.debug(`[render] analysis  ${(performance.now() - _t0).toFixed(0)}ms`);
 }
@@ -1791,7 +1800,7 @@ async function loadCorrelationReport(start, end) {
 
     const countEl = document.getElementById('corr-count');
     if (countEl && data.report) {
-        countEl.textContent = data.report.pairs.length;
+        countEl.textContent = data.report.counts.total;
         countEl.style.display = '';
     }
 
@@ -2021,34 +2030,28 @@ function renderCorrPair(p, report) {
 }
 
 function renderCorrelationReport(report, container) {
-    if (!report.pairs || report.pairs.length === 0) {
+    const c = report.counts;
+    if (c.total === 0) {
         container.innerHTML = '<p style="color:var(--text-dim);font-size:13px;">Нет данных для корреляций.</p>';
         return;
     }
 
-    const sig = report.pairs.filter(p => p.data_points >= 10 && p.p_value !== null && p.p_value < 0.05);
-    const insig = report.pairs.filter(p => p.data_points < 10 || p.p_value === null || p.p_value >= 0.05);
-
-    const strong = sig.filter(p => Math.abs(p.correlation) > 0.7);
-    const medium = sig.filter(p => { const a = Math.abs(p.correlation); return a > 0.3 && a <= 0.7; });
-    const weak = sig.filter(p => Math.abs(p.correlation) <= 0.3);
-
-    let html = '';
-
-    html += '<div class="corr-section">';
+    const sigTotal = c.sig_strong + c.sig_medium + c.sig_weak;
+    let html = '<div class="corr-section">';
     html += '<h4>Статистически значимо <span class="corr-sig corr-sig-yes">p&lt;0.05</span></h4>';
-    if (sig.length > 0) {
-        if (strong.length > 0) {
-            html += '<div class="corr-subsection-header">Сильная корреляция</div>';
-            for (const p of strong) html += renderCorrPair(p, report);
+
+    if (sigTotal > 0) {
+        if (c.sig_strong > 0) {
+            html += `<div class="corr-subsection-header">Сильная корреляция <span class="corr-cat-count">${c.sig_strong}</span></div>`;
+            html += '<div class="corr-category-pairs" id="corr-cat-sig_strong"></div>';
         }
-        if (medium.length > 0) {
-            html += '<div class="corr-subsection-header">Средняя корреляция</div>';
-            for (const p of medium) html += renderCorrPair(p, report);
+        if (c.sig_medium > 0) {
+            html += `<div class="corr-subsection-header">Средняя корреляция <span class="corr-cat-count">${c.sig_medium}</span></div>`;
+            html += '<div class="corr-category-pairs" id="corr-cat-sig_medium"></div>';
         }
-        if (weak.length > 0) {
-            html += '<div class="corr-subsection-header">Слабая корреляция</div>';
-            for (const p of weak) html += renderCorrPair(p, report);
+        if (c.sig_weak > 0) {
+            html += `<div class="corr-subsection-header">Слабая корреляция <span class="corr-cat-count">${c.sig_weak}</span></div>`;
+            html += '<div class="corr-category-pairs" id="corr-cat-sig_weak"></div>';
         }
     } else {
         html += '<div class="corr-empty-notice">';
@@ -2058,23 +2061,68 @@ function renderCorrelationReport(report, container) {
     }
     html += '</div>';
 
-    if (insig.length > 0) {
-        html += '<details class="corr-section corr-section-low">';
-        html += '<summary><h4>Незначимо или мало данных</h4></summary>';
-        for (const p of insig) html += renderCorrPair(p, report);
+    if (c.insig > 0) {
+        html += '<details class="corr-section corr-section-low" id="corr-insig-details">';
+        html += `<summary><h4>Незначимо или мало данных <span class="corr-cat-count">${c.insig}</span></h4></summary>`;
+        html += '<div class="corr-category-pairs" id="corr-cat-insig"></div>';
         html += '</details>';
     }
 
     container.innerHTML = html;
 
-    // Attach corr detail button handlers (avoid inline onclick with SVG icons)
-    container.querySelectorAll('.corr-detail-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const d = corrPairData.get(btn.dataset.pairId);
-            if (d) toggleCorrDetail(btn.dataset.pairId, d.mAId, d.mBId, d.lA, d.iA, d.lB, d.iB, d.pStart, d.pEnd);
+    // Load significant categories
+    const categoriesToLoad = ['sig_strong', 'sig_medium', 'sig_weak'].filter(cat => c[cat] > 0);
+    for (const cat of categoriesToLoad) {
+        const el = document.getElementById(`corr-cat-${cat}`);
+        if (el) loadCategoryPairs(report.id, cat, el, report, 0);
+    }
+
+    // Lazy load insig on <details> open
+    const insigDetails = document.getElementById('corr-insig-details');
+    if (insigDetails) {
+        insigDetails.addEventListener('toggle', () => {
+            if (!insigDetails.open) return;
+            const el = document.getElementById('corr-cat-insig');
+            if (el && !el.dataset.loaded) {
+                el.dataset.loaded = '1';
+                loadCategoryPairs(report.id, 'insig', el, report, 0);
+            }
         });
-    });
+    }
+}
+
+async function loadCategoryPairs(reportId, category, containerEl, report, offset) {
+    const loader = document.createElement('div');
+    loader.className = 'corr-loader';
+    loader.innerHTML = '<div class="corr-loader-spinner"></div>';
+    containerEl.appendChild(loader);
+
+    try {
+        const data = await api.getCorrelationPairs(reportId, { category, offset });
+        loader.remove();
+
+        let html = '';
+        for (const p of data.pairs) html += renderCorrPair(p, report);
+        containerEl.insertAdjacentHTML('beforeend', html);
+
+        if (data.has_more) {
+            const sentinel = document.createElement('div');
+            sentinel.className = 'corr-scroll-sentinel';
+            containerEl.appendChild(sentinel);
+
+            const observer = new IntersectionObserver((entries) => {
+                if (entries[0].isIntersecting) {
+                    observer.disconnect();
+                    sentinel.remove();
+                    loadCategoryPairs(reportId, category, containerEl, report, offset + 50);
+                }
+            }, { rootMargin: '200px' });
+            observer.observe(sentinel);
+        }
+    } catch (err) {
+        loader.remove();
+        containerEl.insertAdjacentHTML('beforeend', '<p style="color:var(--text-dim);font-size:13px;">Ошибка загрузки.</p>');
+    }
 }
 
 // ─── Correlation Charts ───

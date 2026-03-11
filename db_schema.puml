@@ -147,6 +147,7 @@ entity "correlation_pairs" as cp {
     correlation : FLOAT
     * data_points : INTEGER
     * lag_days : INTEGER
+    p_value : FLOAT
 }
 
 entity "user_integrations" as ui {
