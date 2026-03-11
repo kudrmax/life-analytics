@@ -98,6 +98,9 @@ function navigateTo(page, params = {}) {
 
     // Cleanup polling
     if (corrPollInterval) { clearInterval(corrPollInterval); corrPollInterval = null; }
+    // Cleanup correlation charts
+    for (const [, c] of corrChartInstances) c.destroy();
+    corrChartInstances.clear();
 
     // Hide nav for auth pages
     const nav = document.querySelector('nav');
@@ -1946,15 +1949,22 @@ async function toggleCorrDetail(pairId, metricAId, metricBId, labelA, iconA, lab
     const statsEl = document.getElementById(pairId + '-stats');
     if (statsEl.dataset.loaded) return;
     statsEl.innerHTML = '<div style="color:var(--text-dim);font-size:12px;">Загрузка...</div>';
+    const d = corrPairData.get(pairId);
     const promises = [
         metricAId ? fetchMetricStats(metricAId, periodStart, periodEnd).catch(() => null) : Promise.resolve(null),
         metricBId ? fetchMetricStats(metricBId, periodStart, periodEnd).catch(() => null) : Promise.resolve(null),
+        d && d.dbPairId ? api.getCorrelationPairChart(d.dbPairId).catch(() => null) : Promise.resolve(null),
     ];
-    const [statsA, statsB] = await Promise.all(promises);
+    const [statsA, statsB, chartData] = await Promise.all(promises);
     const colA = `<div class="corr-stats-col"><div class="corr-stats-label">${iconA || ''} ${labelA}</div>${formatMetricStatsHtml(statsA)}</div>`;
     const colB = `<div class="corr-stats-col"><div class="corr-stats-label">${iconB || ''} ${labelB}</div>${formatMetricStatsHtml(statsB)}</div>`;
     statsEl.innerHTML = `<div class="corr-stats-columns">${colA}${colB}</div>`;
     statsEl.dataset.loaded = '1';
+    const chartWrap = document.getElementById(pairId + '-chart-wrap');
+    if (chartData && chartData.dates && chartData.dates.length > 0 && chartWrap) {
+        chartWrap.style.display = 'block';
+        renderCorrPairChart(pairId, chartData);
+    }
 }
 
 function renderCorrPair(p, report) {
@@ -1980,6 +1990,7 @@ function renderCorrPair(p, report) {
         iB: (isLagged ? p.icon_a : p.icon_b) || '',
         pStart: report.period_start,
         pEnd: report.period_end,
+        dbPairId: p.pair_id,
     });
 
     return `<div class="corr-pair-wrapper">
@@ -2000,6 +2011,7 @@ function renderCorrPair(p, report) {
             <span>Сдвиг</span><span>${isLagged ? p.lag_days + ' дн.' : 'нет'}</span>
         </div>
         <div class="corr-detail-stats" id="${pairId}-stats"></div>
+        <div class="corr-detail-chart-wrap" id="${pairId}-chart-wrap" style="display:none;"><canvas id="${pairId}-chart"></canvas></div>
     </div>
     </div>`;
 }
@@ -2059,6 +2071,123 @@ function renderCorrelationReport(report, container) {
             if (d) toggleCorrDetail(btn.dataset.pairId, d.mAId, d.mBId, d.lA, d.iA, d.lB, d.iB, d.pStart, d.pEnd);
         });
     });
+}
+
+// ─── Correlation Charts ───
+const corrChartInstances = new Map();
+
+function buildCorrYAxis(type, position, color, reverse) {
+    const cfg = {
+        position,
+        grid: { display: position === 'left', color: 'rgba(128,128,128,0.1)' },
+        ticks: { color },
+        reverse,
+    };
+    if (type === 'bool' || type === 'enum_bool') {
+        cfg.min = 0; cfg.max = 1;
+        cfg.ticks.callback = v => v === 1 ? 'Да' : v === 0 ? 'Нет' : '';
+        cfg.ticks.stepSize = 1;
+    } else if (type === 'time') {
+        cfg.min = 0; cfg.max = 1439;
+        cfg.ticks.callback = v => minutesToHHMM(v);
+        cfg.ticks.stepSize = 360;
+    } else if (type === 'duration') {
+        cfg.min = 0;
+        cfg.ticks.callback = v => { const h = Math.floor(v / 60); const m = v % 60; return m === 0 ? `${h}ч` : `${h}ч ${m}м`; };
+    } else if (type === 'scale') {
+        cfg.min = 0; cfg.max = 100;
+        cfg.ticks.callback = v => v + '%';
+    }
+    return cfg;
+}
+
+function formatCorrTooltip(value, type) {
+    if (type === 'bool' || type === 'enum_bool') return value === 1 ? 'Да' : 'Нет';
+    if (type === 'time') return minutesToHHMM(value);
+    if (type === 'duration') { const h = Math.floor(value / 60); const m = Math.round(value % 60); return `${h}ч ${m}м`; }
+    if (type === 'scale') return Math.round(value) + '%';
+    return Math.round(value * 100) / 100;
+}
+
+function renderCorrPairChart(pairId, data) {
+    if (corrChartInstances.has(pairId)) {
+        corrChartInstances.get(pairId).destroy();
+    }
+    const canvas = document.getElementById(pairId + '-chart');
+    if (!canvas) return;
+
+    const style = getComputedStyle(document.documentElement);
+    const colorA = style.getPropertyValue('--accent').trim();
+    const colorB = '#ff9800';
+
+    const labels = data.dates.map(formatShortDate);
+    const showPoints = data.dates.length <= 30;
+    const isNeg = data.correlation < 0;
+    const isLag = data.lag_days > 0;
+
+    const scales = {
+        yA: buildCorrYAxis(data.type_a, 'left', colorA, false),
+        yB: buildCorrYAxis(data.type_b, 'right', colorB, isNeg),
+        x: {
+            ticks: { maxTicksLimit: 7, maxRotation: 0 },
+            grid: { display: false },
+        },
+    };
+
+    if (isLag && data.original_dates_b) {
+        scales.x2 = {
+            position: 'top',
+            labels: data.original_dates_b.map(formatShortDate),
+            ticks: { maxTicksLimit: 7, maxRotation: 0, color: colorB, font: { size: 10 } },
+            grid: { display: false },
+        };
+    }
+
+    const datasets = [
+        {
+            label: data.label_a,
+            data: data.values_a,
+            borderColor: colorA,
+            backgroundColor: colorA + '22',
+            yAxisID: 'yA',
+            tension: 0.3,
+            pointRadius: showPoints ? 3 : 0,
+            stepped: (data.type_a === 'bool' || data.type_a === 'enum_bool') ? 'middle' : false,
+        },
+        {
+            label: data.label_b,
+            data: data.values_b,
+            borderColor: colorB,
+            backgroundColor: colorB + '22',
+            yAxisID: 'yB',
+            tension: 0.3,
+            pointRadius: showPoints ? 3 : 0,
+            stepped: (data.type_b === 'bool' || data.type_b === 'enum_bool') ? 'middle' : false,
+        },
+    ];
+
+    const chart = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: true, position: 'bottom', labels: { usePointStyle: true, boxWidth: 8, padding: 16 } },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const tp = ctx.datasetIndex === 0 ? data.type_a : data.type_b;
+                            return `${ctx.dataset.label}: ${formatCorrTooltip(ctx.parsed.y, tp)}`;
+                        },
+                    },
+                },
+            },
+            scales,
+        },
+    });
+    corrChartInstances.set(pairId, chart);
 }
 
 // ─── Charts ───
