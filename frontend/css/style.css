@@ -1218,6 +1218,14 @@ input[type="month"], input[type="date"] {
 
 .corr-stats-na { color: var(--text-dim); }
 
+.corr-detail-chart-wrap {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    height: 200px;
+    position: relative;
+}
+
 .corr-col-metric {
     display: flex;
     align-items: start;

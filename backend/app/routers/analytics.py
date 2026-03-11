@@ -1085,7 +1085,8 @@ async def get_latest_correlation_report(
     report = None
     if done_row:
         pairs = await db.fetch(
-            """SELECT cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days,
+            """SELECT cp.id AS pair_id,
+                      cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days,
                       cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
                       cp.label_a, cp.label_b,
                       ma.name AS name_a, ma.icon AS icon_a,
@@ -1144,12 +1145,179 @@ async def get_latest_correlation_report(
                     "p_value": round(_p_value(p["correlation"], p["data_points"]), 4) if p["correlation"] is not None else None,
                     "metric_a_id": p["metric_a_id"],
                     "metric_b_id": p["metric_b_id"],
+                    "pair_id": p["pair_id"],
                 }
                 for p in pairs
             ],
         }
 
     return {"running": running, "report": report}
+
+
+async def _reconstruct_source_data(
+    conn,
+    metric_id: int | None,
+    slot_id: int | None,
+    source_type: str,
+    label: str,
+    start_date: date_type,
+    end_date: date_type,
+    user_id: int,
+) -> dict[str, float]:
+    """Reconstruct time-series data for a correlation source from its stored metadata."""
+    if source_type == "enum_bool" and metric_id is not None:
+        # Parse option label from stored label: "{name}: {opt}" or "{name}: {opt} — {slot}"
+        parts = label.split(": ", 1)
+        option_label = parts[1].split(" — ")[0] if len(parts) > 1 else ""
+        opt_row = await conn.fetchrow(
+            "SELECT id FROM enum_options WHERE metric_id = $1 AND label = $2",
+            metric_id, option_label,
+        )
+        if not opt_row:
+            return {}
+        return await _values_by_date_for_enum_option(
+            conn, metric_id, opt_row["id"], start_date, end_date, user_id, slot_id=slot_id,
+        )
+
+    if source_type == "computed" and metric_id is not None:
+        cfg = await conn.fetchrow(
+            "SELECT formula, result_type FROM computed_config WHERE metric_id = $1",
+            metric_id,
+        )
+        if not cfg or not cfg["formula"]:
+            return {}
+        formula = _parse_formula(cfg["formula"])
+        rt = cfg["result_type"] or "float"
+        ref_ids = get_referenced_metric_ids(formula)
+        return await _values_by_date_for_computed(
+            conn, formula, rt, ref_ids, start_date, end_date, user_id,
+        )
+
+    if metric_id is None:
+        # Auto source — determine from label
+        all_dates = [
+            str(start_date + timedelta(days=i))
+            for i in range((end_date - start_date).days + 1)
+        ]
+        if label == "День недели":
+            return {d: float(date_type.fromisoformat(d).isoweekday()) for d in all_dates}
+        if label == "Месяц":
+            return {d: float(date_type.fromisoformat(d).month) for d in all_dates}
+        if label == "Неделя года":
+            return {d: float(date_type.fromisoformat(d).isocalendar()[1]) for d in all_dates}
+        if label == "Экранное время (активное)":
+            rows = await conn.fetch(
+                """SELECT date, active_seconds FROM activitywatch_daily_summary
+                   WHERE user_id = $1 AND date >= $2 AND date <= $3""",
+                user_id, start_date, end_date,
+            )
+            return {str(r["date"]): r["active_seconds"] / 3600.0 for r in rows}
+        if label.endswith(": не ноль"):
+            parent_name = label[: -len(": не ноль")]
+            parent = await conn.fetchrow(
+                "SELECT id, type FROM metric_definitions WHERE user_id = $1 AND name = $2",
+                user_id, parent_name,
+            )
+            if not parent:
+                return {}
+            raw = await _values_by_date_for_slot(
+                conn, parent["id"], parent["type"], start_date, end_date, user_id,
+            )
+            return {d: (1.0 if v > 0 else 0.0) for d, v in raw.items()}
+        if label.endswith(": кол-во заметок"):
+            parent_name = label[: -len(": кол-во заметок")]
+            parent = await conn.fetchrow(
+                "SELECT id FROM metric_definitions WHERE user_id = $1 AND name = $2",
+                user_id, parent_name,
+            )
+            if not parent:
+                return {}
+            nc_rows = await conn.fetch(
+                """SELECT date, COUNT(*) AS cnt FROM notes
+                   WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4
+                   GROUP BY date""",
+                parent["id"], user_id, start_date, end_date,
+            )
+            return {str(r["date"]): float(r["cnt"]) for r in nc_rows}
+        return {}
+
+    # Regular metric
+    return await _values_by_date_for_slot(
+        conn, metric_id, source_type, start_date, end_date, user_id, slot_id=slot_id,
+    )
+
+
+@router.get("/correlation-pair-chart")
+async def correlation_pair_chart(
+    pair_id: int = Query(...),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    row = await db.fetchrow(
+        """SELECT cp.*, cr.period_start, cr.period_end, cr.user_id
+           FROM correlation_pairs cp
+           JOIN correlation_reports cr ON cr.id = cp.report_id
+           WHERE cp.id = $1""",
+        pair_id,
+    )
+    if not row or row["user_id"] != current_user["id"]:
+        return {"dates": [], "values_a": [], "values_b": []}
+
+    start_date = row["period_start"]
+    end_date = row["period_end"]
+    uid = current_user["id"]
+
+    data_a = await _reconstruct_source_data(
+        db, row["metric_a_id"], row["slot_a_id"],
+        row["type_a"], row["label_a"], start_date, end_date, uid,
+    )
+    data_b = await _reconstruct_source_data(
+        db, row["metric_b_id"], row["slot_b_id"],
+        row["type_b"], row["label_b"], start_date, end_date, uid,
+    )
+
+    lag = row["lag_days"] or 0
+    if lag > 0:
+        data_b = _shift_dates(data_b, lag)
+
+    common = sorted(set(data_a) & set(data_b))
+
+    # Resolve effective display type for computed metrics
+    type_a = row["type_a"]
+    type_b = row["type_b"]
+    if type_a == "computed" and row["metric_a_id"]:
+        cfg = await db.fetchrow(
+            "SELECT result_type FROM computed_config WHERE metric_id = $1",
+            row["metric_a_id"],
+        )
+        if cfg and cfg["result_type"]:
+            type_a = cfg["result_type"]
+    if type_b == "computed" and row["metric_b_id"]:
+        cfg = await db.fetchrow(
+            "SELECT result_type FROM computed_config WHERE metric_id = $1",
+            row["metric_b_id"],
+        )
+        if cfg and cfg["result_type"]:
+            type_b = cfg["result_type"]
+
+    original_dates_b = None
+    if lag > 0:
+        original_dates_b = [
+            str(date_type.fromisoformat(d) - timedelta(days=lag)) for d in common
+        ]
+
+    return {
+        "dates": common,
+        "values_a": [data_a[d] for d in common],
+        "values_b": [data_b[d] for d in common],
+        "type_a": type_a,
+        "type_b": type_b,
+        "label_a": row["label_a"],
+        "label_b": row["label_b"],
+        "correlation": row["correlation"],
+        "lag_days": lag,
+        "original_dates_b": original_dates_b,
+    }
 
 
 @router.get("/streaks")

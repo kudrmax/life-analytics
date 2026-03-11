@@ -175,6 +175,9 @@ const api = {
     getCorrelationReport() {
         return this.request('GET', '/api/analytics/correlation-report');
     },
+    getCorrelationPairChart(pairId) {
+        return this.request('GET', `/api/analytics/correlation-pair-chart?pair_id=${pairId}`);
+    },
 
     // Integrations
     listIntegrations() {
