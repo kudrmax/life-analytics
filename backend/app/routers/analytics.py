@@ -1123,6 +1123,35 @@ async def get_latest_correlation_report(
                 return metric_icons.get(parent_name, "")
             return ""
 
+        def _pair_label(
+            name: str | None,
+            label: str | None,
+            pair_type: str | None,
+        ) -> str:
+            if pair_type == "enum_bool":
+                if name:
+                    return name
+                if label:
+                    colon_idx = label.find(": ")
+                    return label[:colon_idx] if colon_idx != -1 else label
+                return "Удалённая метрика"
+            return name or label or "Удалённая метрика"
+
+        def _pair_option(
+            label: str | None,
+            pair_type: str | None,
+            slot_id: int | None,
+        ) -> str:
+            if pair_type != "enum_bool" or not label:
+                return ""
+            raw = label
+            if slot_id:
+                dash_idx = raw.rfind(" — ")
+                if dash_idx != -1:
+                    raw = raw[:dash_idx]
+            colon_idx = raw.find(": ")
+            return raw[colon_idx + 2:] if colon_idx != -1 else ""
+
         report = {
             "id": done_row["id"],
             "status": "done",
@@ -1131,8 +1160,10 @@ async def get_latest_correlation_report(
             "created_at": done_row["created_at"].isoformat(),
             "pairs": [
                 {
-                    "label_a": p["name_a"] or p["label_a"] or "Удалённая метрика",
-                    "label_b": p["name_b"] or p["label_b"] or "Удалённая метрика",
+                    "label_a": _pair_label(p["name_a"], p["label_a"], p["type_a"]),
+                    "label_b": _pair_label(p["name_b"], p["label_b"], p["type_b"]),
+                    "option_a": _pair_option(p["label_a"], p["type_a"], p["slot_a_id"]),
+                    "option_b": _pair_option(p["label_b"], p["type_b"], p["slot_b_id"]),
                     "type_a": p["type_a"],
                     "type_b": p["type_b"],
                     "icon_a": _resolve_icon(p["icon_a"], p["label_a"]),
