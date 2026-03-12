@@ -221,6 +221,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "scale_min": m["scale_min"],
             "scale_max": m["scale_max"],
             "scale_step": m["scale_step"],
+            "private": m.get("private", False),
             "entry": None,
             "slots": None,
             "formula": _parse_formula(m.get("formula")) or None,

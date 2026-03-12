@@ -62,6 +62,7 @@ class MetricDefinitionCreate(BaseModel):
     app_name: str | None = None
     enum_options: list[str] | None = None
     multi_select: bool | None = None
+    private: bool = False
 
 
 class MetricDefinitionUpdate(BaseModel):
@@ -78,6 +79,7 @@ class MetricDefinitionUpdate(BaseModel):
     result_type: str | None = None
     enum_options: list[dict] | None = None  # [{id?: int, label: str}]
     multi_select: bool | None = None
+    private: bool | None = None
 
 
 class MetricDefinitionOut(BaseModel):
@@ -104,6 +106,7 @@ class MetricDefinitionOut(BaseModel):
     config_app_name: str | None = None
     enum_options: list[dict] | None = None  # [{id, label, sort_order, enabled}]
     multi_select: bool | None = None
+    private: bool = False
 
 
 class EntryCreate(BaseModel):

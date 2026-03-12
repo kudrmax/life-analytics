@@ -216,6 +216,9 @@ async def _init_db_schema(conn):
     await conn.execute("""
         ALTER TABLE metric_definitions ALTER COLUMN icon TYPE VARCHAR(600)
     """)
+    await conn.execute("""
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS private BOOLEAN NOT NULL DEFAULT FALSE
+    """)
 
     # Add category_id column to metric_definitions (for existing DBs that had category/fill_time columns)
     await conn.execute("""

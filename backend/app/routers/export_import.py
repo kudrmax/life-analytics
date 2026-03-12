@@ -30,7 +30,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             'id', 'slug', 'name', 'category_path', 'icon', 'type',
             'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step',
             'slot_labels', 'formula', 'result_type', 'provider', 'metric_key', 'value_type',
-            'filter_name', 'filter_query', 'enum_options', 'multi_select',
+            'filter_name', 'filter_query', 'enum_options', 'multi_select', 'private',
         ])
 
         metrics = await db.fetch(
@@ -132,6 +132,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
                 m.get("filter_name") or '', m.get("filter_query") or '',
                 json.dumps(enum_opts_by_metric.get(m["id"], [])) if m["type"] == "enum" else '',
                 1 if m.get("multi_select") else '' if m["type"] != "enum" else 0,
+                1 if m.get("private") else 0,
             ])
 
         zip_file.writestr('metrics.csv', metrics_csv.getvalue())
@@ -338,6 +339,8 @@ async def import_data(
                             pass
                     csv_multi_select = row.get('multi_select', '')
                     multi_select = csv_multi_select in ('1', 'True', 'true') if csv_multi_select else False
+                    csv_private = row.get('private', '')
+                    is_private = csv_private in ('1', 'True', 'true')
 
                     # Parse scale config from CSV
                     csv_scale_min = row.get('scale_min', '')
@@ -363,9 +366,9 @@ async def import_data(
                     if existing:
                         await db.execute(
                             """UPDATE metric_definitions
-                               SET name = $1, category_id = $2, enabled = $3, sort_order = $4, icon = $5
-                               WHERE id = $6 AND user_id = $7""",
-                            name, import_cat_id, enabled, sort_order, icon,
+                               SET name = $1, category_id = $2, enabled = $3, sort_order = $4, icon = $5, private = $6
+                               WHERE id = $7 AND user_id = $8""",
+                            name, import_cat_id, enabled, sort_order, icon, is_private,
                             existing["id"], current_user["id"],
                         )
                         # Update scale_config if needed
@@ -424,10 +427,10 @@ async def import_data(
                     else:
                         new_id = await db.fetchval(
                             """INSERT INTO metric_definitions
-                               (user_id, slug, name, category_id, icon, type, enabled, sort_order)
-                               VALUES ($1, $2, $3, $4, $5, $6::metric_type, $7, $8) RETURNING id""",
+                               (user_id, slug, name, category_id, icon, type, enabled, sort_order, private)
+                               VALUES ($1, $2, $3, $4, $5, $6::metric_type, $7, $8, $9) RETURNING id""",
                             current_user["id"], slug, name, import_cat_id, icon,
-                            metric_type, enabled, sort_order,
+                            metric_type, enabled, sort_order, is_private,
                         )
                         # Create scale_config for new scale metrics
                         if metric_type == 'scale':

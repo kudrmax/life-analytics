@@ -42,6 +42,7 @@ async def build_metric_out(
         config_app_name=row.get("config_app_name"),
         enum_options=enum_opts,
         multi_select=row.get("multi_select"),
+        private=row.get("private", False),
     )
 
 

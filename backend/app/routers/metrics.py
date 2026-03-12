@@ -222,8 +222,8 @@ async def create_metric(
 
     metric_id = await db.fetchval(
         """INSERT INTO metric_definitions
-           (user_id, slug, name, category_id, icon, type, enabled, sort_order)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           (user_id, slug, name, category_id, icon, type, enabled, sort_order, private)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            RETURNING id""",
         current_user["id"],
         slug,
@@ -233,6 +233,7 @@ async def create_metric(
         data.type.value,
         data.enabled,
         data.sort_order,
+        data.private,
     )
 
     if data.type == MetricType.integration:
@@ -342,6 +343,8 @@ async def update_metric(
         updates["enabled"] = data.enabled
     if data.sort_order is not None:
         updates["sort_order"] = data.sort_order
+    if data.private is not None:
+        updates["private"] = data.private
 
     if updates:
         set_parts = []

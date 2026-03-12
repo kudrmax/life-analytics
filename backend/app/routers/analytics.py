@@ -1244,6 +1244,8 @@ def _format_pair(p: dict, metric_icons: dict[str, str]) -> dict:
         "hint_b": hint_b,
         "hint_a_positive": hint_a_pos,
         "hint_b_positive": hint_b_pos,
+        "private_a": p.get("private_a", False),
+        "private_b": p.get("private_b", False),
     }
 
 
@@ -1288,8 +1290,8 @@ async def get_correlation_pairs(
                    cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days, cp.p_value,
                    cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
                    cp.label_a, cp.label_b,
-                   ma.name AS name_a, ma.icon AS icon_a,
-                   mb.name AS name_b, mb.icon AS icon_b,
+                   ma.name AS name_a, ma.icon AS icon_a, COALESCE(ma.private, FALSE) AS private_a,
+                   mb.name AS name_b, mb.icon AS icon_b, COALESCE(mb.private, FALSE) AS private_b,
                    sa.label AS slot_label_a,
                    sb.label AS slot_label_b
             FROM correlation_pairs cp

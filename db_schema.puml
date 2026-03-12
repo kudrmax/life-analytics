@@ -49,6 +49,7 @@ entity "metric_definitions" as md {
     * enabled : BOOLEAN
     * sort_order : INTEGER
     * icon : VARCHAR(600)
+    * private : BOOLEAN
     * created_at : TIMESTAMPTZ
     --
     <<UNIQUE>> (user_id, slug)
