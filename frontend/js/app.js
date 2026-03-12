@@ -1569,14 +1569,15 @@ async function loadChartsTrends(start, end) {
         })(),
     ]);
 
-    let trendsHtml = '<div class="trends-list">';
     const trendData = [];
+    const metricsWithCards = [];
     for (const { metric: m, trend } of trendResults) {
         const hasPoints = trend.points && trend.points.length > 0;
         const hasEnumSeries = trend.option_series && Object.keys(trend.option_series).length > 0;
         if (hasPoints || hasEnumSeries) {
+            let cardHtml;
             if (isMetricBlocked(m)) {
-                trendsHtml += `<div class="trend-card-row metric-private" data-metric-id="${m.id}" style="cursor:pointer">
+                cardHtml = `<div class="trend-card-row metric-private" data-metric-id="${m.id}" style="cursor:pointer">
                     <div class="trend-card-header">
                         <h4>${metricIconHtml(m)}<span class="trend-metric-name">${m.name}</span></h4>
                     </div>
@@ -1584,7 +1585,7 @@ async function loadChartsTrends(start, end) {
                 </div>`;
             } else {
                 trendData.push({ metric: m, points: trend.points || [], trend });
-                trendsHtml += `<div class="trend-card-row" data-metric-id="${m.id}" style="cursor:pointer">
+                cardHtml = `<div class="trend-card-row" data-metric-id="${m.id}" style="cursor:pointer">
                     <div class="trend-card-header">
                         <h4>${metricIconHtml(m)}<span class="trend-metric-name">${m.name}</span></h4>
                         <i data-lucide="info" class="trend-info-icon"></i>
@@ -1592,19 +1593,78 @@ async function loadChartsTrends(start, end) {
                     <div class="trend-chart-container"><canvas id="trend-chart-${m.id}"></canvas></div>
                 </div>`;
             }
+            metricsWithCards.push({ metric: m, cardHtml });
         }
     }
 
-    if (awTrendPoints) {
-        trendsHtml += `<div class="trend-card-row aw-trend-card">
-            <div class="trend-card-header">
-                <h4><span class="metric-icon">${AW_ICON}</span><span class="trend-metric-name">Экранное время</span></h4>
-            </div>
-            <div class="trend-chart-container"><canvas id="trend-chart-aw"></canvas></div>
-        </div>`;
+    const awCardHtml = awTrendPoints ? `<div class="trend-card-row aw-trend-card">
+        <div class="trend-card-header">
+            <h4><span class="metric-icon">${AW_ICON}</span><span class="trend-metric-name">Экранное время</span></h4>
+        </div>
+        <div class="trend-chart-container"><canvas id="trend-chart-aw"></canvas></div>
+    </div>` : '';
+
+    // Load categories for grouping
+    let categories = [];
+    try { categories = await api.getCategories(); } catch(e) { console.warn('Failed to load categories', e); }
+
+    let trendsHtml = '';
+    const hasCategories = categories.length > 0;
+
+    if (hasCategories) {
+        const catById = {};
+        for (const c of categories) {
+            catById[c.id] = c;
+            for (const ch of (c.children || [])) catById[ch.id] = ch;
+        }
+        const metricsByCat = {};
+        const uncategorized = [];
+        for (const item of metricsWithCards) {
+            const catId = item.metric.category_id;
+            if (catId && catById[catId]) {
+                if (!metricsByCat[catId]) metricsByCat[catId] = [];
+                metricsByCat[catId].push(item);
+            } else {
+                uncategorized.push(item);
+            }
+        }
+
+        for (const topCat of categories) {
+            const topItems = metricsByCat[topCat.id] || [];
+            const childrenWithItems = (topCat.children || []).filter(ch => (metricsByCat[ch.id] || []).length > 0);
+            if (topItems.length === 0 && childrenWithItems.length === 0) continue;
+
+            trendsHtml += `<h2 class="fill-time-header">${topCat.name}</h2>`;
+            if (topItems.length > 0) {
+                trendsHtml += '<div class="trends-list">';
+                for (const item of topItems) trendsHtml += item.cardHtml;
+                trendsHtml += '</div>';
+            }
+            for (const ch of (topCat.children || [])) {
+                const chItems = metricsByCat[ch.id] || [];
+                if (chItems.length === 0) continue;
+                trendsHtml += `<h3 class="fill-time-header">${ch.name}</h3>`;
+                trendsHtml += '<div class="trends-list">';
+                for (const item of chItems) trendsHtml += item.cardHtml;
+                trendsHtml += '</div>';
+            }
+        }
+        if (uncategorized.length > 0) {
+            trendsHtml += '<h2 class="fill-time-header">Без категории</h2>';
+            trendsHtml += '<div class="trends-list">';
+            for (const item of uncategorized) trendsHtml += item.cardHtml;
+            trendsHtml += '</div>';
+        }
+    } else {
+        trendsHtml += '<div class="trends-list">';
+        for (const item of metricsWithCards) trendsHtml += item.cardHtml;
+        trendsHtml += '</div>';
     }
 
-    trendsHtml += '</div>';
+    if (awCardHtml) {
+        trendsHtml += '<div class="trends-list">' + awCardHtml + '</div>';
+    }
+
     trendsEl.innerHTML = trendsHtml;
 
     // Initialize Chart.js for each trend card
