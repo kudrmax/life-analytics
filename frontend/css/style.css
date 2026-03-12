@@ -47,7 +47,7 @@ body {
     margin: 0 auto;
     padding: env(safe-area-inset-top, 0) 16px 80px;
     min-height: 100dvh;
-    overflow-x: hidden;
+    overflow-x: clip;
     transition: background-color 0.3s ease, color 0.3s ease;
 }
 
@@ -69,6 +69,12 @@ body {
 }
 @keyframes spin {
     to { transform: rotate(360deg); }
+}
+
+#metrics-form.loading-fade {
+    opacity: 0.4;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
 }
 
 /* ─── Nav ─── */
@@ -112,14 +118,28 @@ nav button:hover { color: var(--text); }
 
 /* ─── Day Header (nav + progress) ─── */
 .day-header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
     display: flex;
     align-items: center;
     gap: 16px;
-    margin: 20px 0 8px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 6px 8px;
+    margin: 0 -16px;
+    padding: 12px 24px 8px;
+    background: var(--bg);
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.day-header.scrolled {
+    border-bottom-color: var(--border);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.day-header-sentinel {
+    height: 0;
+    margin: 0;
+    padding: 0;
 }
 
 .day-nav {
@@ -1699,6 +1719,7 @@ details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-siz
     nav button svg { width: 18px; height: 18px; }
     .nav-inner { height: 52px; }
     body { padding-top: 68px; padding-bottom: 16px; }
+    .day-header { top: 68px; }
 }
 
 .modal-form {

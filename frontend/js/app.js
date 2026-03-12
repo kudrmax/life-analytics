@@ -22,6 +22,7 @@ let corrPollInterval = null;
 const corrPairData = new Map();
 let _todayRenderVersion = 0;
 let _historyRenderVersion = 0;
+let _dayHeaderObserver = null;
 
 function todayStr() {
     return new Date().toISOString().slice(0, 10);
@@ -107,6 +108,8 @@ async function loadMetrics() {
 function navigateTo(page, params = {}) {
     currentPage = page;
 
+    // Cleanup day header observer
+    if (_dayHeaderObserver) { _dayHeaderObserver.disconnect(); _dayHeaderObserver = null; }
     // Cleanup polling
     if (corrPollInterval) { clearInterval(corrPollInterval); corrPollInterval = null; }
     // Cleanup correlation charts
@@ -299,9 +302,19 @@ async function renderToday(container) {
 
     if (window.lucide) lucide.createIcons();
 
+    // Sticky header shadow via IntersectionObserver
+    if (_dayHeaderObserver) _dayHeaderObserver.disconnect();
+    const sentinel = document.createElement('div');
+    sentinel.className = 'day-header-sentinel';
+    document.querySelector('.day-header').before(sentinel);
+    _dayHeaderObserver = new IntersectionObserver(([e]) => {
+        document.querySelector('.day-header')?.classList.toggle('scrolled', !e.isIntersecting);
+    }, { threshold: 0 });
+    _dayHeaderObserver.observe(sentinel);
+
     document.getElementById('prev-day').onclick = () => { changeDay(-1); };
     document.getElementById('next-day').onclick = () => { changeDay(1); };
-    document.getElementById('go-today').onclick = () => { currentDate = todayStr(); renderTodayForm(); };
+    document.getElementById('go-today').onclick = () => { currentDate = todayStr(); renderTodayForm(true); };
     document.getElementById('today-add-metric').onclick = () => { navigateTo('settings', { openAddModal: true }); };
     document.getElementById('today-edit-metrics').onclick = () => { navigateTo('settings'); };
 
@@ -312,10 +325,10 @@ function changeDay(delta) {
     const d = new Date(currentDate);
     d.setDate(d.getDate() + delta);
     currentDate = d.toISOString().slice(0, 10);
-    renderTodayForm();
+    renderTodayForm(true, delta > 0 ? 'next' : 'prev');
 }
 
-async function renderTodayForm() {
+async function renderTodayForm(preserveScroll = false, direction = null) {
     const _t0 = performance.now();
     const myVersion = ++_todayRenderVersion;
     document.getElementById('current-date-label').textContent = formatDate(currentDate);
@@ -324,8 +337,13 @@ async function renderTodayForm() {
         goTodayBtn.style.display = (currentDate === todayStr()) ? 'none' : '';
     }
     const form = document.getElementById('metrics-form');
+    const savedScrollY = preserveScroll ? window.scrollY : 0;
 
-    form.innerHTML = '<div class="loading-spinner"></div>';
+    if (preserveScroll && form.innerHTML && !form.querySelector('.loading-spinner')) {
+        form.classList.add('loading-fade');
+    } else {
+        form.innerHTML = '<div class="loading-spinner"></div>';
+    }
     let summary, awCard;
     [summary, awCard] = await Promise.all([
         api.getDailySummary(currentDate),
@@ -451,7 +469,43 @@ async function renderTodayForm() {
 
     html += awCard;
 
-    form.innerHTML = html;
+    if (direction && preserveScroll) {
+        const slideOut = direction === 'next' ? '-20px' : '20px';
+        const slideIn  = direction === 'next' ? '20px' : '-20px';
+
+        // Fade out
+        form.style.transition = 'opacity 0.12s ease, transform 0.12s ease';
+        form.style.opacity = '0';
+        form.style.transform = `translateX(${slideOut})`;
+        await new Promise(r => setTimeout(r, 120));
+
+        if (myVersion !== _todayRenderVersion) return; // race check
+
+        // Replace
+        form.innerHTML = html;
+
+        // Position for slide in
+        form.style.transition = 'none';
+        form.style.transform = `translateX(${slideIn})`;
+        form.offsetHeight; // force reflow
+
+        // Animate in
+        form.style.transition = 'opacity 0.15s ease, transform 0.15s ease';
+        form.style.opacity = '1';
+        form.style.transform = 'translateX(0)';
+        setTimeout(() => { form.style.transition = ''; form.style.transform = ''; }, 160);
+    } else {
+        form.classList.remove('loading-fade');
+        form.innerHTML = html;
+    }
+
+    if (preserveScroll) {
+        requestAnimationFrame(() => {
+            const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+            window.scrollTo(0, Math.min(savedScrollY, Math.max(0, maxScroll)));
+        });
+    }
+
     if (window.lucide) lucide.createIcons();
     attachInputHandlers();
 
