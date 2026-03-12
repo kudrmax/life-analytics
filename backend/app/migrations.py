@@ -179,6 +179,9 @@ MIGRATIONS = [
     (6, "add_private_column", """
         ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS private BOOLEAN NOT NULL DEFAULT FALSE;
     """),
+    (7, "add_privacy_mode_to_users", """
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS privacy_mode BOOLEAN NOT NULL DEFAULT FALSE;
+    """),
 ]
 
 

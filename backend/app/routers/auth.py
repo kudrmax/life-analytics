@@ -3,7 +3,7 @@ Authentication endpoints: register, login, user info.
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.database import get_db
-from app.schemas import UserRegister, UserLogin, TokenResponse, UserOut
+from app.schemas import UserRegister, UserLogin, TokenResponse, UserOut, PrivacyModeUpdate
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -76,3 +76,27 @@ async def get_current_user_info(
         username=user["username"],
         created_at=str(user["created_at"]),
     )
+
+
+@router.get("/privacy-mode")
+async def get_privacy_mode_endpoint(
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    row = await db.fetchrow(
+        "SELECT privacy_mode FROM users WHERE id = $1", current_user["id"]
+    )
+    return {"privacy_mode": row["privacy_mode"] if row else False}
+
+
+@router.put("/privacy-mode")
+async def set_privacy_mode(
+    body: PrivacyModeUpdate,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    await db.execute(
+        "UPDATE users SET privacy_mode = $1 WHERE id = $2",
+        body.enabled, current_user["id"],
+    )
+    return {"privacy_mode": body.enabled}

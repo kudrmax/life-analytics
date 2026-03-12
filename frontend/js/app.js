@@ -8,11 +8,9 @@ function isPrivacyMode() { return localStorage.getItem(PRIVACY_KEY) === 'true'; 
 function setPrivacyMode(on) { localStorage.setItem(PRIVACY_KEY, on ? 'true' : 'false'); }
 const PRIVATE_MASK = '***';
 const PRIVATE_ICON = '🔒';
-function metricDisplayName(m) { return (m.private && isPrivacyMode()) ? PRIVATE_MASK : m.name; }
-function metricDisplayIcon(m) { return (m.private && isPrivacyMode()) ? PRIVATE_ICON : (m.icon || ''); }
-function metricIconHtml(m) { const i = metricDisplayIcon(m); return i ? '<span class="metric-icon">' + i + '</span>' : ''; }
-function metricLabelHtml(m) { return metricIconHtml(m) + metricDisplayName(m); }
 function isMetricBlocked(m) { return m.private && isPrivacyMode(); }
+function metricIconHtml(m) { const i = m.icon || ''; return i ? '<span class="metric-icon">' + i + '</span>' : ''; }
+function metricLabelHtml(m) { return metricIconHtml(m) + m.name; }
 
 // ─── State ───
 let currentDate = todayStr();
@@ -72,6 +70,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             api.getDailySummary(today),
             api.cachedGet('/api/metrics'),
             api.awGetStatus(),
+            api.getPrivacyMode().then(r => setPrivacyMode(r.privacy_mode)).catch(() => {}),
         ]);
         navigateTo('today');
     } else {
@@ -179,6 +178,7 @@ function renderLogin(container) {
             isAuthenticated = true;
             currentUser = { username: response.username };
             await loadMetrics();
+            api.getPrivacyMode().then(r => setPrivacyMode(r.privacy_mode)).catch(() => {});
             navigateTo('today');
         } catch (error) {
             errorEl.textContent = error.message || 'Неверные учетные данные';
@@ -1524,7 +1524,7 @@ async function loadChartsTrends(start, end) {
             if (isMetricBlocked(m)) {
                 trendsHtml += `<div class="trend-card-row metric-private" data-metric-id="${m.id}" style="cursor:pointer">
                     <div class="trend-card-header">
-                        <h4>${metricIconHtml(m)}<span class="trend-metric-name">${metricDisplayName(m)}</span></h4>
+                        <h4>${metricIconHtml(m)}<span class="trend-metric-name">${m.name}</span></h4>
                     </div>
                     <div class="metric-private-hint">Сначала отключите приватный режим</div>
                 </div>`;
@@ -1532,7 +1532,7 @@ async function loadChartsTrends(start, end) {
                 trendData.push({ metric: m, points: trend.points || [], trend });
                 trendsHtml += `<div class="trend-card-row" data-metric-id="${m.id}" style="cursor:pointer">
                     <div class="trend-card-header">
-                        <h4>${metricIconHtml(m)}<span class="trend-metric-name">${metricDisplayName(m)}</span></h4>
+                        <h4>${metricIconHtml(m)}<span class="trend-metric-name">${m.name}</span></h4>
                         <i data-lucide="info" class="trend-info-icon"></i>
                     </div>
                     <div class="trend-chart-container"><canvas id="trend-chart-${m.id}"></canvas></div>
@@ -1910,13 +1910,6 @@ function renderCorrPair(p, report) {
     const cls = absR > 0.7 ? 'strong' : absR > 0.3 ? 'medium' : 'weak';
     const isLagged = p.lag_days && p.lag_days > 0;
 
-    // Privacy masking for correlation pairs
-    const pm = isPrivacyMode();
-    const privLeft = isLagged ? p.private_b : p.private_a;
-    const privRight = isLagged ? p.private_a : p.private_b;
-    const maskLabel = (lbl, priv) => (priv && pm) ? PRIVATE_MASK : lbl;
-    const maskIcon = (ico, priv) => (priv && pm) ? PRIVATE_ICON : ico;
-
     const typeLeft = isLagged ? p.type_b : p.type_a;
     const typeRight = isLagged ? p.type_a : p.type_b;
     const wrapHint = (text, positive) => positive
@@ -1936,20 +1929,20 @@ function renderCorrPair(p, report) {
     if (typeRight === 'enum_bool' && optRight) hintB = r > 0 ? `<span class="corr-word-pos">✓ ${optRight}</span>` : `<span class="corr-word-neg">✗ ${optRight}</span>`;
 
     const rawLabelA = isLagged ? p.label_b : p.label_a;
-    const rawIconA = isLagged ? p.icon_b : p.icon_a;
+    const rawIconA = (isLagged ? p.icon_b : p.icon_a) || '';
     const rawLabelB = isLagged ? p.label_a : p.label_b;
-    const rawIconB = isLagged ? p.icon_a : p.icon_b;
-    const labelA = renderCorrMetricLabel(maskLabel(rawLabelA, privLeft), maskIcon(rawIconA, privLeft), isLagged ? p.slot_label_b : p.slot_label_a, hintA, isLagged ? 'вчера' : '');
-    const labelB = renderCorrMetricLabel(maskLabel(rawLabelB, privRight), maskIcon(rawIconB, privRight), isLagged ? p.slot_label_a : p.slot_label_b, hintB, isLagged ? 'сегодня' : '');
+    const rawIconB = (isLagged ? p.icon_a : p.icon_b) || '';
+    const labelA = renderCorrMetricLabel(rawLabelA, rawIconA, isLagged ? p.slot_label_b : p.slot_label_a, hintA, isLagged ? 'вчера' : '');
+    const labelB = renderCorrMetricLabel(rawLabelB, rawIconB, isLagged ? p.slot_label_a : p.slot_label_b, hintB, isLagged ? 'сегодня' : '');
 
     const pairId = `corr-detail-${Math.random().toString(36).slice(2, 8)}`;
     corrPairData.set(pairId, {
         mAId: isLagged ? p.metric_b_id : p.metric_a_id,
         mBId: isLagged ? p.metric_a_id : p.metric_b_id,
-        lA: isLagged ? p.label_b : p.label_a,
-        lB: isLagged ? p.label_a : p.label_b,
-        iA: (isLagged ? p.icon_b : p.icon_a) || '',
-        iB: (isLagged ? p.icon_a : p.icon_b) || '',
+        lA: rawLabelA,
+        lB: rawLabelB,
+        iA: rawIconA,
+        iB: rawIconB,
         pStart: report.period_start,
         pEnd: report.period_end,
         dbPairId: p.pair_id,
@@ -2121,6 +2114,10 @@ function renderCorrPairChart(pairId, data) {
     const colorA = style.getPropertyValue('--accent').trim();
     const colorB = '#ff9800';
 
+    const d = corrPairData.get(pairId);
+    const dispLabelA = data.label_a;
+    const dispLabelB = data.label_b;
+
     const labels = data.dates.map(formatShortDate);
     const showPoints = data.dates.length <= 30;
     const isNeg = data.correlation < 0;
@@ -2146,7 +2143,7 @@ function renderCorrPairChart(pairId, data) {
 
     const datasets = [
         {
-            label: data.label_a,
+            label: dispLabelA,
             data: data.values_a,
             borderColor: colorA,
             backgroundColor: colorA + '22',
@@ -2156,7 +2153,7 @@ function renderCorrPairChart(pairId, data) {
             stepped: (data.type_a === 'bool' || data.type_a === 'enum_bool') ? 'middle' : false,
         },
         {
-            label: data.label_b,
+            label: dispLabelB,
             data: data.values_b,
             borderColor: colorB,
             backgroundColor: colorB + '22',
@@ -2772,8 +2769,14 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
 
     const privacySwitch = document.getElementById('privacy-switch-input');
     if (privacySwitch) {
-        privacySwitch.addEventListener('change', () => {
-            setPrivacyMode(privacySwitch.checked);
+        privacySwitch.addEventListener('change', async () => {
+            try {
+                await api.setPrivacyMode(privacySwitch.checked);
+                setPrivacyMode(privacySwitch.checked);
+            } catch (e) {
+                console.error('Failed to set privacy mode:', e);
+                privacySwitch.checked = !privacySwitch.checked;
+            }
             renderSettings(container, { archiveOpen });
         });
     }

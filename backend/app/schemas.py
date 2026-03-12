@@ -184,3 +184,7 @@ class NoteOut(BaseModel):
     date: str
     text: str
     created_at: str
+
+
+class PrivacyModeUpdate(BaseModel):
+    enabled: bool

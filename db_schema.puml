@@ -20,6 +20,7 @@ entity "users" as users {
     --
     * username : VARCHAR(30) <<UNIQUE>>
     * password_hash : TEXT
+    * privacy_mode : BOOLEAN [FALSE]
     * created_at : TIMESTAMPTZ
 }
 

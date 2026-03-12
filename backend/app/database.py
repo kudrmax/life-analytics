@@ -477,6 +477,11 @@ async def _init_db_schema(conn):
         )
     """)
 
+    # Privacy mode on users
+    await conn.execute("""
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS privacy_mode BOOLEAN NOT NULL DEFAULT FALSE
+    """)
+
     # Indexes
     await conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_enum_options_metric
