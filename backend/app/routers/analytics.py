@@ -1205,20 +1205,23 @@ def _corr_type_words(type_: str) -> tuple[str, str]:
     return ("больше", "меньше")
 
 
-def _corr_hint_words(type_a: str, type_b: str, r: float) -> tuple[str, str]:
-    """Return (hint_a, hint_b) — human-readable words describing correlation direction."""
+def _corr_hint_words(type_a: str, type_b: str, r: float) -> tuple[str, bool, str, bool]:
+    """Return (hint_a, hint_a_positive, hint_b, hint_b_positive)."""
     if not type_a or not type_b:
-        return ("", "")
+        return ("", True, "", True)
     pos_a, _ = _corr_type_words(type_a)
     pos_b, neg_b = _corr_type_words(type_b)
     hint_a = pos_a
     hint_b = pos_b if r > 0 else neg_b
-    return (hint_a, hint_b)
+    return (hint_a, True, hint_b, r > 0)
 
 
 def _format_pair(p: dict, metric_icons: dict[str, str]) -> dict:
     corr = p["correlation"]
-    hint_a, hint_b = _corr_hint_words(p["type_a"], p["type_b"], corr) if corr is not None else ("", "")
+    if corr is not None:
+        hint_a, hint_a_pos, hint_b, hint_b_pos = _corr_hint_words(p["type_a"], p["type_b"], corr)
+    else:
+        hint_a, hint_a_pos, hint_b, hint_b_pos = "", True, "", True
     return {
         "label_a": _pair_label(p["name_a"], p["label_a"], p["type_a"]),
         "label_b": _pair_label(p["name_b"], p["label_b"], p["type_b"]),
@@ -1239,6 +1242,8 @@ def _format_pair(p: dict, metric_icons: dict[str, str]) -> dict:
         "pair_id": p["pair_id"],
         "hint_a": hint_a,
         "hint_b": hint_b,
+        "hint_a_positive": hint_a_pos,
+        "hint_b_positive": hint_b_pos,
     }
 
 

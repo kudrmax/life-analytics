@@ -790,9 +790,7 @@ function _renderAWSummaryCard(awSummary) {
     if (awSummary.synced) {
         const activeTime = _awFormatDuration(awSummary.active_seconds);
         const totalTime = _awFormatDuration(awSummary.total_seconds);
-        const afkPct = awSummary.afk_percent ?? (awSummary.total_seconds > 0
-            ? Math.round((1 - awSummary.active_seconds / awSummary.total_seconds) * 100)
-            : 0);
+        const afkPct = awSummary.afk_percent;
 
         html += `<div class="aw-summary-card filled">
             <div class="aw-summary-stats">
@@ -805,8 +803,7 @@ function _renderAWSummaryCard(awSummary) {
         if (topApps.length > 0) {
             html += '<div class="aw-top-apps">';
             for (const app of topApps) {
-                const pct = app.percent ?? (awSummary.active_seconds > 0
-                    ? Math.round(app.duration_seconds / awSummary.active_seconds * 100) : 0);
+                const pct = app.percent;
                 html += `<div class="aw-app-row">
                     <span class="aw-app-name">${_escapeHtml(app.app_name)}</span>
                     <span class="aw-app-dur">${_awFormatDuration(app.duration_seconds)}</span>
@@ -820,8 +817,7 @@ function _renderAWSummaryCard(awSummary) {
         if (topDomains.length > 0) {
             html += '<div class="aw-top-apps" style="margin-top:8px"><div class="aw-stat-label" style="margin-bottom:4px">Сайты</div>';
             for (const d of topDomains) {
-                const pct = d.percent ?? (awSummary.active_seconds > 0
-                    ? Math.round(d.duration_seconds / awSummary.active_seconds * 100) : 0);
+                const pct = d.percent;
                 html += `<div class="aw-app-row">
                     <span class="aw-app-name">${_escapeHtml(d.domain)}</span>
                     <span class="aw-app-dur">${_awFormatDuration(d.duration_seconds)}</span>
@@ -1402,14 +1398,12 @@ async function showDayDetail(date) {
             if (filledSlots.length === 0) continue;
             hasAny = true;
             for (const s of filledSlots) {
-                const valStr = s.entry.display_value ?? _formatEntryValue(s.entry, m.type, m.result_type, m.enum_options);
-                html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name} — ${s.label}</span><span class="summary-value">${valStr}</span></div>`;
+                html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name} — ${s.label}</span><span class="summary-value">${s.entry.display_value}</span></div>`;
             }
         } else {
             if (!m.entry) continue;
             hasAny = true;
-            const valStr = m.entry.display_value ?? _formatEntryValue(m.entry, m.type, m.result_type, m.enum_options);
-            html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span><span class="summary-value">${valStr}</span></div>`;
+            html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span><span class="summary-value">${m.entry.display_value}</span></div>`;
         }
     }
 
@@ -1419,43 +1413,6 @@ async function showDayDetail(date) {
 
     html += '</div>';
     detail.innerHTML = html;
-}
-
-function _formatEntryValue(entry, type, resultType, enumOptions) {
-    if (type === 'enum') {
-        const v = entry.value;
-        if (!v || !Array.isArray(v)) return '—';
-        if (enumOptions) {
-            const idToLabel = {};
-            for (const opt of enumOptions) idToLabel[opt.id] = opt.label;
-            return v.map(id => idToLabel[id] || String(id)).join(', ');
-        }
-        return v.join(', ');
-    }
-    if (type === 'computed') {
-        const v = entry.value;
-        if (v === null || v === undefined) return '—';
-        const rt = resultType || 'float';
-        if (rt === 'bool') return v ? 'Да' : 'Нет';
-        if (rt === 'time' || rt === 'duration') return String(v);
-        if (rt === 'int') return String(Math.round(v));
-        return typeof v === 'number' ? v.toFixed(2) : String(v);
-    }
-    if (type === 'integration') {
-        const v = entry.value;
-        if (v === null || v === undefined) return '—';
-        return String(v);
-    }
-    if (type === 'duration') {
-        return formatDuration(entry.value);
-    }
-    if (type === 'time') {
-        return entry.value || '—';
-    } else if (type === 'number' || type === 'scale') {
-        return entry.value !== null && entry.value !== undefined ? String(entry.value) : '—';
-    } else {
-        return entry.value ? 'Да' : 'Нет';
-    }
 }
 
 // ─── Charts Page (Статистика) ───
@@ -1611,7 +1568,7 @@ async function loadChartsTrends(start, end) {
         if (awCanvas) {
             const labels = awTrendPoints.map(p => p.date.slice(5));
             const activeData = awTrendPoints.map(p => p.active_hours);
-            const afkData = awTrendPoints.map((p, i) => p.afk_hours ?? Math.max(0, p.total_hours - activeData[i]));
+            const afkData = awTrendPoints.map(p => p.afk_hours);
             const chart = new Chart(awCanvas.getContext('2d'), {
                 type: 'bar',
                 data: {
@@ -1866,27 +1823,6 @@ function showCorrelationHelp() {
     document.getElementById('corr-help-close').addEventListener('click', () => overlay.remove());
 }
 
-function corrTypeWords(type) {
-    const g = w => `<span class="corr-word-pos">${w}</span>`;
-    const r = w => `<span class="corr-word-neg">${w}</span>`;
-    switch (type) {
-        case 'bool': return [g('да'), r('нет')];
-        case 'enum_bool': return [g('да'), r('нет')];
-        case 'time': return ['позже', 'раньше'];
-        case 'scale': return [g('выше'), r('ниже')];
-        default: return [g('больше'), r('меньше')];
-    }
-}
-
-function corrHintWords(typeA, typeB, r) {
-    if (!typeA || !typeB) return ['', ''];
-    const [posA] = corrTypeWords(typeA);
-    const [posB, negB] = corrTypeWords(typeB);
-    const wordA = posA;
-    const wordB = r > 0 ? posB : negB;
-    return [wordA, wordB];
-}
-
 function renderCorrMetricLabel(label, icon, slotLabel, hint, dayLabel) {
     const iconHtml = `<span class="metric-icon">${icon || ''}</span>`;
     const slotHtml = slotLabel ? `<span class="corr-slot-badge">${slotLabel}</span>` : '';
@@ -1906,28 +1842,9 @@ async function fetchMetricStats(metricId, start, end) {
 
 function formatMetricStatsHtml(stats) {
     if (!stats || stats.error) return '<span class="corr-stats-na">нет данных</span>';
-    // Use backend display_stats if available
-    if (stats.display_stats && stats.display_stats.length > 0) {
-        return stats.display_stats.map(s =>
-            `<div class="corr-stats-row"><span>${s.label}</span><span>${s.value}</span></div>`
-        ).join('');
-    }
-    // Fallback to local logic
-    const rows = [];
-    rows.push(`<div class="corr-stats-row"><span>Заполнение</span><span>${stats.fill_rate}%</span></div>`);
-    const mt = stats.metric_type;
-    const rt = stats.result_type;
-    if (mt === 'bool' || (mt === 'computed' && rt === 'bool')) {
-        rows.push(`<div class="corr-stats-row"><span>Да</span><span>${stats.yes_percent}%</span></div>`);
-    } else if (mt === 'time' || (mt === 'computed' && rt === 'time')) {
-        if (stats.average) rows.push(`<div class="corr-stats-row"><span>Среднее</span><span>${stats.average}</span></div>`);
-    } else if (mt === 'number' || (mt === 'computed' && !rt) || (mt === 'computed' && rt === 'float')) {
-        if (stats.average != null) rows.push(`<div class="corr-stats-row"><span>Среднее</span><span>${stats.average}</span></div>`);
-        if (stats.min != null && stats.max != null) rows.push(`<div class="corr-stats-row"><span>Диапазон</span><span>${stats.min} – ${stats.max}</span></div>`);
-    } else if (mt === 'scale') {
-        if (stats.average != null) rows.push(`<div class="corr-stats-row"><span>Среднее</span><span>${stats.average}%</span></div>`);
-    }
-    return rows.join('');
+    return stats.display_stats.map(s =>
+        `<div class="corr-stats-row"><span>${s.label}</span><span>${s.value}</span></div>`
+    ).join('');
 }
 
 async function toggleCorrDetail(pairId, metricAId, metricBId, labelA, iconA, labelB, iconB, periodStart, periodEnd) {
@@ -1963,14 +1880,16 @@ function renderCorrPair(p, report) {
 
     const typeLeft = isLagged ? p.type_b : p.type_a;
     const typeRight = isLagged ? p.type_a : p.type_b;
-    // Use backend hints with fallback to local computation
+    const wrapHint = (text, positive) => positive
+        ? `<span class="corr-word-pos">${text}</span>`
+        : `<span class="corr-word-neg">${text}</span>`;
     let hintA, hintB;
     if (isLagged) {
-        hintA = p.hint_b ?? corrHintWords(typeLeft, typeRight, r)[0];
-        hintB = p.hint_a ?? corrHintWords(typeLeft, typeRight, r)[1];
+        hintA = wrapHint(p.hint_b, p.hint_b_positive);
+        hintB = wrapHint(p.hint_a, p.hint_a_positive);
     } else {
-        hintA = p.hint_a ?? corrHintWords(typeLeft, typeRight, r)[0];
-        hintB = p.hint_b ?? corrHintWords(typeLeft, typeRight, r)[1];
+        hintA = wrapHint(p.hint_a, p.hint_a_positive);
+        hintB = wrapHint(p.hint_b, p.hint_b_positive);
     }
     const optLeft = isLagged ? (p.option_b || '') : (p.option_a || '');
     const optRight = isLagged ? (p.option_a || '') : (p.option_b || '');
