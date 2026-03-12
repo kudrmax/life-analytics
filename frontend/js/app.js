@@ -430,7 +430,7 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
             </button>
         </div>`;
     } else {
-        html += `<h3 class="section-header">Ваши метрики <span class="corr-count">${new Set(summary.metrics.map(m => m.id)).size}</span></h3>`;
+        html += `<h3 class="section-header">Ваши метрики <span class="corr-count">${new Set(summary.metrics.map(m => m.metric_id)).size}</span></h3>`;
         const hasCategories = categories.length > 0;
 
         for (const topCat of categories) {
