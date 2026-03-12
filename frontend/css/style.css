@@ -509,6 +509,26 @@ h3 {
     border-radius: 8px;
 }
 
+.slot-label-row .drag-handle {
+    cursor: grab;
+    color: var(--text-dim);
+    font-size: 14px;
+    user-select: none;
+    flex-shrink: 0;
+    width: 20px;
+    text-align: center;
+}
+
+.slot-label-row .drag-handle:active {
+    cursor: grabbing;
+}
+
+.slot-label-row.dragging {
+    opacity: 0.4;
+    background: var(--surface2);
+    border-radius: 8px;
+}
+
 .enum-multi-select-label {
     display: flex;
     align-items: center;

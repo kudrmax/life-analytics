@@ -5048,12 +5048,36 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     function addSlotField(label = '', categoryId = null) {
         const row = document.createElement('div');
         row.className = 'slot-label-row';
-        row.innerHTML = `<input type="text" class="form-input slot-label-input" placeholder="Например: Утро" value="${label}">
+        row.draggable = true;
+        row.innerHTML = `<span class="drag-handle">⠿</span>
+            <input type="text" class="form-input slot-label-input" placeholder="Например: Утро" value="${label}">
             <select class="form-select slot-category-select" data-category-id="${categoryId || ''}">${_buildCategoryOptions(categoryId)}</select>
             <button type="button" class="btn-remove-slot">&times;</button>`;
         slotList.appendChild(row);
         row.querySelector('.btn-remove-slot').onclick = () => { row.remove(); updatePreview(); };
         row.querySelector('.slot-label-input').addEventListener('input', updatePreview);
+        // Drag & drop (same pattern as addEnumOptionField)
+        row.addEventListener('dragstart', (e) => {
+            e.dataTransfer.effectAllowed = 'move';
+            row.classList.add('dragging');
+        });
+        row.addEventListener('dragend', () => {
+            row.classList.remove('dragging');
+            updatePreview();
+        });
+        row.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            const dragging = slotList.querySelector('.dragging');
+            if (dragging && dragging !== row) {
+                const rect = row.getBoundingClientRect();
+                const mid = rect.top + rect.height / 2;
+                if (e.clientY < mid) {
+                    slotList.insertBefore(dragging, row);
+                } else {
+                    slotList.insertBefore(dragging, row.nextSibling);
+                }
+            }
+        });
     }
 
     if (addSlotBtn) {
