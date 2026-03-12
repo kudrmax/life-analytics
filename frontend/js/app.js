@@ -430,7 +430,7 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
             </button>
         </div>`;
     } else {
-        html += `<h3 class="section-header">Ваши метрики <span class="corr-count">${summary.metrics.length}</span></h3>`;
+        html += `<h3 class="section-header">Ваши метрики <span class="corr-count">${new Set(summary.metrics.map(m => m.id)).size}</span></h3>`;
         const hasCategories = categories.length > 0;
 
         for (const topCat of categories) {
@@ -2875,7 +2875,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     html += `<label class="theme-switch"><input type="checkbox" id="privacy-switch-input" ${privacyOn ? 'checked' : ''}><span class="slider"></span></label>`;
     html += '</div>';
 
-    html += `<h2>Настройки метрик <span class="corr-count">${allMetrics.length}</span></h2>`;
+    html += `<h2>Настройки метрик <span class="corr-count">${allMetrics.filter(m => m.enabled).length}</span></h2>`;
     html += '<div class="settings-actions">';
     html += '<button class="btn-primary" id="add-metric"><i data-lucide="plus"></i> Новая метрика</button>';
     html += '<button class="btn-small" id="manage-categories-btn"><i data-lucide="folders"></i> Категории</button>';
