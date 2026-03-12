@@ -4,7 +4,10 @@ import re
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.database import get_db
-from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut, MetricType
+from app.schemas import (
+    MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut, MetricType,
+    ConversionPreview, MetricConvertRequest, MetricConvertResponse,
+)
 from app.auth import get_current_user, get_privacy_mode
 from app.metric_helpers import build_metric_out, get_metric_slots, get_enum_options
 from app.formula import validate_formula, get_referenced_metric_ids
@@ -555,3 +558,299 @@ async def delete_metric(
         "DELETE FROM metric_definitions WHERE id = $1 AND user_id = $2",
         metric_id, current_user["id"],
     )
+
+
+# ── Metric conversion ──────────────────────────────────────────────
+
+ALLOWED_CONVERSIONS: dict[str, list[str]] = {
+    "scale": ["scale"],
+    "bool": ["enum"],
+}
+
+VALUE_TABLE_MAP: dict[str, str] = {
+    "bool": "values_bool",
+    "scale": "values_scale",
+    "number": "values_number",
+    "time": "values_time",
+    "duration": "values_duration",
+    "enum": "values_enum",
+}
+
+
+@router.get("/{metric_id}/convert/preview", response_model=ConversionPreview)
+async def convert_preview(
+    metric_id: int,
+    target_type: MetricType,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    row = await db.fetchrow(
+        "SELECT id, type FROM metric_definitions WHERE id = $1 AND user_id = $2",
+        metric_id, current_user["id"],
+    )
+    if not row:
+        raise HTTPException(404, "Metric not found")
+
+    source_type = row["type"]
+    allowed = ALLOWED_CONVERSIONS.get(source_type, [])
+    if target_type.value not in allowed:
+        raise HTTPException(400, f"Conversion from {source_type} to {target_type.value} is not supported")
+
+    entries_by_value: list[dict] = []
+    total = 0
+
+    if source_type == "scale":
+        rows = await db.fetch(
+            """SELECT vs.value, COUNT(*) as cnt
+               FROM values_scale vs
+               JOIN entries e ON e.id = vs.entry_id
+               WHERE e.metric_id = $1 AND e.user_id = $2
+               GROUP BY vs.value ORDER BY vs.value""",
+            metric_id, current_user["id"],
+        )
+        for r in rows:
+            entries_by_value.append({"value": str(r["value"]), "display": str(r["value"]), "count": r["cnt"]})
+            total += r["cnt"]
+
+    elif source_type == "bool":
+        rows = await db.fetch(
+            """SELECT vb.value, COUNT(*) as cnt
+               FROM values_bool vb
+               JOIN entries e ON e.id = vb.entry_id
+               WHERE e.metric_id = $1 AND e.user_id = $2
+               GROUP BY vb.value ORDER BY vb.value""",
+            metric_id, current_user["id"],
+        )
+        for r in rows:
+            display = "Да" if r["value"] else "Нет"
+            entries_by_value.append({"value": str(r["value"]).lower(), "display": display, "count": r["cnt"]})
+            total += r["cnt"]
+
+    return ConversionPreview(total_entries=total, entries_by_value=entries_by_value)
+
+
+@router.post("/{metric_id}/convert", response_model=MetricConvertResponse)
+async def convert_metric(
+    metric_id: int,
+    data: MetricConvertRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    async with db.transaction():
+        # Lock the metric row to prevent concurrent modifications
+        row = await db.fetchrow(
+            "SELECT * FROM metric_definitions WHERE id = $1 AND user_id = $2 FOR UPDATE",
+            metric_id, current_user["id"],
+        )
+        if not row:
+            raise HTTPException(404, "Metric not found")
+
+        source_type = row["type"]
+        target_type = data.target_type.value
+        allowed = ALLOWED_CONVERSIONS.get(source_type, [])
+        if target_type not in allowed:
+            raise HTTPException(400, f"Conversion from {source_type} to {target_type} is not supported")
+
+        converted = 0
+        deleted = 0
+
+        if source_type == "scale" and target_type == "scale":
+            converted, deleted = await _convert_scale_to_scale(db, metric_id, current_user["id"], data)
+        elif source_type == "bool" and target_type == "enum":
+            converted, deleted = await _convert_bool_to_enum(db, metric_id, current_user["id"], data)
+
+    return MetricConvertResponse(converted=converted, deleted=deleted)
+
+
+async def _convert_scale_to_scale(
+    db, metric_id: int, user_id: int, data: MetricConvertRequest,
+) -> tuple[int, int]:
+    """Remap scale values within a transaction (caller must hold FOR UPDATE lock)."""
+    if data.scale_min is None or data.scale_max is None or data.scale_step is None:
+        raise HTTPException(400, "scale_min, scale_max, scale_step are required for scale→scale conversion")
+    if data.scale_min >= data.scale_max:
+        raise HTTPException(400, "scale_min must be less than scale_max")
+    if data.scale_step < 1 or data.scale_step > (data.scale_max - data.scale_min):
+        raise HTTPException(400, "scale_step must be >= 1 and <= (max - min)")
+
+    # Validate new values are in valid range
+    valid_new_values = set()
+    v = data.scale_min
+    while v <= data.scale_max:
+        valid_new_values.add(v)
+        v += data.scale_step
+
+    # Get actual unique values
+    actual_values = await db.fetch(
+        """SELECT DISTINCT vs.value FROM values_scale vs
+           JOIN entries e ON e.id = vs.entry_id
+           WHERE e.metric_id = $1 AND e.user_id = $2""",
+        metric_id, user_id,
+    )
+    actual_set = {str(r["value"]) for r in actual_values}
+
+    # Check mapping completeness
+    mapped_keys = set(data.value_mapping.keys())
+    missing = actual_set - mapped_keys
+    if missing:
+        raise HTTPException(400, f"Mapping is incomplete — missing values: {', '.join(sorted(missing))}")
+
+    # Validate new values
+    for old_str, new_str in data.value_mapping.items():
+        if new_str is not None:
+            try:
+                new_val = int(new_str)
+            except ValueError:
+                raise HTTPException(400, f"Invalid new value: {new_str}")
+            if new_val not in valid_new_values:
+                raise HTTPException(400, f"New value {new_val} is not in valid range [{data.scale_min}..{data.scale_max}] step {data.scale_step}")
+
+    # Batch DELETE entries mapped to null
+    values_to_delete = [int(k) for k, v in data.value_mapping.items() if v is None and k in actual_set]
+    deleted = 0
+    if values_to_delete:
+        deleted = await db.fetchval(
+            """WITH deleted AS (
+                DELETE FROM entries WHERE id IN (
+                    SELECT e.id FROM entries e
+                    JOIN values_scale vs ON vs.entry_id = e.id
+                    WHERE e.metric_id = $1 AND e.user_id = $2
+                    AND vs.value = ANY($3::int[])
+                ) RETURNING 1
+            ) SELECT COUNT(*) FROM deleted""",
+            metric_id, user_id, values_to_delete,
+        )
+
+    # Atomic UPDATE with CASE WHEN to avoid cross-mapping conflicts
+    converted = 0
+    mapping = {int(k): int(v) for k, v in data.value_mapping.items() if v is not None}
+    if mapping:
+        old_values = list(mapping.keys())
+        case_clauses = " ".join(
+            f"WHEN {old_val} THEN {new_val}" for old_val, new_val in mapping.items()
+        )
+        cnt = await db.fetchval(
+            f"""WITH updated AS (
+                UPDATE values_scale vs
+                SET value = CASE vs.value {case_clauses} END,
+                    scale_min = $2, scale_max = $3, scale_step = $4
+                FROM entries e
+                WHERE vs.entry_id = e.id AND e.metric_id = $1 AND e.user_id = $5
+                AND vs.value = ANY($6::int[])
+                RETURNING 1
+            ) SELECT COUNT(*) FROM updated""",
+            metric_id, data.scale_min, data.scale_max, data.scale_step, user_id, old_values,
+        )
+        converted = cnt
+
+    # Update scale_config
+    await db.execute(
+        "UPDATE scale_config SET scale_min = $1, scale_max = $2, scale_step = $3 WHERE metric_id = $4",
+        data.scale_min, data.scale_max, data.scale_step, metric_id,
+    )
+
+    return converted, deleted
+
+
+async def _convert_bool_to_enum(
+    db, metric_id: int, user_id: int, data: MetricConvertRequest,
+) -> tuple[int, int]:
+    """Convert bool metric to enum within a transaction (caller must hold FOR UPDATE lock)."""
+    if not data.enum_options or len(data.enum_options) < 2:
+        raise HTTPException(400, "At least 2 enum_options are required for bool→enum conversion")
+    if len(set(data.enum_options)) != len(data.enum_options):
+        raise HTTPException(400, "Enum option labels must be unique")
+
+    # Validate mapping keys
+    valid_bool_keys = {"true", "false"}
+    for k in data.value_mapping:
+        if k not in valid_bool_keys:
+            raise HTTPException(400, f"Invalid bool value in mapping: {k}")
+
+    # Create enum_config + enum_options
+    await db.execute(
+        "INSERT INTO enum_config (metric_id, multi_select) VALUES ($1, $2)",
+        metric_id, data.multi_select,
+    )
+    option_label_to_id: dict[str, int] = {}
+    for i, label in enumerate(data.enum_options):
+        opt_id = await db.fetchval(
+            "INSERT INTO enum_options (metric_id, sort_order, label) VALUES ($1, $2, $3) RETURNING id",
+            metric_id, i, label,
+        )
+        option_label_to_id[label] = opt_id
+
+    # Build mapping: bool_value_str -> option_id or None
+    bool_to_option: dict[str, int | None] = {}
+    for bool_str, target_label in data.value_mapping.items():
+        if target_label is None:
+            bool_to_option[bool_str] = None
+        else:
+            if target_label not in option_label_to_id:
+                raise HTTPException(400, f"Mapping target '{target_label}' is not in enum_options")
+            bool_to_option[bool_str] = option_label_to_id[target_label]
+
+    # Check mapping completeness against actual values
+    actual_values = await db.fetch(
+        """SELECT DISTINCT vb.value FROM values_bool vb
+           JOIN entries e ON e.id = vb.entry_id
+           WHERE e.metric_id = $1 AND e.user_id = $2""",
+        metric_id, user_id,
+    )
+    for r in actual_values:
+        key = str(r["value"]).lower()
+        if key not in data.value_mapping:
+            raise HTTPException(400, f"Mapping is incomplete — missing value: {key}")
+
+    # Batch DELETE entries mapped to null
+    deleted = 0
+    for bool_str, opt_id in bool_to_option.items():
+        if opt_id is not None:
+            continue
+        bool_val = bool_str == "true"
+        cnt = await db.fetchval(
+            """WITH deleted AS (
+                DELETE FROM entries WHERE id IN (
+                    SELECT e.id FROM entries e
+                    JOIN values_bool vb ON vb.entry_id = e.id
+                    WHERE e.metric_id = $1 AND e.user_id = $2 AND vb.value = $3
+                ) RETURNING 1
+            ) SELECT COUNT(*) FROM deleted""",
+            metric_id, user_id, bool_val,
+        )
+        deleted += cnt
+
+    # Batch INSERT into values_enum for each bool→option mapping
+    converted = 0
+    for bool_str, opt_id in bool_to_option.items():
+        if opt_id is None:
+            continue
+        bool_val = bool_str == "true"
+        cnt = await db.fetchval(
+            """WITH inserted AS (
+                INSERT INTO values_enum (entry_id, selected_option_ids)
+                SELECT vb.entry_id, ARRAY[$3]::integer[]
+                FROM values_bool vb
+                JOIN entries e ON e.id = vb.entry_id
+                WHERE e.metric_id = $1 AND e.user_id = $2 AND vb.value = $4
+                RETURNING 1
+            ) SELECT COUNT(*) FROM inserted""",
+            metric_id, user_id, opt_id, bool_val,
+        )
+        converted += cnt
+
+    # Delete ALL old bool values (including any concurrent inserts)
+    await db.execute(
+        """DELETE FROM values_bool WHERE entry_id IN (
+            SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2
+        )""",
+        metric_id, user_id,
+    )
+
+    # Change metric type to enum
+    await db.execute(
+        "UPDATE metric_definitions SET type = 'enum' WHERE id = $1",
+        metric_id,
+    )
+
+    return converted, deleted

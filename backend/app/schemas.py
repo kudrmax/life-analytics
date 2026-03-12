@@ -188,3 +188,26 @@ class NoteOut(BaseModel):
 
 class PrivacyModeUpdate(BaseModel):
     enabled: bool
+
+
+# Metric conversion schemas
+class ConversionPreview(BaseModel):
+    total_entries: int
+    entries_by_value: list[dict]  # [{"value": "0", "display": "0", "count": 15}, ...]
+
+
+class MetricConvertRequest(BaseModel):
+    target_type: MetricType
+    value_mapping: dict[str, str | None]  # old_value_str -> new_value_str or None (delete)
+    # For scale→scale:
+    scale_min: int | None = None
+    scale_max: int | None = None
+    scale_step: int | None = None
+    # For bool→enum:
+    enum_options: list[str] | None = None
+    multi_select: bool = False
+
+
+class MetricConvertResponse(BaseModel):
+    converted: int
+    deleted: int

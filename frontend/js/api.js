@@ -134,6 +134,14 @@ const api = {
         invalidateCache('/api/metrics', '/api/daily/');
         return result;
     },
+    convertPreview(metricId, targetType) {
+        return this.request('GET', `/api/metrics/${metricId}/convert/preview?target_type=${targetType}`);
+    },
+    async convertMetric(metricId, data) {
+        const result = await this.request('POST', `/api/metrics/${metricId}/convert`, data);
+        invalidateCache('/api/metrics', '/api/daily/', '/api/entries');
+        return result;
+    },
 
     // Entries
     getEntries(date, metricId = null) {

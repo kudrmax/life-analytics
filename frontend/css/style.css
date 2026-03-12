@@ -2365,6 +2365,7 @@ details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-siz
     transition: all 0.15s;
     width: 100%;
     text-align: center;
+    margin-top: 8px;
 }
 
 .btn-add-slot:hover {
@@ -3332,5 +3333,95 @@ emoji-picker {
     .date-picker-dropdown {
         width: 260px;
     }
+}
+
+/* ─── Metric Conversion Modal ─── */
+.convert-warning {
+    background: rgba(255, 193, 7, 0.1);
+    border: 1px solid rgba(255, 193, 7, 0.3);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    color: var(--yellow);
+}
+
+.convert-type-info {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+    font-size: 14px;
+    color: var(--text-dim);
+}
+
+.convert-config {
+    margin-bottom: 16px;
+}
+
+.convert-config h4,
+.convert-mapping-section h4 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--text);
+}
+
+.convert-config-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.convert-config-row label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    color: var(--text-dim);
+}
+
+.convert-enum-options .input {
+    width: 100%;
+}
+
+.convert-mapping-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.convert-mapping-table th {
+    text-align: left;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-dim);
+    font-weight: 500;
+}
+
+.convert-mapping-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+.convert-mapping-table select {
+    width: 100%;
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 14px;
+}
+
+.convert-impact {
+    margin: 12px 0 16px;
+    font-size: 14px;
+    color: var(--text-dim);
+}
+
+.convert-mapping-section {
+    margin-bottom: 8px;
 }
 

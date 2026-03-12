@@ -482,6 +482,7 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
         if (myVersion !== _todayRenderVersion) return; // race check
 
         // Replace
+        form.classList.remove('loading-fade');
         form.innerHTML = html;
 
         // Position for slide in
@@ -2807,6 +2808,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                     <span class="setting-type">${typeIcon}</span>
                 </div>
                 <div class="setting-actions">
+                    ${(m.type === 'scale' || m.type === 'bool') ? `<button class="btn-icon convert-btn" data-metric="${m.id}" title="Конвертировать"><i data-lucide="repeat-2"></i></button>` : ''}
                     <button class="btn-icon edit-btn" data-metric="${m.id}"><i data-lucide="pencil"></i></button>
                     <button class="btn-icon archive-btn" data-metric="${m.id}"><i data-lucide="archive"></i></button>
                     <button class="btn-icon delete-btn btn-icon-danger" data-metric="${m.id}"><i data-lucide="trash-2"></i></button>
@@ -2987,6 +2989,16 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         } finally {
             e.target.value = '';
         }
+    });
+
+    // Convert button listeners
+    container.querySelectorAll('.convert-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const metricId = btn.dataset.metric;
+            const metric = allMetrics.find(m => m.id === parseInt(metricId));
+            if (metric) showConvertModal(metric);
+        });
     });
 
     // Edit button listeners
@@ -3762,6 +3774,275 @@ async function _loadAWCategories() {
         container.innerHTML = '<span class="text-dim">Не удалось загрузить категории</span>';
     }
 }
+
+async function showConvertModal(metric) {
+    const CONVERSIONS = { scale: ['scale'], bool: ['enum'] };
+    const TYPE_LABELS = { scale: 'Шкала', bool: 'Да/Нет', enum: 'Варианты' };
+    const allowed = CONVERSIONS[metric.type] || [];
+    if (!allowed.length) return;
+
+    const targetType = allowed[0]; // MVP: single target per source type
+    let preview;
+    try {
+        preview = await api.convertPreview(metric.id, targetType);
+    } catch (err) {
+        alert('Ошибка загрузки preview: ' + err.message);
+        return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    function renderModal() {
+        const sourceLabel = TYPE_LABELS[metric.type] || metric.type;
+        const targetLabel = TYPE_LABELS[targetType] || targetType;
+        let scaleInfo = '';
+        if (metric.type === 'scale') {
+            scaleInfo = ` (${metric.scale_min}–${metric.scale_max})`;
+        }
+
+        let configHtml = '';
+        let mappingHtml = '';
+
+        if (metric.type === 'scale' && targetType === 'scale') {
+            configHtml = `
+                <div class="convert-config">
+                    <h4>Новая конфигурация</h4>
+                    <div class="convert-config-row">
+                        <label>Мин: <input type="number" id="conv-scale-min" value="${metric.scale_min}" class="input-small"></label>
+                        <label>Макс: <input type="number" id="conv-scale-max" value="${metric.scale_max}" class="input-small"></label>
+                        <label>Шаг: <input type="number" id="conv-scale-step" value="${metric.scale_step}" min="1" class="input-small"></label>
+                    </div>
+                </div>`;
+
+            mappingHtml = buildScaleMappingHtml(preview);
+        } else if (metric.type === 'bool' && targetType === 'enum') {
+            configHtml = `
+                <div class="convert-config">
+                    <h4>Опции для нового типа "Варианты"</h4>
+                    <div class="convert-enum-options">
+                        <div class="enum-options-list" id="conv-enum-options-list"></div>
+                        <button type="button" class="btn-add-slot" id="conv-add-enum-option">+ Добавить вариант</button>
+                    </div>
+                </div>`;
+
+            mappingHtml = buildBoolMappingHtml(preview);
+        }
+
+        overlay.innerHTML = `
+            <div class="modal">
+                <h3>Конвертация: ${metric.icon ? `<span class="metric-icon">${metric.icon}</span> ` : ''}${metric.name}</h3>
+                <div class="convert-warning">⚠ Рекомендуем сделать экспорт данных перед конвертацией</div>
+                <div class="convert-type-info">
+                    <span>Текущий тип: <strong>${sourceLabel}${scaleInfo}</strong></span>
+                    <span>→ Целевой тип: <strong>${targetLabel}</strong></span>
+                </div>
+                ${configHtml}
+                <div class="convert-mapping-section">
+                    <h4>Маппинг значений</h4>
+                    ${preview.entries_by_value.length === 0 ? '<p class="text-dim">Нет записей для конвертации</p>' : ''}
+                    <div id="convert-mapping-table">${mappingHtml}</div>
+                </div>
+                <div class="convert-impact" id="convert-impact"></div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" id="conv-cancel">Отмена</button>
+                    <button class="btn btn-primary" id="conv-submit">Конвертировать</button>
+                </div>
+            </div>`;
+
+        if (window.lucide) lucide.createIcons();
+        updateImpact();
+        attachConvertListeners();
+    }
+
+    function buildScaleMappingHtml(preview) {
+        if (!preview.entries_by_value.length) return '';
+        const newMin = parseInt(document.getElementById('conv-scale-min')?.value ?? metric.scale_min);
+        const newMax = parseInt(document.getElementById('conv-scale-max')?.value ?? metric.scale_max);
+        const newStep = parseInt(document.getElementById('conv-scale-step')?.value ?? metric.scale_step);
+
+        const newValues = [];
+        for (let v = newMin; v <= newMax; v += newStep) newValues.push(v);
+
+        let html = '<table class="convert-mapping-table"><thead><tr><th>Старое</th><th>Записей</th><th>→ Новое</th></tr></thead><tbody>';
+        for (const entry of preview.entries_by_value) {
+            const options = ['<option value="__delete__">Удалить</option>']
+                .concat(newValues.map(v => {
+                    const sel = v === parseInt(entry.value) ? ' selected' : '';
+                    return `<option value="${v}"${sel}>${v}</option>`;
+                }));
+            html += `<tr>
+                <td>${entry.display}</td>
+                <td>${entry.count}</td>
+                <td><select class="convert-select" data-old="${entry.value}">${options.join('')}</select></td>
+            </tr>`;
+        }
+        html += '</tbody></table>';
+        return html;
+    }
+
+    function getConvEnumOptions() {
+        const inputs = overlay.querySelectorAll('#conv-enum-options-list .enum-option-input');
+        return Array.from(inputs).map(inp => inp.value.trim()).filter(Boolean);
+    }
+
+    function addConvEnumOption(label = '') {
+        const list = overlay.querySelector('#conv-enum-options-list');
+        if (!list) return;
+        const row = document.createElement('div');
+        row.className = 'enum-option-row';
+        row.innerHTML = `<input type="text" class="form-input enum-option-input" placeholder="Название варианта" value="${label}">
+            <button type="button" class="btn-remove-slot">&times;</button>`;
+        list.appendChild(row);
+        row.querySelector('.btn-remove-slot').onclick = () => { row.remove(); rebuildMappingSelects(); };
+        row.querySelector('.enum-option-input').addEventListener('input', rebuildMappingSelects);
+    }
+
+    function rebuildMappingSelects() {
+        const table = document.getElementById('convert-mapping-table');
+        if (!table) return;
+        // Save current selections
+        const saved = {};
+        overlay.querySelectorAll('.convert-select').forEach(sel => {
+            saved[sel.dataset.old] = sel.value;
+        });
+        table.innerHTML = buildBoolMappingHtml(preview);
+        // Restore selections where possible
+        overlay.querySelectorAll('.convert-select').forEach(sel => {
+            const prev = saved[sel.dataset.old];
+            if (prev !== undefined) {
+                const optExists = Array.from(sel.options).some(o => o.value === prev);
+                if (optExists) sel.value = prev;
+            }
+        });
+        updateImpact();
+        attachMappingListeners();
+    }
+
+    function buildBoolMappingHtml(preview) {
+        if (!preview.entries_by_value.length) return '';
+        const enumOpts = getConvEnumOptions();
+
+        let html = '<table class="convert-mapping-table"><thead><tr><th>Старое</th><th>Записей</th><th>→ Новое</th></tr></thead><tbody>';
+        for (const entry of preview.entries_by_value) {
+            const defaultLabel = entry.value === 'true' ? 'Да' : 'Нет';
+            const options = ['<option value="__delete__">Удалить</option>']
+                .concat(enumOpts.map(opt => {
+                    const sel = opt === defaultLabel ? ' selected' : '';
+                    return `<option value="${opt}"${sel}>${opt}</option>`;
+                }));
+            html += `<tr>
+                <td>${entry.display}</td>
+                <td>${entry.count}</td>
+                <td><select class="convert-select" data-old="${entry.value}">${options.join('')}</select></td>
+            </tr>`;
+        }
+        html += '</tbody></table>';
+        return html;
+    }
+
+    function updateImpact() {
+        const selects = overlay.querySelectorAll('.convert-select');
+        let toConvert = 0, toDelete = 0;
+        for (const sel of selects) {
+            const entry = preview.entries_by_value.find(e => e.value === sel.dataset.old);
+            if (!entry) continue;
+            if (sel.value === '__delete__') toDelete += entry.count;
+            else toConvert += entry.count;
+        }
+        const el = document.getElementById('convert-impact');
+        if (el) {
+            el.innerHTML = `Будет изменено: <strong>${toConvert}</strong> | Удалено: <strong>${toDelete}</strong>`;
+        }
+    }
+
+    function attachConvertListeners() {
+        // Cancel
+        overlay.querySelector('#conv-cancel')?.addEventListener('click', () => overlay.remove());
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+        // Config change → rebuild mapping
+        if (metric.type === 'scale') {
+            for (const id of ['conv-scale-min', 'conv-scale-max', 'conv-scale-step']) {
+                overlay.querySelector(`#${id}`)?.addEventListener('change', () => {
+                    const table = document.getElementById('convert-mapping-table');
+                    if (table) { table.innerHTML = buildScaleMappingHtml(preview); updateImpact(); attachMappingListeners(); }
+                });
+            }
+        } else if (metric.type === 'bool') {
+            // Pre-fill default options
+            addConvEnumOption('Нет');
+            addConvEnumOption('Да');
+            // Add button
+            overlay.querySelector('#conv-add-enum-option')?.addEventListener('click', () => {
+                addConvEnumOption('');
+                rebuildMappingSelects();
+            });
+        }
+
+        attachMappingListeners();
+
+        // Submit
+        overlay.querySelector('#conv-submit')?.addEventListener('click', handleConvert);
+    }
+
+    function attachMappingListeners() {
+        overlay.querySelectorAll('.convert-select').forEach(sel => {
+            sel.addEventListener('change', updateImpact);
+        });
+    }
+
+    async function handleConvert() {
+        const mapping = {};
+        overlay.querySelectorAll('.convert-select').forEach(sel => {
+            mapping[sel.dataset.old] = sel.value === '__delete__' ? null : sel.value;
+        });
+
+        const body = { target_type: targetType, value_mapping: mapping };
+
+        if (metric.type === 'scale' && targetType === 'scale') {
+            body.scale_min = parseInt(overlay.querySelector('#conv-scale-min').value);
+            body.scale_max = parseInt(overlay.querySelector('#conv-scale-max').value);
+            body.scale_step = parseInt(overlay.querySelector('#conv-scale-step').value);
+        } else if (metric.type === 'bool' && targetType === 'enum') {
+            const enumOpts = getConvEnumOptions();
+            if (enumOpts.length < 2) {
+                alert('Нужно минимум 2 варианта');
+                return;
+            }
+            const uniqueOpts = new Set(enumOpts.map(o => o.toLowerCase()));
+            if (uniqueOpts.size !== enumOpts.length) {
+                alert('Названия вариантов должны быть уникальными');
+                return;
+            }
+            body.enum_options = enumOpts;
+            body.multi_select = false;
+        }
+
+        if (!confirm('Это необратимая операция. Продолжить?')) return;
+
+        const submitBtn = overlay.querySelector('#conv-submit');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Конвертация...';
+
+        try {
+            const result = await api.convertMetric(metric.id, body);
+            alert(`Готово! Изменено: ${result.converted}, удалено: ${result.deleted}`);
+            overlay.remove();
+            await loadMetrics();
+            const container = document.getElementById('page-content');
+            if (container) renderSettings(container);
+        } catch (err) {
+            alert('Ошибка конвертации: ' + err.message);
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Конвертировать';
+        }
+    }
+
+    document.body.appendChild(overlay);
+    renderModal();
+}
+
 
 async function showMetricModal(mode = 'create', existingMetric = null) {
     const isEdit = mode === 'edit';
