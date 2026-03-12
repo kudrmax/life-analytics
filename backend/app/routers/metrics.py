@@ -51,7 +51,9 @@ async def list_metrics(
                       ic.provider, ic.metric_key, ic.value_type,
                       ifc.filter_name, iqc.filter_query,
                       icatc.activitywatch_category_id, iapc.app_name AS config_app_name,
-                      ec.multi_select
+                      ec.multi_select,
+                      mcond.depends_on_metric_id AS condition_metric_id,
+                      mcond.condition_type, mcond.condition_value
                FROM metric_definitions md
                LEFT JOIN scale_config sc ON sc.metric_id = md.id
                LEFT JOIN computed_config cc ON cc.metric_id = md.id
@@ -61,6 +63,7 @@ async def list_metrics(
                LEFT JOIN integration_category_config icatc ON icatc.metric_id = md.id
                LEFT JOIN integration_app_config iapc ON iapc.metric_id = md.id
                LEFT JOIN enum_config ec ON ec.metric_id = md.id
+               LEFT JOIN metric_condition mcond ON mcond.metric_id = md.id
                WHERE md.user_id = $1"""
     params = [current_user["id"]]
     if enabled_only:
@@ -138,7 +141,9 @@ async def get_metric(
                   ic.provider, ic.metric_key, ic.value_type,
                   ifc.filter_name, iqc.filter_query,
                   icatc.activitywatch_category_id, iapc.app_name AS config_app_name,
-                  ec.multi_select
+                  ec.multi_select,
+                  mcond.depends_on_metric_id AS condition_metric_id,
+                  mcond.condition_type, mcond.condition_value
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
            LEFT JOIN computed_config cc ON cc.metric_id = md.id
@@ -148,6 +153,7 @@ async def get_metric(
            LEFT JOIN integration_category_config icatc ON icatc.metric_id = md.id
            LEFT JOIN integration_app_config iapc ON iapc.metric_id = md.id
            LEFT JOIN enum_config ec ON ec.metric_id = md.id
+           LEFT JOIN metric_condition mcond ON mcond.metric_id = md.id
            WHERE md.id = $1 AND md.user_id = $2""",
         metric_id, current_user["id"],
     )
@@ -370,6 +376,33 @@ async def create_metric(
                         "INSERT INTO measurement_slots (metric_id, sort_order, label) VALUES ($1, $2, $3)",
                         metric_id, i, label,
                     )
+
+    # Condition (depends on another metric)
+    if data.condition_metric_id is not None and data.condition_type is not None:
+        if data.condition_type not in ('filled', 'equals', 'not_equals'):
+            raise HTTPException(400, "condition_type must be 'filled', 'equals', or 'not_equals'")
+        if data.condition_metric_id == metric_id:
+            raise HTTPException(400, "Metric cannot depend on itself")
+        dep = await db.fetchrow(
+            "SELECT id FROM metric_definitions WHERE id = $1 AND user_id = $2",
+            data.condition_metric_id, current_user["id"],
+        )
+        if not dep:
+            raise HTTPException(400, "Dependency metric not found")
+        if data.condition_type in ('equals', 'not_equals') and data.condition_value is None:
+            raise HTTPException(400, "condition_value is required for equals/not_equals")
+        # Check for cycles
+        cycle_check = await db.fetchval(
+            "SELECT depends_on_metric_id FROM metric_condition WHERE metric_id = $1",
+            data.condition_metric_id,
+        )
+        if cycle_check == metric_id:
+            raise HTTPException(400, "Circular dependency detected")
+        cond_val = json.dumps(data.condition_value) if data.condition_value is not None else None
+        await db.execute(
+            "INSERT INTO metric_condition (metric_id, depends_on_metric_id, condition_type, condition_value) VALUES ($1, $2, $3, $4::jsonb)",
+            metric_id, data.condition_metric_id, data.condition_type, cond_val,
+        )
 
     return await get_metric(metric_id, db, current_user, privacy_mode)
 
@@ -609,6 +642,40 @@ async def update_metric(
             await db.execute(
                 "UPDATE metric_definitions SET category_id = NULL WHERE id = $1", metric_id,
             )
+
+    # Update condition
+    if data.remove_condition:
+        await db.execute("DELETE FROM metric_condition WHERE metric_id = $1", metric_id)
+    elif data.condition_metric_id is not None and data.condition_type is not None:
+        if data.condition_type not in ('filled', 'equals', 'not_equals'):
+            raise HTTPException(400, "condition_type must be 'filled', 'equals', or 'not_equals'")
+        if data.condition_metric_id == metric_id:
+            raise HTTPException(400, "Metric cannot depend on itself")
+        dep = await db.fetchrow(
+            "SELECT id FROM metric_definitions WHERE id = $1 AND user_id = $2",
+            data.condition_metric_id, current_user["id"],
+        )
+        if not dep:
+            raise HTTPException(400, "Dependency metric not found")
+        if data.condition_type in ('equals', 'not_equals') and data.condition_value is None:
+            raise HTTPException(400, "condition_value is required for equals/not_equals")
+        # Check for cycles
+        cycle_check = await db.fetchval(
+            "SELECT depends_on_metric_id FROM metric_condition WHERE metric_id = $1",
+            data.condition_metric_id,
+        )
+        if cycle_check == metric_id:
+            raise HTTPException(400, "Circular dependency detected")
+        cond_val = json.dumps(data.condition_value) if data.condition_value is not None else None
+        await db.execute(
+            """INSERT INTO metric_condition (metric_id, depends_on_metric_id, condition_type, condition_value)
+               VALUES ($1, $2, $3, $4::jsonb)
+               ON CONFLICT (metric_id) DO UPDATE
+               SET depends_on_metric_id = EXCLUDED.depends_on_metric_id,
+                   condition_type = EXCLUDED.condition_type,
+                   condition_value = EXCLUDED.condition_value""",
+            metric_id, data.condition_metric_id, data.condition_type, cond_val,
+        )
 
     return await get_metric(metric_id, db, current_user, privacy_mode)
 

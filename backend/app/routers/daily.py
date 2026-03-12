@@ -21,6 +21,46 @@ def _parse_formula(raw):
     return raw
 
 
+def _extract_dep_value(item):
+    """Извлечь значение метрики-зависимости для проверки условия."""
+    if item.get("slots"):
+        for s in item["slots"]:
+            if s.get("entry") is not None:
+                return s["entry"]["value"]
+        return None
+    if item.get("entry") is not None:
+        return item["entry"]["value"]
+    return None
+
+
+def _evaluate_condition(cond, dep_value):
+    """Проверить выполнение условия по значению зависимости."""
+    cond_type = cond["type"]
+    cond_value = cond.get("value")
+
+    if dep_value is None:
+        return False
+
+    if cond_type == "filled":
+        return True
+
+    if cond_type == "equals":
+        if isinstance(dep_value, list):
+            if isinstance(cond_value, list):
+                return any(v in dep_value for v in cond_value)
+            return cond_value in dep_value
+        return dep_value == cond_value
+
+    if cond_type == "not_equals":
+        if isinstance(dep_value, list):
+            if isinstance(cond_value, list):
+                return not any(v in dep_value for v in cond_value)
+            return cond_value not in dep_value
+        return dep_value != cond_value
+
+    return True
+
+
 router = APIRouter(prefix="/api/daily", tags=["daily"])
 
 
@@ -33,7 +73,9 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                   ic.provider, ic.metric_key, ic.value_type,
                   ifc.filter_name, iqc.filter_query,
                   icatc.activitywatch_category_id, iapc.app_name AS config_app_name,
-                  ec.multi_select
+                  ec.multi_select,
+                  mcond.depends_on_metric_id AS condition_metric_id,
+                  mcond.condition_type, mcond.condition_value
            FROM metric_definitions md
            LEFT JOIN scale_config sc ON sc.metric_id = md.id
            LEFT JOIN computed_config cc ON cc.metric_id = md.id
@@ -43,6 +85,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
            LEFT JOIN integration_category_config icatc ON icatc.metric_id = md.id
            LEFT JOIN integration_app_config iapc ON iapc.metric_id = md.id
            LEFT JOIN enum_config ec ON ec.metric_id = md.id
+           LEFT JOIN metric_condition mcond ON mcond.metric_id = md.id
            WHERE md.enabled = TRUE AND md.user_id = $1
            ORDER BY md.sort_order, md.id""",
         current_user["id"],
@@ -236,6 +279,11 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "enum_options": enum_options_by_metric.get(mid) if m["type"] == "enum" else None,
             "notes": notes_by_metric.get(mid, []) if m["type"] == "text" else None,
             "note_count": notes_count_map.get(mid, 0) if m["type"] == "text" else None,
+            "condition": {
+                "depends_on_metric_id": m.get("condition_metric_id"),
+                "type": m.get("condition_type"),
+                "value": json.loads(m["condition_value"]) if m.get("condition_value") is not None else None,
+            } if m.get("condition_metric_id") else None,
         }
 
         # If metric is blocked by privacy mode, hide all values
@@ -315,6 +363,20 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                     item["scale_step"] = sc["scale_step"]
 
         result.append(item)
+
+    # Evaluate conditions
+    items_by_id = {item["metric_id"]: item for item in result}
+    for item in result:
+        cond = item.get("condition")
+        if not cond:
+            item["condition_met"] = True
+            continue
+        dep = items_by_id.get(cond["depends_on_metric_id"])
+        if not dep:
+            item["condition_met"] = True
+            continue
+        dep_value = _extract_dep_value(dep)
+        item["condition_met"] = _evaluate_condition(cond, dep_value)
 
     # Compute values for computed metrics
     # First, build numeric_by_id from all regular metrics
@@ -416,6 +478,8 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
     for item in result:
         mt = item["type"]
         if mt in ("computed", "integration"):
+            continue
+        if not item.get("condition_met", True):
             continue
         if mt == "text":
             progress_total += 1

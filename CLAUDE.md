@@ -59,35 +59,47 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `database.py` — asyncpg pool management, full DDL schema in `init_db()` (tables, enums, indexes)
 - `auth.py` — JWT (HS256, 7-day expiry), bcrypt hashing, `get_current_user` dependency
 - `schemas.py` — Pydantic models for all request/response types
-- `metric_helpers.py` — shared value read/write logic across routers; `build_metric_out` converts DB rows to response models with slots
+- `metric_helpers.py` — shared value read/write logic across routers; `build_metric_out` converts DB rows to response models with slots; privacy masking (`mask_name`, `mask_icon`, `is_blocked`)
+- `formula.py` — formula engine for computed metrics: tokenizer, validator, recursive descent evaluator
+- `correlation_blacklist.py` — `should_skip_pair()` rules for filtering meaningless correlation pairs
 
-**Routers** (all under `/api/`): `auth`, `metrics`, `entries`, `daily`, `analytics`, `export_import`, `integrations`, `categories`
+**Routers** (all under `/api/`): `auth`, `metrics`, `entries`, `daily`, `analytics`, `export_import`, `integrations`, `categories`, `notes`
 
 ### Database Schema (PostgreSQL)
 
-**Enum:** `metric_type` = 'bool' | 'time' | 'number' | 'duration' | 'scale' | 'computed' | 'integration'
+**Enum:** `metric_type` = 'bool' | 'enum' | 'time' | 'number' | 'duration' | 'scale' | 'computed' | 'integration' | 'text'
 
 **Tables:**
-- `users` — id, username (unique), password_hash, created_at
+- `users` — id, username (unique), password_hash, created_at, privacy_mode (BOOLEAN)
 - `categories` — id, user_id (FK), name, parent_id (FK, nullable, self-ref for 2-level hierarchy), sort_order; partial unique indexes on (user_id, name) for top-level and (user_id, name, parent_id) for children
-- `metric_definitions` — id, user_id (FK), slug, name, category_id (FK to categories, nullable), icon, type (enum), enabled, sort_order; UNIQUE(user_id, slug)
-- `measurement_slots` — id, metric_id (FK), sort_order, label, enabled (for multi-slot metrics like Утро/День/Вечер)
+- `metric_definitions` — id, user_id (FK), slug, name, category_id (FK to categories, nullable), icon, type (enum), enabled, sort_order, private (BOOLEAN); UNIQUE(user_id, slug)
+- `measurement_slots` — id, metric_id (FK), sort_order, label, enabled, category_id (FK to categories, nullable) (for multi-slot metrics like Утро/День/Вечер)
 - `entries` — id, metric_id (FK), user_id (FK), date, recorded_at, slot_id (FK, nullable)
 - `values_bool` — entry_id (PK/FK), value BOOLEAN
 - `values_time` — entry_id (PK/FK), value TIMESTAMPTZ
 - `values_number` — entry_id (PK/FK), value INTEGER
-- `values_duration` — entry_id (PK/FK), value INTEGER (minutes)
 - `values_scale` — entry_id (PK/FK), value INTEGER, scale_min, scale_max, scale_step (stores context at time of entry)
+- `values_duration` — entry_id (PK/FK), value INTEGER (minutes)
+- `values_enum` — entry_id (PK/FK), selected_option_ids INTEGER[] (array of enum_options IDs)
 - `scale_config` — metric_id (PK/FK), scale_min, scale_max, scale_step (current config for rendering)
+- `enum_config` — metric_id (PK/FK), multi_select BOOLEAN (single vs multi-select)
+- `enum_options` — id, metric_id (FK), sort_order, label, enabled (soft-delete via enabled)
+- `computed_config` — metric_id (PK/FK), formula JSONB (token array), result_type VARCHAR ('float'|'int'|'bool'|'time'|'duration')
+- `notes` — id, metric_id (FK), user_id (FK), date, text, created_at (multiple notes per metric per day, for text metrics)
+- `metric_condition` — metric_id (PK/FK), depends_on_metric_id (FK), condition_type VARCHAR ('filled'|'equals'|'not_equals'), condition_value JSONB
 - `correlation_reports` — id, user_id (FK), status ('running'/'done'/'error'), period_start, period_end, created_at, finished_at
-- `correlation_pairs` — id, report_id (FK), metric_a_id, metric_b_id, slot_a_id, slot_b_id, label_a, label_b, type_a, type_b, correlation (FLOAT), data_points (INTEGER)
+- `correlation_pairs` — id, report_id (FK), metric_a_id, metric_b_id, slot_a_id, slot_b_id, label_a, label_b, type_a, type_b, correlation (FLOAT), data_points (INTEGER), lag_days (INTEGER), p_value (FLOAT)
 - `user_integrations` — id, user_id (FK), provider (VARCHAR), encrypted_token (TEXT), enabled, created_at; UNIQUE(user_id, provider)
 - `integration_config` — metric_id (PK/FK), provider (VARCHAR), metric_key (VARCHAR), value_type (VARCHAR)
 - `integration_filter_config` — metric_id (PK/FK), filter_name VARCHAR(200) — config for filter_tasks_count metrics
 - `integration_query_config` — metric_id (PK/FK), filter_query VARCHAR(1024) — config for query_tasks_count metrics
+- `integration_app_config` — metric_id (PK/FK), app_name VARCHAR — config for ActivityWatch app_time metrics
+- `integration_category_config` — metric_id (PK/FK), activitywatch_category_id (FK) — config for ActivityWatch category_time metrics
 - `activitywatch_settings` — user_id (PK/FK), enabled, aw_url, created_at
-- `activitywatch_daily_summary` — id, user_id (FK), date, total_seconds, active_seconds, synced_at; UNIQUE(user_id, date)
+- `activitywatch_daily_summary` — id, user_id (FK), date, total_seconds, active_seconds, first_activity_time, last_activity_time, afk_seconds, longest_session_seconds, context_switches, break_count, synced_at; UNIQUE(user_id, date)
 - `activitywatch_app_usage` — id, user_id (FK), date, app_name, source ('window'|'web'), duration_seconds; UNIQUE(user_id, date, app_name, source)
+- `activitywatch_categories` — id, user_id (FK), name, color, sort_order; UNIQUE(user_id, name)
+- `activitywatch_app_category_map` — id, user_id (FK), app_name, activitywatch_category_id (FK); UNIQUE(user_id, app_name)
 
 **Entry uniqueness (partial indexes):** Metrics without slots: `UNIQUE(metric_id, user_id, date) WHERE slot_id IS NULL`. Metrics with slots: `UNIQUE(metric_id, user_id, date, slot_id) WHERE slot_id IS NOT NULL`.
 
@@ -95,7 +107,19 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 
 **Scale context pattern:** `scale_config` stores the current min/max/step for rendering buttons. `values_scale` stores the min/max/step that were active when each entry was created. When displaying a filled entry, use context from `values_scale` (not current config) so old entries render correctly even after config changes. Analytics normalizes scale values to percentages using the per-entry context.
 
-**Multi-slot pattern:** A metric can have 2+ measurement slots (e.g. Утро, День, Вечер). `measurement_slots` stores slot definitions per metric. `entries.slot_id` links an entry to a specific slot. Daily endpoint aggregates multi-slot data, showing each slot's value separately.
+**Multi-slot pattern:** A metric can have 2+ measurement slots (e.g. Утро, День, Вечер). `measurement_slots` stores slot definitions per metric. `entries.slot_id` links an entry to a specific slot. Daily endpoint aggregates multi-slot data, showing each slot's value separately. Slots can have their own `category_id` — for multi-slot metrics, category lives on slots (not on metric_definitions).
+
+**Enum pattern:** Enum metrics have a set of named options (`enum_options`). User selects one or multiple options (controlled by `multi_select` in `enum_config`). Values stored as `INTEGER[]` of option IDs in `values_enum`. Options support soft-delete via `enabled` flag. In correlations, each enum option becomes a separate boolean source (1.0 if selected, 0.0 if not).
+
+**Text/Notes pattern:** Text metrics don't use `entries`/`values_*` tables. Instead, they use the `notes` table — multiple free-text notes per metric per day. Separate `notes` router handles CRUD. In correlations, text metrics contribute `note_count` auto-source (count of notes per day).
+
+**Computed metrics pattern:** Formula stored as JSONB token array in `computed_config`. Token types: `{"type": "metric", "id": 5}`, `{"type": "op", "value": "+"|"-"|"*"|"/"}`, `{"type": "number", "value": 2.5}`, `{"type": "lparen"}`, `{"type": "rparen"}`. Evaluated via recursive descent parser with standard operator precedence. Result types: `float`, `int`, `bool`, `time`, `duration`. Restrictions: no references to other computed metrics, no mixing time with non-time types, time formulas only allow +/− (no */÷ or numeric constants). Values computed on-the-fly in daily/analytics endpoints, not stored.
+
+**Metric conditions pattern:** A metric can be conditionally shown/hidden on the "Сегодня" page based on another metric's value for that day. `metric_condition` table stores: `depends_on_metric_id`, `condition_type` (`filled` — any value exists, `equals` — value matches, `not_equals` — value doesn't match), `condition_value` (JSONB). Backend evaluates conditions in daily endpoint and sends `condition` object with deserialized `value` to frontend. Frontend hides/shows metrics dynamically based on filled entries.
+
+**Privacy mode pattern:** Users can toggle `privacy_mode` on their account. Individual metrics can be marked `private`. When privacy mode is ON, private metrics show masked name (`***`) and icon (`🔒`), and their values are hidden. This allows showing the app in public without exposing sensitive data. Toggle via `PUT /api/auth/privacy-mode`.
+
+**Metric conversion:** Metrics can be converted between types via `GET /api/metrics/{id}/convert/preview` (shows value distribution) and `POST /api/metrics/{id}/convert` (performs conversion with value mapping). Supports bool↔number, bool↔enum, scale↔scale, number↔scale, etc.
 
 ### Frontend (Vanilla JS SPA)
 
@@ -156,15 +180,16 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 
 **Backend-first logic:** All business logic lives on the backend. Frontend is a thin client — display and input only. Criterion: imagine a second, different frontend exists; avoid any logic duplication. Examples: available integration metrics registry — served via endpoint, not hardcoded on frontend; validation — backend only; value_type resolution — backend only.
 
-**Adding a new metric type** requires changes in 8 places:
+**Adding a new metric type** requires changes in 9 places:
 1. `database.py` — `ALTER TYPE metric_type ADD VALUE`, create `values_{type}` table (+ config table if type has settings)
-2. `schemas.py` — add to `MetricType` enum, add config fields to Create/Update/Out if needed (keep `bool` before `int` in value unions — bool is subclass of int in Python)
-3. `metric_helpers.py` — add branch in `get_entry_value`, `insert_value`, `update_value`; pass `metric_id` for types that need config lookup
-4. `routers/metrics.py` — LEFT JOIN config table in list/get queries, handle config creation/update in create/update endpoints
-5. `routers/daily.py` — LEFT JOIN config table, include config fields in response; for filled entries, override with stored context from value table
-6. `routers/analytics.py` — `_extract_numeric` + value_table selection in `trends` and `values_by_date`; include extra columns (e.g. scale context) in SELECT
-7. `routers/export_import.py` — type validation on import + value parsing + config export/import
-8. `frontend/js/app.js` — render function, input handlers, history display, settings type label, modal (preview + radio + type hint + config fields)
+2. `migrations.py` — add migration with DDL for new tables (must be idempotent)
+3. `schemas.py` — add to `MetricType` enum, add config fields to Create/Update/Out if needed (keep `bool` before `int` in value unions — bool is subclass of int in Python)
+4. `metric_helpers.py` — add branch in `get_entry_value`, `insert_value`, `update_value`; pass `metric_id` for types that need config lookup
+5. `routers/metrics.py` — LEFT JOIN config table in list/get queries, handle config creation/update in create/update endpoints; update conversion logic if applicable
+6. `routers/daily.py` — LEFT JOIN config table, include config fields in response; for filled entries, override with stored context from value table
+7. `routers/analytics.py` — `_extract_numeric` + value_table selection in `trends` and `values_by_date`; add correlation source type handling in `_compute_report`
+8. `routers/export_import.py` — type validation on import + value parsing + config export/import
+9. `frontend/js/app.js` — render function, input handlers, history display, settings type label, modal (preview + radio + type hint + config fields)
 
 **Integration pattern (Todoist):**
 - OAuth flow: `GET /api/integrations/todoist/auth-url` (JWT-protected) → redirect to Todoist → `GET /api/integrations/todoist/callback` (no JWT, uses state JWT) → saves token to user_integrations
@@ -181,8 +206,10 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 - No OAuth — AW runs locally on user's machine (localhost:5600), no token needed
 - Frontend acts as bridge: fetches raw events from AW on localhost, sends to backend
 - Architecture: `frontend/js/aw-client.js` (local AW API client) → `routers/integrations.py` (receives raw events) → `integrations/activitywatch/service.py` (processes events, computes active time, stores aggregates)
-- Dedicated tables (not metrics): `activitywatch_settings`, `activitywatch_daily_summary`, `activitywatch_app_usage`
+- Dedicated tables (not metrics): `activitywatch_settings`, `activitywatch_daily_summary`, `activitywatch_app_usage`, `activitywatch_categories`, `activitywatch_app_category_map`
 - Processing: intersects window events with not-afk intervals to compute active time per app; extracts domains from web events
+- Registry (`integrations/activitywatch/registry.py`): 11 metric_keys — `active_screen_time`, `total_screen_time`, `first_activity` (time), `last_activity` (time), `afk_time`, `longest_session`, `context_switches`, `break_count`, `unique_apps`, `category_time` (requires `activitywatch_category_id`), `app_time` (requires `app_name`)
+- App categories: user-defined grouping of apps into categories with colors; `activitywatch_categories` + `activitywatch_app_category_map` tables; `category_time` metric tracks time in a category
 - Endpoints: `POST .../activitywatch/sync`, `GET .../activitywatch/summary`, `GET .../activitywatch/trends`, `GET .../activitywatch/status`, `POST .../activitywatch/enable`, `DELETE .../activitywatch/disable`
 - Correlation: auto-source "Экранное время (активное)" in `_compute_report` reads from `activitywatch_daily_summary`
 - Export/Import: `aw_daily.csv` + `aw_apps.csv` in ZIP (optional files)
@@ -196,8 +223,11 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 
 **Correlation reports pattern:**
 - Background: `asyncio.create_task(_compute_report(...))` в том же процессе
-- Data sources: каждая метрика со слотами → N+1 sources (среднее + каждый слот)
-- P-value: вычисляется на лету при GET через `_p_value(r, n)` (t-test + beta distribution)
+- Data sources: каждая метрика со слотами → N+1 sources (среднее + каждый слот); enum метрики → per-option boolean sources
+- Auto-sources (virtual, not backed by metrics): `nonzero` (has non-zero value, per number/duration metric), `note_count` (notes count per text metric), `day_of_week` (1–7), `month` (1–12), `week_number` (1–53), `aw_active` (active screen time in hours from AW)
+- Lag correlations: for each pair, computes lag=0 (same-day) + lag=1 (yesterday→today, both directions)
+- Blacklist (`correlation_blacklist.py`): skips same-metric pairs (except different enum options), auto+parent pairs, two autos from same parent, two calendar autos
+- P-value: stored in DB on computation; fallback to on-the-fly `_p_value(r, n)` (t-test + beta distribution) for old reports
 - Фронтенд: polling каждые 3 секунды до завершения
 
 **Data isolation:** All queries filter by `current_user["id"]`. Return 404 (not 403) on unauthorized access.
@@ -209,6 +239,8 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 **Deployment:** Docker Compose on VDSina VPS. Auto-deploy via GitHub Actions on push to master (SSH → git pull → docker compose up --build). Memory limits set in docker-compose.yml (512M db, 512M backend, 64M frontend). PostgreSQL tuned for 2 GB RAM. Swap 2 GB on VPS for safety.
 
 **Metric queries with config:** Routers that list/return metrics use LEFT JOIN to include type-specific config (e.g. `LEFT JOIN scale_config sc ON sc.metric_id = md.id`). The `build_metric_out` helper uses `.get()` for config fields since they may be NULL for non-matching types.
+
+**JSONB deserialization pattern:** asyncpg does **not** auto-deserialize JSONB columns — they come back as raw JSON strings (e.g. `'true'`, `'[1,2]'`). No global `set_type_codec('jsonb', ...)` is configured in this project. Every JSONB column must be explicitly deserialized via `json.loads()` when read. Current JSONB columns and where they are deserialized: `computed_config.formula` → `metric_helpers.py` (`build_metric_out`), `metric_condition.condition_value` → `metric_helpers.py` (`build_metric_out`) + `daily.py` (condition evaluation). When writing JSONB, use `json.dumps(value)` + `::jsonb` cast — this is correct. When exporting JSONB to CSV, pass the raw string as-is (it's already valid JSON) — do **not** wrap in `json.dumps()` again.
 
 ## Performance Instrumentation
 

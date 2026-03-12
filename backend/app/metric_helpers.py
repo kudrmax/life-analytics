@@ -60,6 +60,9 @@ async def build_metric_out(
         enum_options=enum_opts,
         multi_select=row.get("multi_select"),
         private=is_private,
+        condition_metric_id=row.get("condition_metric_id"),
+        condition_type=row.get("condition_type"),
+        condition_value=json.loads(row["condition_value"]) if row.get("condition_value") is not None else None,
     )
 
 

@@ -203,6 +203,15 @@ MIGRATIONS = [
             WHERE ms.metric_id = md.id AND ms.enabled = TRUE
         );
     """),
+    (9, "add_metric_condition", """
+        CREATE TABLE IF NOT EXISTS metric_condition (
+            metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            depends_on_metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            condition_type VARCHAR(20) NOT NULL,
+            condition_value JSONB
+        );
+        CREATE INDEX IF NOT EXISTS idx_metric_condition_depends ON metric_condition(depends_on_metric_id);
+    """),
 ]
 
 

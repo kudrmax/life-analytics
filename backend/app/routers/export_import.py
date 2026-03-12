@@ -31,6 +31,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step',
             'slot_labels', 'formula', 'result_type', 'provider', 'metric_key', 'value_type',
             'filter_name', 'filter_query', 'enum_options', 'multi_select', 'private',
+            'condition_metric_slug', 'condition_type', 'condition_value',
         ])
 
         metrics = await db.fetch(
@@ -80,6 +81,16 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         enum_opts_by_metric: dict[int, list[str]] = defaultdict(list)
         for r in enum_opts_rows:
             enum_opts_by_metric[r["metric_id"]].append(r["label"])
+
+        # Load conditions for export
+        cond_rows = await db.fetch(
+            """SELECT mc.metric_id, md.slug AS depends_on_slug, mc.condition_type, mc.condition_value
+               FROM metric_condition mc
+               JOIN metric_definitions md ON md.id = mc.depends_on_metric_id
+               WHERE mc.metric_id = ANY($1)""",
+            metric_ids,
+        ) if metric_ids else []
+        cond_by_metric = {r["metric_id"]: r for r in cond_rows}
 
         # Build ID→label lookup for enum entry export
         enum_id_to_label: dict[int, dict[int, str]] = defaultdict(dict)
@@ -131,6 +142,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
                 ]
                 formula_export = json.dumps(portable)
                 result_type_export = cc["result_type"] or ''
+            cond = cond_by_metric.get(m["id"])
             metrics_writer.writerow([
                 m["id"], m["slug"], m["name"], _cat_path(m.get("category_id")), m.get("icon", ""), m["type"],
                 1 if m["enabled"] else 0, m["sort_order"],
@@ -144,6 +156,9 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
                 json.dumps(enum_opts_by_metric.get(m["id"], [])) if m["type"] == "enum" else '',
                 1 if m.get("multi_select") else '' if m["type"] != "enum" else 0,
                 1 if m.get("private") else 0,
+                cond["depends_on_slug"] if cond else '',
+                cond["condition_type"] if cond else '',
+                cond["condition_value"] if cond and cond["condition_value"] is not None else '',
             ])
 
         zip_file.writestr('metrics.csv', metrics_csv.getvalue())
@@ -552,6 +567,38 @@ async def import_data(
                             )
                     except (json.JSONDecodeError, TypeError, KeyError):
                         pass
+
+            # Deferred: import conditions (need full slug->id map)
+            metrics_csv_text3 = zip_file.read('metrics.csv').decode('utf-8')
+            reader3 = csv.DictReader(StringIO(metrics_csv_text3))
+            for row in reader3:
+                cond_slug = row.get('condition_metric_slug', '').strip()
+                if not cond_slug:
+                    continue
+                slug = row.get('slug', '')
+                mid = slug_to_id.get(slug)
+                dep_id = slug_to_id.get(cond_slug)
+                if not mid or not dep_id:
+                    continue
+                cond_type = row.get('condition_type', '').strip()
+                if cond_type not in ('filled', 'equals', 'not_equals'):
+                    continue
+                cond_val_raw = row.get('condition_value', '').strip()
+                cond_val = None
+                if cond_val_raw:
+                    try:
+                        cond_val = json.dumps(json.loads(cond_val_raw))
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                await db.execute(
+                    """INSERT INTO metric_condition (metric_id, depends_on_metric_id, condition_type, condition_value)
+                       VALUES ($1, $2, $3, $4::jsonb)
+                       ON CONFLICT (metric_id) DO UPDATE
+                       SET depends_on_metric_id = EXCLUDED.depends_on_metric_id,
+                           condition_type = EXCLUDED.condition_type,
+                           condition_value = EXCLUDED.condition_value""",
+                    mid, dep_id, cond_type, cond_val,
+                )
 
             # Build metric_id -> {sort_order: slot_id} lookup
             all_metric_ids = list(slug_to_id.values())

@@ -28,6 +28,7 @@ let currentUser = null;
 let isAuthenticated = false;
 let corrPollInterval = null;
 const corrPairData = new Map();
+let _dependencyMetricIdsGlobal = new Set();
 let _todayRenderVersion = 0;
 let _historyRenderVersion = 0;
 let _dayHeaderObserver = null;
@@ -395,6 +396,16 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
         for (const ch of (c.children || [])) catById[ch.id] = ch;
     }
 
+    // Build metric name lookup and dependency tracking for conditions
+    const metricNameById = {};
+    _dependencyMetricIdsGlobal = new Set();
+    for (const m of summary.metrics) {
+        metricNameById[m.metric_id] = m.name;
+        if (m.condition && m.condition.depends_on_metric_id) {
+            _dependencyMetricIdsGlobal.add(m.condition.depends_on_metric_id);
+        }
+    }
+
     // Group metrics by category_id
     const metricsByCat = {};
     const uncategorized = [];
@@ -431,21 +442,21 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
             html += `<h2 class="fill-time-header">${topCat.name}</h2>`;
             if (topMetrics.length > 0) {
                 html += `<div class="category">`;
-                for (const m of topMetrics) html += renderMetricInput(m);
+                for (const m of topMetrics) html += renderMetricInput(m, metricNameById);
                 html += '</div>';
             }
             for (const ch of (topCat.children || [])) {
                 const chMetrics = metricsByCat[ch.id] || [];
                 if (chMetrics.length === 0) continue;
                 html += `<div class="category"><h3>${ch.name}</h3>`;
-                for (const m of chMetrics) html += renderMetricInput(m);
+                for (const m of chMetrics) html += renderMetricInput(m, metricNameById);
                 html += '</div>';
             }
         }
         if (uncategorized.length > 0) {
             if (hasCategories) html += `<h2 class="fill-time-header">Без категории</h2>`;
             html += `<div class="category">`;
-            for (const m of uncategorized) html += renderMetricInput(m);
+            for (const m of uncategorized) html += renderMetricInput(m, metricNameById);
             html += '</div>';
         }
     }
@@ -580,12 +591,32 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
     console.debug(`[render] today  ${(performance.now() - _t0).toFixed(0)}ms`);
 }
 
-function renderMetricInput(m) {
+function renderMetricInput(m, metricNameById) {
     // Private metric blocked in privacy mode
     if (isMetricBlocked(m)) {
         return `<div class="metric-card metric-private">
             <div class="metric-header"><label class="metric-label">${metricLabelHtml(m)}</label></div>
             <div class="metric-private-hint">Сначала отключите приватный режим</div>
+        </div>`;
+    }
+    // Condition not met — show hint instead of input
+    if (m.condition && !m.condition_met) {
+        const depName = (metricNameById && metricNameById[m.condition.depends_on_metric_id]) || 'другую метрику';
+        const hasEntry = !!(m.entry || (m.slots && m.slots.some(s => s.entry)));
+        let currentValHtml = '';
+        if (hasEntry) {
+            let dv = '';
+            if (m.entry && m.entry.display_value) dv = m.entry.display_value;
+            else if (m.slots) {
+                const parts = m.slots.filter(s => s.entry).map(s => `${s.label}: ${s.entry.display_value || s.entry.value}`);
+                dv = parts.join(', ');
+            }
+            if (dv) currentValHtml = `<div class="condition-current-value">Текущее значение: ${dv}</div>`;
+        }
+        return `<div class="metric-card metric-condition-blocked" data-metric-id="${m.metric_id}" data-metric-type="${m.type}">
+            <div class="metric-header"><label class="metric-label">${metricLabelHtml(m)}</label></div>
+            <div class="condition-hint">Чтобы заполнить, сначала укажите «${depName}»</div>
+            ${currentValHtml}
         </div>`;
     }
     // Integration metric — fetch button + standard card
@@ -1342,9 +1373,10 @@ const _savingKeys = new Set();
 
 async function saveDaily(metricId, entryId, value, slotId) {
     const key = `${metricId}-${slotId || 'null'}`;
+    let result;
     if (entryId) {
         await api.updateEntry(parseInt(entryId), { value });
-        return { entryId: parseInt(entryId) };
+        result = { entryId: parseInt(entryId) };
     } else {
         if (_savingKeys.has(key)) return {};
         _savingKeys.add(key);
@@ -1355,18 +1387,24 @@ async function saveDaily(metricId, entryId, value, slotId) {
                 value,
             };
             if (slotId) payload.slot_id = parseInt(slotId);
-            const result = await api.createEntry(payload);
-            return { entryId: result.id };
+            const res = await api.createEntry(payload);
+            result = { entryId: res.id };
         } finally {
             _savingKeys.delete(key);
         }
     }
+    // Re-render if this metric is a dependency for conditional metrics
+    if (_dependencyMetricIdsGlobal.has(parseInt(metricId))) {
+        setTimeout(() => renderTodayForm(true), 50);
+    }
+    return result;
 }
 
 function updateProgress() {
     const form = document.getElementById('metrics-form');
     let total = 0, filled = 0;
     form.querySelectorAll('.metric-card').forEach(card => {
+        if (card.classList.contains('metric-condition-blocked')) return;
         const type = card.dataset.metricType;
         if (type === 'computed' || type === 'integration') return;
         if (type === 'text') {
@@ -2872,9 +2910,15 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         }
         const hasSettingsCategories = settingsCategories.length > 0;
 
+        // Build metric name map for condition display
+        const settingsMetricNameMap = {};
+        for (const m of activeMetrics) settingsMetricNameMap[m.id] = m.name;
+
         function renderSettingRow(m) {
             const slotsBadge = (m.slots && m.slots.length > 0)
                 ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
+            const condBadge = m.condition_metric_id
+                ? `<span class="setting-condition" title="Зависит от: ${settingsMetricNameMap[m.condition_metric_id] || '?'}"><i data-lucide="git-branch"></i></span>` : '';
             const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
                 : m.type === 'duration' ? '<i data-lucide="timer"></i> Длительность'
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
@@ -2883,7 +2927,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'text' ? '<i data-lucide="file-text"></i> Заметка'
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
                 : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
-                : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
+                : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge + condBadge;
             return `<div class="setting-row" data-metric-id="${m.id}">
                 <span class="drag-handle">⠿</span>
                 <div class="setting-info">
@@ -4543,6 +4587,21 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     </div>
                 </div>
                 `}
+                <div class="form-section" id="nm-condition-section" style="display: ${currentType === 'computed' || currentType === 'integration' ? 'none' : ''}">
+                    <span class="label-text">Условие показа <span class="label-optional">(необязательно)</span></span>
+                    <span class="label-hint">Метрика будет доступна для заполнения только при выполнении условия</span>
+                    <select id="nm-condition-metric" class="form-input">
+                        <option value="">Без условия</option>
+                    </select>
+                    <div id="nm-condition-type-row" style="display:${existingMetric?.condition_metric_id ? 'flex' : 'none'}" class="condition-type-row">
+                        <select id="nm-condition-type" class="form-input">
+                            <option value="filled" ${existingMetric?.condition_type === 'filled' ? 'selected' : ''}>Заполнена</option>
+                            <option value="equals" ${existingMetric?.condition_type === 'equals' ? 'selected' : ''}>Равна</option>
+                            <option value="not_equals" ${existingMetric?.condition_type === 'not_equals' ? 'selected' : ''}>Не равна</option>
+                        </select>
+                        <div id="nm-condition-value-container"></div>
+                    </div>
+                </div>
             </div>
 
             <div class="modal-preview-column">
@@ -4614,6 +4673,95 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 });
             }
         } catch(e) { console.warn('Failed to load categories for modal', e); }
+    })();
+
+    // ─── Condition section setup ───
+    (async () => {
+        try {
+            const condMetricSel = document.getElementById('nm-condition-metric');
+            const condTypeRow = document.getElementById('nm-condition-type-row');
+            const condTypeSel = document.getElementById('nm-condition-type');
+            const condValueContainer = document.getElementById('nm-condition-value-container');
+            if (!condMetricSel) return;
+
+            // Populate condition metric select from available metrics
+            const availableForCondition = metrics.filter(m =>
+                m.type !== 'computed' && m.type !== 'text' && m.enabled &&
+                (!existingMetric || m.id !== existingMetric.id)
+            );
+            for (const m of availableForCondition) {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = (m.icon ? m.icon + ' ' : '') + m.name;
+                opt.dataset.metricType = m.type;
+                opt.dataset.metricData = JSON.stringify({
+                    type: m.type, scale_min: m.scale_min, scale_max: m.scale_max,
+                    scale_step: m.scale_step, enum_options: m.enum_options,
+                });
+                if (existingMetric?.condition_metric_id === m.id) opt.selected = true;
+                condMetricSel.appendChild(opt);
+            }
+
+            function renderConditionValueInput() {
+                if (!condValueContainer) return;
+                const condType = condTypeSel.value;
+                if (condType === 'filled') {
+                    condValueContainer.innerHTML = '';
+                    return;
+                }
+                const selOpt = condMetricSel.selectedOptions[0];
+                if (!selOpt || !selOpt.value) { condValueContainer.innerHTML = ''; return; }
+                let mData;
+                try { mData = JSON.parse(selOpt.dataset.metricData); } catch { return; }
+
+                const existingVal = existingMetric?.condition_value;
+
+                if (mData.type === 'bool') {
+                    const isTrue = existingVal === true;
+                    const isFalse = existingVal === false;
+                    condValueContainer.innerHTML = `<div class="condition-value-buttons">
+                        <button type="button" class="cond-val-btn ${isTrue ? 'active' : ''}" data-cond-val="true">Да</button>
+                        <button type="button" class="cond-val-btn ${isFalse ? 'active' : ''}" data-cond-val="false">Нет</button>
+                    </div>`;
+                    condValueContainer.querySelectorAll('.cond-val-btn').forEach(b => {
+                        b.addEventListener('click', () => {
+                            condValueContainer.querySelectorAll('.cond-val-btn').forEach(x => x.classList.remove('active'));
+                            b.classList.add('active');
+                        });
+                    });
+                } else if (mData.type === 'enum' && mData.enum_options) {
+                    const selIds = Array.isArray(existingVal) ? existingVal : [];
+                    condValueContainer.innerHTML = `<div class="condition-value-buttons enum">${
+                        mData.enum_options.map(o =>
+                            `<button type="button" class="cond-val-btn ${selIds.includes(o.id) ? 'active' : ''}" data-cond-val="${o.id}">${o.label}</button>`
+                        ).join('')
+                    }</div>`;
+                    condValueContainer.querySelectorAll('.cond-val-btn').forEach(b => {
+                        b.addEventListener('click', () => b.classList.toggle('active'));
+                    });
+                } else if (mData.type === 'scale') {
+                    const numVal = typeof existingVal === 'number' ? existingVal : '';
+                    condValueContainer.innerHTML = `<input type="number" id="nm-condition-value-num" class="form-input-small" value="${numVal}" placeholder="Значение" min="${mData.scale_min || 0}" max="${mData.scale_max || 10}" step="${mData.scale_step || 1}">`;
+                } else {
+                    const numVal = typeof existingVal === 'number' ? existingVal : '';
+                    condValueContainer.innerHTML = `<input type="number" id="nm-condition-value-num" class="form-input-small" value="${numVal}" placeholder="Значение">`;
+                }
+            }
+
+            condMetricSel.addEventListener('change', () => {
+                const hasSelection = !!condMetricSel.value;
+                condTypeRow.style.display = hasSelection ? 'flex' : 'none';
+                if (hasSelection) renderConditionValueInput();
+                else condValueContainer.innerHTML = '';
+            });
+            condTypeSel.addEventListener('change', renderConditionValueInput);
+
+            // Init if editing with existing condition
+            if (existingMetric?.condition_metric_id) {
+                condTypeRow.style.display = 'flex';
+                renderConditionValueInput();
+            }
+        } catch(e) { console.warn('Failed to setup condition section', e); }
     })();
 
     // ─── Emoji picker setup ───
@@ -4714,6 +4862,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 if (awConfig) awConfig.style.display = (selectedType === 'integration' && selectedProvider === 'activitywatch') ? 'block' : 'none';
                 if (slotsSection) slotsSection.style.display = (selectedType === 'computed' || selectedType === 'integration' || selectedType === 'text') ? 'none' : '';
                 if (emojiWrapper) emojiWrapper.style.display = selectedType === 'integration' ? 'none' : '';
+                const condSection = document.getElementById('nm-condition-section');
+                if (condSection) condSection.style.display = (selectedType === 'computed' || selectedType === 'integration') ? 'none' : '';
                 if (selectedType === 'computed') {
                     const availableMetrics = metrics.filter(m => m.type !== 'computed' && m.enabled);
                     const warning = document.getElementById('nm-formula-empty-warning');
@@ -5089,6 +5239,34 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     }
 
     document.getElementById('nm-cancel').onclick = () => overlay.remove();
+    function _collectConditionData() {
+        const condMetricSel = document.getElementById('nm-condition-metric');
+        const condTypeSel = document.getElementById('nm-condition-type');
+        if (!condMetricSel || !condMetricSel.value) return { remove: true };
+        const condType = condTypeSel ? condTypeSel.value : 'filled';
+        let condValue = null;
+        if (condType !== 'filled') {
+            const condValueContainer = document.getElementById('nm-condition-value-container');
+            if (condValueContainer) {
+                const activeButtons = condValueContainer.querySelectorAll('.cond-val-btn.active');
+                if (activeButtons.length > 0) {
+                    const selOpt = condMetricSel.selectedOptions[0];
+                    let mData;
+                    try { mData = JSON.parse(selOpt.dataset.metricData); } catch { mData = {}; }
+                    if (mData.type === 'bool') {
+                        condValue = activeButtons[0].dataset.condVal === 'true';
+                    } else if (mData.type === 'enum') {
+                        condValue = Array.from(activeButtons).map(b => parseInt(b.dataset.condVal));
+                    }
+                } else {
+                    const numInput = condValueContainer.querySelector('#nm-condition-value-num');
+                    if (numInput && numInput.value !== '') condValue = parseInt(numInput.value);
+                }
+            }
+        }
+        return { metric_id: parseInt(condMetricSel.value), type: condType, value: condValue };
+    }
+
     document.getElementById('nm-save').onclick = async () => {
         const name = document.getElementById('nm-name').value;
         const categorySelect = document.getElementById('nm-category-id');
@@ -5159,6 +5337,15 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                         alert('Нельзя уменьшить количество замеров меньше 2. Удалите все поля, чтобы не менять настройку.');
                         return;
                     }
+                }
+                // Condition data
+                const condData = _collectConditionData();
+                if (condData.remove) {
+                    updateData.remove_condition = true;
+                } else {
+                    updateData.condition_metric_id = condData.metric_id;
+                    updateData.condition_type = condData.type;
+                    updateData.condition_value = condData.value;
                 }
                 await api.updateMetric(existingMetric.id, updateData);
             } else {
@@ -5281,6 +5468,13 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     delete createData.category_id;
                 }
 
+                // Condition data
+                const condData = _collectConditionData();
+                if (!condData.remove) {
+                    createData.condition_metric_id = condData.metric_id;
+                    createData.condition_type = condData.type;
+                    createData.condition_value = condData.value;
+                }
                 await api.createMetric(createData);
             }
 

@@ -456,6 +456,20 @@ async def _init_db_schema(conn):
         )
     """)
 
+    # Metric condition (conditional display based on another metric's value)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS metric_condition (
+            metric_id INTEGER PRIMARY KEY REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            depends_on_metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            condition_type VARCHAR(20) NOT NULL,
+            condition_value JSONB
+        )
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_metric_condition_depends
+        ON metric_condition(depends_on_metric_id)
+    """)
+
     # Value table for duration metrics (minutes as INTEGER)
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS values_duration (

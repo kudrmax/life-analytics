@@ -283,6 +283,16 @@ entity "notes" as notes {
     <<INDEX>> (metric_id, user_id, date)
 }
 
+entity "metric_condition" as mcond {
+    * **metric_id** : INTEGER <<PK>> <<FK>>
+    --
+    * depends_on_metric_id : INTEGER <<FK>>
+    * condition_type : VARCHAR(20)
+    condition_value : JSONB
+    --
+    <<INDEX>> (depends_on_metric_id)
+}
+
 entity "values_duration" as vdu {
     * **entry_id** : INTEGER <<PK>> <<FK>>
     --
@@ -325,6 +335,8 @@ md ||--o| iapc : "metric_id"
 md ||--o| ec : "metric_id"
 md ||--o{ eo : "metric_id"
 md ||--o{ notes : "metric_id"
+md ||--o| mcond : "metric_id"
+md ||--o{ mcond : "depends_on_metric_id"
 
 slots ||--o{ entries : "slot_id"
 

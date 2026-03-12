@@ -346,6 +346,15 @@ h3 {
 .metric-card.metric-private { opacity: 0.6; }
 .trend-card-row.metric-private { opacity: 0.6; }
 
+.metric-card.metric-condition-blocked { opacity: 0.5; }
+.condition-hint { color: var(--text-dim); font-size: 13px; font-style: italic; padding: 8px 0; }
+.condition-current-value { color: var(--text-dim); font-size: 12px; padding: 2px 0 4px; }
+.condition-type-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; margin-top: 6px; }
+.condition-type-row select { flex: 0 0 auto; min-width: 120px; }
+.condition-value-buttons { display: flex; gap: 4px; flex-wrap: wrap; }
+.cond-val-btn { padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font-size: 13px; }
+.cond-val-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
 .metric-card.filled[data-metric-type="text"] {
     opacity: 1;
     border-color: var(--border);
@@ -2438,6 +2447,14 @@ details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-siz
     margin-left: 6px;
     vertical-align: middle;
 }
+.setting-condition {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    color: var(--text-dim);
+    vertical-align: middle;
+}
+.setting-condition svg { width: 14px; height: 14px; }
 
 /* ─── Emoji Picker ─── */
 .emoji-picker-wrapper {
