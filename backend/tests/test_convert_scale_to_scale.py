@@ -404,3 +404,216 @@ class TestScaleToScaleDBState:
             assert sc["scale_min"] == 0
             assert sc["scale_max"] == 100
             assert sc["scale_step"] == 10
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
+
+class TestScaleToScaleEdgeCases:
+
+    async def test_negative_scale_range(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        """Negative values in CASE WHEN — SQL parser must handle 'WHEN -3 THEN 2'."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token,
+            name="Neg Scale", metric_type="scale",
+            scale_min=-5, scale_max=5, scale_step=1,
+        )
+        mid = metric["id"]
+        for i, val in enumerate([-5, -3, 0, 3, 5]):
+            await create_entry(client, token, mid, f"2026-02-{10 + i:02d}", val)
+
+        status, body = await _do_convert(
+            client, token, mid,
+            mapping={"-5": "1", "-3": "2", "0": "3", "3": "4", "5": "5"},
+            scale_min=1, scale_max=5, scale_step=1,
+        )
+        assert status == 200
+        assert body["converted"] == 5
+        assert body["deleted"] == 0
+
+    async def test_zero_as_min_value(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        """0 as boundary value — while loop must start at 0."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token,
+            name="Zero Min", metric_type="scale",
+            scale_min=0, scale_max=5, scale_step=1,
+        )
+        mid = metric["id"]
+        await create_entry(client, token, mid, "2026-02-10", 0)
+
+        status, body = await _do_convert(
+            client, token, mid,
+            mapping={"0": "5"},
+            scale_min=0, scale_max=10, scale_step=1,
+        )
+        assert status == 200
+        assert body["converted"] == 1
+
+    async def test_step_equals_range(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        """step = (max - min) → only {min, max} are valid."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token,
+            name="Step Range", metric_type="scale",
+            scale_min=1, scale_max=10, scale_step=9,
+        )
+        mid = metric["id"]
+        await create_entry(client, token, mid, "2026-02-10", 1)
+        await create_entry(client, token, mid, "2026-02-11", 10)
+
+        status, body = await _do_convert(
+            client, token, mid,
+            mapping={"1": "10", "10": "1"},
+            scale_min=1, scale_max=10, scale_step=9,
+        )
+        assert status == 200
+        assert body["converted"] == 2
+
+    async def test_step_produces_single_value(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        """step > (max - min) is rejected; step = 4 with min=1, max=5 → valid {1, 5}."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token,
+            name="Single Val", metric_type="scale",
+            scale_min=1, scale_max=5, scale_step=4,
+        )
+        mid = metric["id"]
+        await create_entry(client, token, mid, "2026-02-10", 1)
+
+        # step=5 on range [1..5] → step > range → 400
+        status, _ = await _do_convert(
+            client, token, mid,
+            mapping={"1": "1"},
+            scale_min=1, scale_max=5, scale_step=5,
+        )
+        assert status == 400
+
+    async def test_mapping_key_with_leading_spaces(
+        self, client: AsyncClient, user_a: dict, scale_metric_with_entries: dict,
+    ):
+        """Keys with leading spaces won't match actual values → 400 incomplete."""
+        mid = scale_metric_with_entries["id"]
+        status, _ = await _do_convert(
+            client, user_a["token"], mid,
+            mapping={" 1": "1", " 2": "2", " 3": "3", " 4": "4", " 5": "5"},
+            scale_min=1, scale_max=5, scale_step=1,
+        )
+        assert status == 400
+
+    async def test_scale_metric_with_slots(
+        self, client: AsyncClient, user_a: dict, db_pool,
+    ):
+        """Scale metric with measurement slots — slot_id preserved after convert."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token,
+            name="Scale Slots", metric_type="scale",
+            scale_min=1, scale_max=5, scale_step=1,
+            slot_labels=["Утро", "Вечер"],
+        )
+        mid = metric["id"]
+        slots = metric["slots"]
+        assert len(slots) == 2
+
+        await create_entry(client, token, mid, "2026-02-10", 3, slot_id=slots[0]["id"])
+        await create_entry(client, token, mid, "2026-02-10", 4, slot_id=slots[1]["id"])
+
+        status, body = await _do_convert(
+            client, token, mid,
+            mapping={"3": "6", "4": "8"},
+            scale_min=1, scale_max=10, scale_step=1,
+        )
+        assert status == 200
+        assert body["converted"] == 2
+
+        async with db_pool.acquire() as conn:
+            entries = await conn.fetch(
+                "SELECT slot_id FROM entries WHERE metric_id = $1 ORDER BY slot_id", mid,
+            )
+            slot_ids = {r["slot_id"] for r in entries}
+            assert slot_ids == {slots[0]["id"], slots[1]["id"]}
+
+    async def test_large_number_of_entries(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        """50 entries with batch UPDATE/DELETE — CASE WHEN on 5 clauses, ANY() on 50 rows."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token,
+            name="Large Scale", metric_type="scale",
+            scale_min=1, scale_max=5, scale_step=1,
+        )
+        mid = metric["id"]
+        for i in range(50):
+            val = (i % 5) + 1
+            await create_entry(client, token, mid, f"2026-{(i // 28) + 1:02d}-{(i % 28) + 1:02d}", val)
+
+        status, body = await _do_convert(
+            client, token, mid,
+            mapping={"1": "2", "2": "4", "3": "6", "4": "8", "5": "10"},
+            scale_min=1, scale_max=10, scale_step=1,
+        )
+        assert status == 200
+        assert body["converted"] == 50
+        assert body["deleted"] == 0
+
+    async def test_remap_all_to_single_value(
+        self, client: AsyncClient, user_a: dict, scale_metric_with_entries: dict, db_pool,
+    ):
+        """All 5 distinct values mapped to same new value."""
+        mid = scale_metric_with_entries["id"]
+        status, body = await _do_convert(
+            client, user_a["token"], mid,
+            mapping={"1": "5", "2": "5", "3": "5", "4": "5", "5": "5"},
+            scale_min=1, scale_max=5, scale_step=1,
+        )
+        assert status == 200
+        assert body["converted"] == 5
+        assert body["deleted"] == 0
+
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT vs.value FROM values_scale vs
+                   JOIN entries e ON e.id = vs.entry_id
+                   WHERE e.metric_id = $1""",
+                mid,
+            )
+            assert all(r["value"] == 5 for r in rows)
+
+    async def test_disabled_metric_can_be_converted(
+        self, client: AsyncClient, user_a: dict, db_pool,
+    ):
+        """Disabled metric must still be convertible."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token,
+            name="Dis Scale", metric_type="scale",
+            scale_min=1, scale_max=5, scale_step=1,
+        )
+        mid = metric["id"]
+        await create_entry(client, token, mid, "2026-02-10", 3)
+
+        # Disable the metric
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE metric_definitions SET enabled = FALSE WHERE id = $1", mid,
+            )
+
+        status, body = await _do_convert(
+            client, token, mid,
+            mapping={"3": "6"},
+            scale_min=1, scale_max=10, scale_step=1,
+        )
+        assert status == 200
+        assert body["converted"] == 1

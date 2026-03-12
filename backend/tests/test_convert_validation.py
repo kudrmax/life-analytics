@@ -306,3 +306,54 @@ class TestDoubleConversion:
             headers=auth_headers(token),
         )
         assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Additional disallowed source types
+# ---------------------------------------------------------------------------
+
+class TestDisallowedSourceTypes:
+
+    async def test_convert_text_type_disallowed(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        """text is not in ALLOWED_CONVERSIONS → 400."""
+        metric = await create_metric(
+            client, user_a["token"],
+            name="Text Metric", metric_type="text",
+        )
+        resp = await client.post(
+            f"/api/metrics/{metric['id']}/convert",
+            json={
+                "target_type": "enum",
+                "value_mapping": {},
+                "enum_options": ["A", "B"],
+            },
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 400
+
+    async def test_convert_integration_type_disallowed(
+        self, client: AsyncClient, user_a: dict, db_pool,
+    ):
+        """integration is not in ALLOWED_CONVERSIONS → 400."""
+        # Integration metrics require provider via API, so create directly in DB
+        token = user_a["token"]
+        user_id = user_a["user_id"]
+        async with db_pool.acquire() as conn:
+            mid = await conn.fetchval(
+                """INSERT INTO metric_definitions (user_id, slug, name, type, enabled, sort_order)
+                   VALUES ($1, 'integ_test', 'Integ Metric', 'integration', TRUE, 0)
+                   RETURNING id""",
+                user_id,
+            )
+        resp = await client.post(
+            f"/api/metrics/{mid}/convert",
+            json={
+                "target_type": "enum",
+                "value_mapping": {},
+                "enum_options": ["A", "B"],
+            },
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 400

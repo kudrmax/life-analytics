@@ -225,3 +225,93 @@ class TestPreviewEdgeCases:
             headers={"Authorization": "Bearer invalid.jwt.token"},
         )
         assert resp.status_code == 401
+
+    async def test_preview_disabled_metric(
+        self, client: AsyncClient, user_a: dict, bool_metric_with_entries: dict, db_pool,
+    ):
+        """Disabled metric should still return preview."""
+        mid = bool_metric_with_entries["id"]
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE metric_definitions SET enabled = FALSE WHERE id = $1", mid,
+            )
+        resp = await client.get(
+            f"/api/metrics/{mid}/convert/preview",
+            params={"target_type": "enum"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_entries"] == 5
+
+    async def test_preview_bool_with_slots(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        """Bool metric with slots — preview aggregates all slots."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token,
+            name="Bool Slots Prev", metric_type="bool",
+            slot_labels=["Утро", "Вечер"],
+        )
+        mid = metric["id"]
+        slots = metric["slots"]
+        await create_entry(client, token, mid, "2026-02-10", True, slot_id=slots[0]["id"])
+        await create_entry(client, token, mid, "2026-02-10", False, slot_id=slots[1]["id"])
+
+        resp = await client.get(
+            f"/api/metrics/{mid}/convert/preview",
+            params={"target_type": "enum"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_entries"] == 2
+
+    async def test_preview_scale_negative_values(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        """Scale with negative values — GROUP BY/ORDER BY on negatives."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token,
+            name="Neg Scale Prev", metric_type="scale",
+            scale_min=-5, scale_max=5, scale_step=1,
+        )
+        mid = metric["id"]
+        for i, val in enumerate([-5, -3, 0, 3, 5]):
+            await create_entry(client, token, mid, f"2026-02-{10 + i:02d}", val)
+
+        resp = await client.get(
+            f"/api/metrics/{mid}/convert/preview",
+            params={"target_type": "scale"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_entries"] == 5
+        values = [item["value"] for item in data["entries_by_value"]]
+        assert values == ["-5", "-3", "0", "3", "5"]
+
+    async def test_preview_scale_zero_value(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        """Entry with value=0 — must appear in preview (0 is falsy in some contexts)."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token,
+            name="Zero Scale Prev", metric_type="scale",
+            scale_min=0, scale_max=5, scale_step=1,
+        )
+        mid = metric["id"]
+        await create_entry(client, token, mid, "2026-02-10", 0)
+
+        resp = await client.get(
+            f"/api/metrics/{mid}/convert/preview",
+            params={"target_type": "scale"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_entries"] == 1
+        assert data["entries_by_value"][0]["value"] == "0"

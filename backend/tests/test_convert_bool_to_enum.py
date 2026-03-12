@@ -583,3 +583,126 @@ class TestBoolToEnumDBState:
             )
             slot_ids = {r["slot_id"] for r in entries}
             assert slot_ids == {slots[0]["id"], slots[1]["id"]}
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
+
+class TestBoolToEnumEdgeCases:
+
+    async def test_empty_mapping_with_entries(
+        self, client: AsyncClient, user_a: dict, bool_metric_with_entries: dict,
+    ):
+        """Empty mapping when entries exist → 400 incomplete."""
+        mid = bool_metric_with_entries["id"]
+        status, _ = await _do_convert(
+            client, user_a["token"], mid,
+            options=["Да", "Нет"],
+            mapping={},
+        )
+        assert status == 400
+
+    async def test_whitespace_only_label(
+        self, client: AsyncClient, user_a: dict, bool_metric: dict,
+    ):
+        """Whitespace-only labels — no server-side validation expected."""
+        status, _ = await _do_convert(
+            client, user_a["token"], bool_metric["id"],
+            options=["   ", "Нет"],
+            mapping={"true": "   ", "false": "Нет"},
+        )
+        assert status == 200
+
+    async def test_label_exceeds_varchar_limit(
+        self, client: AsyncClient, user_a: dict, bool_metric: dict,
+    ):
+        """Label 256 chars — exceeds VARCHAR(200) in enum_options.
+
+        BUG: No server-side length validation — asyncpg raises
+        StringDataRightTruncationError which propagates through ASGI transport.
+        """
+        import asyncpg
+        long_label = "X" * 256
+        with pytest.raises(asyncpg.exceptions.StringDataRightTruncationError):
+            await _do_convert(
+                client, user_a["token"], bool_metric["id"],
+                options=[long_label, "Нет"],
+                mapping={"true": long_label, "false": "Нет"},
+            )
+
+    async def test_many_enum_options(
+        self, client: AsyncClient, user_a: dict, bool_metric: dict, db_pool,
+    ):
+        """50 options — all created with correct sort_order."""
+        labels = [f"Option_{i}" for i in range(50)]
+        status, _ = await _do_convert(
+            client, user_a["token"], bool_metric["id"],
+            options=labels,
+            mapping={"true": "Option_0", "false": "Option_1"},
+        )
+        assert status == 200
+
+        mid = bool_metric["id"]
+        async with db_pool.acquire() as conn:
+            opts = await conn.fetch(
+                "SELECT label, sort_order FROM enum_options WHERE metric_id = $1 ORDER BY sort_order",
+                mid,
+            )
+            assert len(opts) == 50
+            for i, opt in enumerate(opts):
+                assert opt["sort_order"] == i
+                assert opt["label"] == f"Option_{i}"
+
+    async def test_verify_multi_select_db_state(
+        self, client: AsyncClient, user_a: dict, bool_metric: dict, db_pool,
+    ):
+        """multi_select=True is stored in enum_config."""
+        mid = bool_metric["id"]
+        status, _ = await _do_convert(
+            client, user_a["token"], mid,
+            options=["A", "B"],
+            mapping={"true": "A", "false": "B"},
+            multi_select=True,
+        )
+        assert status == 200
+
+        async with db_pool.acquire() as conn:
+            ec = await conn.fetchrow(
+                "SELECT multi_select FROM enum_config WHERE metric_id = $1", mid,
+            )
+            assert ec is not None
+            assert ec["multi_select"] is True
+
+    async def test_empty_string_label(
+        self, client: AsyncClient, user_a: dict, bool_metric: dict,
+    ):
+        """Empty string label — no server-side validation expected."""
+        status, _ = await _do_convert(
+            client, user_a["token"], bool_metric["id"],
+            options=["", "Нет"],
+            mapping={"true": "", "false": "Нет"},
+        )
+        assert status == 200
+
+    async def test_large_number_of_entries_bool(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        """50 bool entries — batch INSERT/DELETE correctness."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token, name="Large Bool", metric_type="bool",
+        )
+        mid = metric["id"]
+        for i in range(50):
+            val = i % 2 == 0  # alternating True/False
+            await create_entry(client, token, mid, f"2026-{(i // 28) + 1:02d}-{(i % 28) + 1:02d}", val)
+
+        status, body = await _do_convert(
+            client, token, mid,
+            options=["Да", "Нет"],
+            mapping={"true": "Да", "false": "Нет"},
+        )
+        assert status == 200
+        assert body["converted"] == 50
+        assert body["deleted"] == 0
