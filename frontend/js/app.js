@@ -3144,6 +3144,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         btn.addEventListener('click', async (e) => {
             e.stopPropagation();
             const metricId = btn.dataset.metric;
+            if (!confirm('Архивировать метрику?')) return;
             try {
                 await api.updateMetric(metricId, { enabled: false });
                 await renderSettings(container);
