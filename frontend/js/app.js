@@ -430,7 +430,7 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
             </button>
         </div>`;
     } else {
-        html += '<h3 class="section-header">Ваши метрики</h3>';
+        html += `<h3 class="section-header">Ваши метрики <span class="corr-count">${summary.metrics.length}</span></h3>`;
         const hasCategories = categories.length > 0;
 
         for (const topCat of categories) {
@@ -2516,7 +2516,7 @@ function renderFormulaTokens() {
         container.innerHTML = '<span class="formula-tokens-empty">Добавьте метрики и операторы</span>';
         return;
     }
-    const opLabels = {'+': '+', '-': '−', '*': '×', '/': '÷'};
+    const opLabels = {'+': '+', '-': '−', '*': '×', '/': '÷', '>': '>', '<': '<'};
     container.innerHTML = formulaTokens.map((tok, i) => {
         if (tok.type === 'metric') {
             const icon = tok.icon ? `<span class="metric-icon">${tok.icon}</span>` : '';
@@ -2538,6 +2538,19 @@ function renderFormulaTokens() {
             renderFormulaTokens();
         });
     });
+    syncResultTypeWithComparison();
+}
+
+function syncResultTypeWithComparison() {
+    const sel = document.getElementById('nm-result-type');
+    if (!sel) return;
+    const hasComp = formulaTokens.some(t => t.type === 'op' && (t.value === '>' || t.value === '<'));
+    if (hasComp) {
+        sel.value = 'bool';
+        sel.disabled = true;
+    } else {
+        sel.disabled = false;
+    }
 }
 
 function populateFormulaMetricSelect(editingMetricId) {
@@ -2862,7 +2875,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     html += `<label class="theme-switch"><input type="checkbox" id="privacy-switch-input" ${privacyOn ? 'checked' : ''}><span class="slider"></span></label>`;
     html += '</div>';
 
-    html += '<h2>Настройки метрик</h2>';
+    html += `<h2>Настройки метрик <span class="corr-count">${allMetrics.length}</span></h2>`;
     html += '<div class="settings-actions">';
     html += '<button class="btn-primary" id="add-metric"><i data-lucide="plus"></i> Новая метрика</button>';
     html += '<button class="btn-small" id="manage-categories-btn"><i data-lucide="folders"></i> Категории</button>';
@@ -4431,6 +4444,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <button type="button" class="formula-op-btn" data-op="-">−</button>
                             <button type="button" class="formula-op-btn" data-op="*">×</button>
                             <button type="button" class="formula-op-btn" data-op="/">÷</button>
+                            <button type="button" class="formula-op-btn" data-op=">">&gt;</button>
+                            <button type="button" class="formula-op-btn" data-op="<">&lt;</button>
                             <button type="button" class="formula-op-btn" data-op="(">(</button>
                             <button type="button" class="formula-op-btn" data-op=")">)</button>
                         </div>
@@ -4450,7 +4465,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <option value="duration" ${existingMetric?.result_type === 'duration' ? 'selected' : ''}>Длительность</option>
                         </select>
                     </div>
-                    <span class="label-hint">Поддерживаются +, −, ×, ÷ и скобки.</span>
+                    <span class="label-hint">Поддерживаются +, −, ×, ÷, >, < и скобки. Время можно комбинировать с длительностью.</span>
                 </div>
                 ` : ''}
                 ${currentType !== 'computed' && currentType !== 'integration' && currentType !== 'text' ? `
@@ -4591,6 +4606,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <button type="button" class="formula-op-btn" data-op="-">−</button>
                             <button type="button" class="formula-op-btn" data-op="*">×</button>
                             <button type="button" class="formula-op-btn" data-op="/">÷</button>
+                            <button type="button" class="formula-op-btn" data-op=">">&gt;</button>
+                            <button type="button" class="formula-op-btn" data-op="<">&lt;</button>
                             <button type="button" class="formula-op-btn" data-op="(">(</button>
                             <button type="button" class="formula-op-btn" data-op=")">)</button>
                         </div>
@@ -4610,7 +4627,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <option value="duration">Длительность</option>
                         </select>
                     </div>
-                    <span class="label-hint">Поддерживаются +, −, ×, ÷ и скобки. Время можно комбинировать только с временем.</span>
+                    <span class="label-hint">Поддерживаются +, −, ×, ÷, >, < и скобки. Время можно комбинировать с длительностью.</span>
                     </div>
                 </div>
                 <div class="form-section" id="nm-slots-section" style="display: ${currentType === 'computed' || currentType === 'integration' || currentType === 'text' ? 'none' : ''}">

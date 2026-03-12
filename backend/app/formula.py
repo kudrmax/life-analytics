@@ -3,15 +3,16 @@ Formula engine for computed metrics.
 
 Token format (JSONB):
   {"type": "metric", "id": 5, "slug": "steps"}
-  {"type": "op",     "value": "+"|"-"|"*"|"/"}
+  {"type": "op",     "value": "+"|"-"|"*"|"/"|">"|"<"}
   {"type": "number", "value": 2.5}
   {"type": "lparen"}
   {"type": "rparen"}
 
 Evaluation uses recursive descent with standard operator precedence:
-  expr   = term (('+' | '-') term)*
-  term   = factor (('*' | '/') factor)*
-  factor = '(' expr ')' | metric_ref | number
+  comparison = expr (('>' | '<') expr)?
+  expr       = term (('+' | '-') term)*
+  term       = factor (('*' | '/') factor)*
+  factor     = '(' expr ')' | metric_ref | number
 """
 
 
@@ -42,9 +43,26 @@ def validate_formula(
     if depth != 0:
         return "Незакрытая скобка"
 
+    # Check comparison operators: max 1, not inside parentheses
+    comparison_count = sum(
+        1 for t in tokens if t.get("type") == "op" and t.get("value") in (">", "<")
+    )
+    if comparison_count > 1:
+        return "В формуле допустимо не более одного оператора сравнения"
+    if comparison_count == 1:
+        depth = 0
+        for t in tokens:
+            if t.get("type") == "lparen":
+                depth += 1
+            elif t.get("type") == "rparen":
+                depth -= 1
+            elif t.get("type") == "op" and t.get("value") in (">", "<") and depth > 0:
+                return "Оператор сравнения нельзя использовать внутри скобок"
+
     # Check all metric references exist and are not computed
     has_time = False
-    has_non_time = False
+    has_duration = False
+    has_other_numeric = False
     for t in tokens:
         if t.get("type") == "metric":
             mid = t.get("id")
@@ -55,18 +73,20 @@ def validate_formula(
                 return "Нельзя ссылаться на другие вычисляемые метрики"
             if mt == "time":
                 has_time = True
+            elif mt == "duration":
+                has_duration = True
             else:
-                has_non_time = True
+                has_other_numeric = True
 
-    # Check time compatibility
-    if has_time and has_non_time:
-        return "Нельзя смешивать время с другими типами в одной формуле"
+    # Check time compatibility: time + duration OK, time + number/scale/bool = error
+    if has_time and has_other_numeric:
+        return "Нельзя смешивать время с числовыми типами в одной формуле"
 
     # Check operators for time formulas
     if has_time:
         for t in tokens:
             if t.get("type") == "op" and t.get("value") in ("*", "/"):
-                return "Для времени допустимы только + и −"
+                return "Для времени допустимы только +, −, > и <"
             if t.get("type") == "number":
                 return "Нельзя использовать числовые константы в формуле с временем"
 
@@ -133,7 +153,7 @@ def evaluate_formula(
     if not tokens:
         return None
     try:
-        val, pos = _parse_expr(tokens, 0, values_by_id)
+        val, pos = _parse_comparison(tokens, 0, values_by_id)
         return _format_result(val, result_type)
     except (ZeroDivisionError, _MissingValue):
         return None
@@ -156,6 +176,18 @@ def _format_result(value: float, result_type: str):
         h, m = divmod(total, 60)
         return f"{h}ч {m}м"
     return round(value, 4)
+
+
+def _parse_comparison(tokens, pos, values):
+    left, pos = _parse_expr(tokens, pos, values)
+    if pos < len(tokens):
+        t = tokens[pos]
+        if t.get("type") == "op" and t.get("value") in (">", "<"):
+            op = t["value"]
+            pos += 1
+            right, pos = _parse_expr(tokens, pos, values)
+            left = 1.0 if (left > right if op == ">" else left < right) else 0.0
+    return left, pos
 
 
 def _parse_expr(tokens, pos, values):

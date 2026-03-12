@@ -341,6 +341,11 @@ async def create_metric(
             err = validate_formula(data.formula, source_types)
             if err:
                 raise HTTPException(400, err)
+        has_comparison = any(
+            t.get("type") == "op" and t.get("value") in (">", "<") for t in data.formula
+        )
+        if has_comparison and data.result_type != "bool":
+            raise HTTPException(400, "Формула со сравнением должна иметь тип результата bool")
         await db.execute(
             "INSERT INTO computed_config (metric_id, formula, result_type) VALUES ($1, $2::jsonb, $3)",
             metric_id, json.dumps(data.formula), data.result_type,
@@ -498,6 +503,11 @@ async def update_metric(
             err = validate_formula(new_formula, source_types)
             if err:
                 raise HTTPException(400, err)
+        has_comparison = any(
+            t.get("type") == "op" and t.get("value") in (">", "<") for t in new_formula
+        )
+        if has_comparison and new_result_type != "bool":
+            raise HTTPException(400, "Формула со сравнением должна иметь тип результата bool")
         if cfg:
             await db.execute(
                 "UPDATE computed_config SET formula = $1::jsonb, result_type = $2 WHERE metric_id = $3",
