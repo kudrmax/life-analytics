@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up build-up down logs logs-backend migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db
+.PHONY: help up build-up down logs logs-backend test migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db
 
 .DEFAULT_GOAL := help
 
@@ -17,6 +17,9 @@ help: ## Показать эту справку
 	@echo "    make logs            Логи всех сервисов"
 	@echo "    make logs-backend    Логи только backend"
 	@echo "    make status          Статус контейнеров"
+	@echo ""
+	@echo "  Тесты:"
+	@echo "    make test            Запустить тесты (нужен PostgreSQL)"
 	@echo ""
 	@echo "  Production (на сервере):"
 	@echo "    make update          git pull + пересобрать и перезапустить"
@@ -53,6 +56,11 @@ logs:
 
 logs-backend:
 	docker compose logs -f backend
+
+# ─── Тесты ───
+
+test: ## Запустить тесты (нужен запущенный PostgreSQL)
+	cd backend && source venv/bin/activate && python -m pytest -v $(ARGS)
 
 # ─── Production ───
 

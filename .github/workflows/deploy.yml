@@ -6,7 +6,37 @@ on:
   workflow_dispatch:
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: la_user
+          POSTGRES_PASSWORD: la_password
+          POSTGRES_DB: life_analytics
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U la_user -d life_analytics"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      LA_SECRET_KEY: test-secret-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r backend/requirements-test.txt
+      - name: Run tests
+        working-directory: backend
+        run: python -m pytest -v
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Deploy via SSH
