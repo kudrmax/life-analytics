@@ -33,8 +33,8 @@ help: ## Показать эту справку
 	@echo "    make backup-up       Запустить сервис бэкапов"
 	@echo "    make backup-down     Остановить сервис бэкапов"
 	@echo "    make backup-logs     Логи бэкапов"
-	@echo "    make backup-now      Сделать бэкап прямо сейчас (разово)
-	@echo "    make backup-restore  Восстановить БД из бэкапа (FILE=path.sql.gz)""
+	@echo "    make backup-now      Сделать бэкап прямо сейчас (разово)"
+	@echo "    make backup-restore  Восстановить БД из бэкапа (FILE=path.sql.gz)"
 	@echo ""
 
 # ─── Docker ───
