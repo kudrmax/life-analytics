@@ -2855,22 +2855,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         for (const m of activeMetrics) {
             // Check if multi-slot metric has slots in different categories
             if (m.slots && m.slots.length >= 2) {
-                const slotCats = new Set(m.slots.map(s => s.category_id || null));
-                if (slotCats.size > 1) {
-                    // Different categories → separate row per slot
-                    for (const slot of m.slots) {
-                        const slotItem = Object.assign({}, m, { _slot: slot, _isSlotRow: true });
-                        const catId = slot.category_id;
-                        if (catId && settingsCatById[catId]) {
-                            if (!settingsMetricsByCat[catId]) settingsMetricsByCat[catId] = [];
-                            settingsMetricsByCat[catId].push(slotItem);
-                        } else {
-                            settingsUncategorized.push(slotItem);
-                        }
-                    }
-                    continue;
-                }
-                // All slots in same category — use slot's category_id
+                // Always group as single row — use first slot's category_id
                 const slotCatId = m.slots[0].category_id;
                 if (slotCatId && settingsCatById[slotCatId]) {
                     if (!settingsMetricsByCat[slotCatId]) settingsMetricsByCat[slotCatId] = [];
@@ -2888,11 +2873,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         const hasSettingsCategories = settingsCategories.length > 0;
 
         function renderSettingRow(m) {
-            const isSlotRow = m._isSlotRow;
-            const slot = m._slot;
-            const slotAttr = isSlotRow ? ` data-slot-id="${slot.id}"` : '';
-            const slotBadge = isSlotRow ? `<span class="slot-badge">${slot.label}</span>` : '';
-            const slotsBadge = (!isSlotRow && m.slots && m.slots.length > 0)
+            const slotsBadge = (m.slots && m.slots.length > 0)
                 ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
             const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
                 : m.type === 'duration' ? '<i data-lucide="timer"></i> Длительность'
@@ -2903,10 +2884,10 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
                 : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
-            return `<div class="setting-row" data-metric-id="${m.id}"${slotAttr}>
+            return `<div class="setting-row" data-metric-id="${m.id}">
                 <span class="drag-handle">⠿</span>
                 <div class="setting-info">
-                    <span class="setting-name">${metricLabelHtml(m)}${slotBadge}</span>
+                    <span class="setting-name">${metricLabelHtml(m)}</span>
                     <span class="setting-type">${typeIcon}</span>
                 </div>
                 <div class="setting-actions">
@@ -3219,9 +3200,6 @@ function setupMetricDragDrop(container) {
                 sort_order: index * 10,
                 category_id: catId,
             };
-            if (row.dataset.slotId) {
-                item.slot_id = parseInt(row.dataset.slotId);
-            }
             items.push(item);
         });
         return items;
