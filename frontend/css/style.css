@@ -346,6 +346,14 @@ h3 {
 .metric-card.metric-private { opacity: 0.6; }
 .trend-card-row.metric-private { opacity: 0.6; }
 
+.metric-card.filled[data-metric-type="text"] {
+    opacity: 1;
+    border-color: var(--border);
+}
+.metric-card.filled[data-metric-type="text"] .metric-label {
+    color: var(--text-main);
+}
+
 .metric-card.filled .metric-label {
     color: var(--text-dim);
 }
@@ -1030,6 +1038,14 @@ input[type="month"], input[type="date"] {
     height: 120px;
 }
 
+.trend-text-count {
+    padding: 12px 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--text-main);
+    text-align: center;
+}
+
 /* ─── Metric Detail Page ─── */
 .detail-header {
     display: flex;
@@ -1394,7 +1410,7 @@ input[type="month"], input[type="date"] {
     margin-top: 4px;
 }
 .corr-section-low {
-    opacity: 0.7;
+    margin-top: 8px;
 }
 details.corr-section-low summary { cursor: pointer; list-style: none; }
 details.corr-section-low summary::-webkit-details-marker { display: none; }
@@ -1404,9 +1420,11 @@ details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-siz
     padding: 16px;
     border-radius: 8px;
     background: var(--bg-card);
+    border: 1px solid var(--border);
     color: var(--text-dim);
     font-size: 14px;
     text-align: center;
+    margin-top: 8px;
 }
 .corr-empty-notice p { margin: 4px 0; }
 
@@ -1415,6 +1433,10 @@ details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-siz
     padding: 24px;
     color: var(--text-dim);
     font-size: 14px;
+    background: var(--bg-card);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    margin-bottom: 16px;
     animation: corr-pulse 1.5s ease-in-out infinite;
 }
 

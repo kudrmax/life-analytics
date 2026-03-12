@@ -11,6 +11,14 @@ const PRIVATE_ICON = '🔒';
 function isMetricBlocked(m) { return m.private && isPrivacyMode(); }
 function metricIconHtml(m) { const i = m.icon || ''; return i ? '<span class="metric-icon">' + i + '</span>' : ''; }
 function metricLabelHtml(m) { return metricIconHtml(m) + m.name; }
+function _pluralize(n, one, few, many) {
+    const m = Math.abs(n) % 100;
+    if (m >= 11 && m <= 19) return many;
+    const d = m % 10;
+    if (d === 1) return one;
+    if (d >= 2 && d <= 4) return few;
+    return many;
+}
 
 // ─── State ───
 let currentDate = todayStr();
@@ -317,6 +325,22 @@ async function renderToday(container) {
     document.getElementById('go-today').onclick = () => { currentDate = todayStr(); renderTodayForm(true); };
     document.getElementById('today-add-metric').onclick = () => { navigateTo('settings', { openAddModal: true }); };
     document.getElementById('today-edit-metrics').onclick = () => { navigateTo('settings'); };
+
+    // Swipe navigation for mobile
+    const metricsForm = document.getElementById('metrics-form');
+    let touchStartX = 0;
+    let touchStartY = 0;
+    metricsForm.addEventListener('touchstart', (e) => {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+    metricsForm.addEventListener('touchend', (e) => {
+        const dx = e.changedTouches[0].clientX - touchStartX;
+        const dy = e.changedTouches[0].clientY - touchStartY;
+        if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+            changeDay(dx < 0 ? 1 : -1);
+        }
+    }, { passive: true });
 
     await renderTodayForm();
 }
@@ -1583,6 +1607,15 @@ async function loadChartsTrends(start, end) {
                         <h4>${metricIconHtml(m)}<span class="trend-metric-name">${m.name}</span></h4>
                     </div>
                     <div class="metric-private-hint">Сначала отключите приватный режим</div>
+                </div>`;
+            } else if (m.type === 'text') {
+                const total = (trend.points || []).reduce((s, p) => s + (p.value || 0), 0);
+                cardHtml = `<div class="trend-card-row" data-metric-id="${m.id}" style="cursor:pointer">
+                    <div class="trend-card-header">
+                        <h4>${metricIconHtml(m)}<span class="trend-metric-name">${m.name}</span></h4>
+                        <i data-lucide="info" class="trend-info-icon"></i>
+                    </div>
+                    <div class="trend-text-count">${total} ${_pluralize(total, 'запись', 'записи', 'записей')}</div>
                 </div>`;
             } else {
                 trendData.push({ metric: m, points: trend.points || [], trend });
