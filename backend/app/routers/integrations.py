@@ -297,22 +297,40 @@ async def aw_summary(
         current_user["id"], d,
     )
     if not summary:
-        return {"date": date, "synced": False, "total_seconds": 0, "active_seconds": 0, "apps": [], "domains": []}
+        return {"date": date, "synced": False, "total_seconds": 0, "active_seconds": 0, "afk_percent": 0, "apps": [], "domains": [], "all_apps": [], "all_domains": []}
+
+    total_sec = summary["total_seconds"]
+    active_sec = summary["active_seconds"]
+    afk_percent = round((1 - active_sec / total_sec) * 100) if total_sec > 0 else 0
+
+    all_apps = [
+        {
+            "app_name": a["app_name"],
+            "duration_seconds": a["duration_seconds"],
+            "percent": round(a["duration_seconds"] / active_sec * 100) if active_sec > 0 else 0,
+        }
+        for a in apps if a["source"] == "window"
+    ]
+    all_domains = [
+        {
+            "domain": a["app_name"],
+            "duration_seconds": a["duration_seconds"],
+            "percent": round(a["duration_seconds"] / active_sec * 100) if active_sec > 0 else 0,
+        }
+        for a in apps if a["source"] == "web"
+    ]
 
     return {
         "date": date,
         "synced": True,
-        "total_seconds": summary["total_seconds"],
-        "active_seconds": summary["active_seconds"],
+        "total_seconds": total_sec,
+        "active_seconds": active_sec,
+        "afk_percent": afk_percent,
         "synced_at": summary["synced_at"].isoformat(),
-        "apps": [
-            {"app_name": a["app_name"], "duration_seconds": a["duration_seconds"]}
-            for a in apps if a["source"] == "window"
-        ],
-        "domains": [
-            {"domain": a["app_name"], "duration_seconds": a["duration_seconds"]}
-            for a in apps if a["source"] == "web"
-        ],
+        "apps": all_apps[:7],
+        "domains": all_domains[:5],
+        "all_apps": all_apps,
+        "all_domains": all_domains,
     }
 
 
@@ -332,17 +350,20 @@ async def aw_trends(
            ORDER BY date""",
         current_user["id"], start_d, end_d,
     )
+    points = []
+    for r in rows:
+        total_h = round(r["total_seconds"] / 3600, 2)
+        active_h = round(r["active_seconds"] / 3600, 2)
+        points.append({
+            "date": str(r["date"]),
+            "total_hours": total_h,
+            "active_hours": active_h,
+            "afk_hours": round(max(0, total_h - active_h), 2),
+        })
     return {
         "start": start,
         "end": end,
-        "points": [
-            {
-                "date": str(r["date"]),
-                "total_hours": round(r["total_seconds"] / 3600, 2),
-                "active_hours": round(r["active_seconds"] / 3600, 2),
-            }
-            for r in rows
-        ],
+        "points": points,
     }
 
 

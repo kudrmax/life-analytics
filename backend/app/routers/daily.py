@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from app.database import get_db
 from app.auth import get_current_user
 from app.formula import convert_metric_value, evaluate_formula
+from app.metric_helpers import format_display_value
 from app.timing import QueryTimer
 
 
@@ -258,6 +259,10 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                         "id": entry["id"],
                         "recorded_at": str(entry["recorded_at"]),
                         "value": value,
+                        "display_value": format_display_value(
+                            value, m["type"], m.get("result_type"),
+                            enum_options_by_metric.get(mid),
+                        ),
                     }
                     # Scale context from stored values
                     sc = scale_context_map.get(entry["id"])
@@ -283,6 +288,10 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                     "id": entry["id"],
                     "recorded_at": str(entry["recorded_at"]),
                     "value": value,
+                    "display_value": format_display_value(
+                        value, m["type"], m.get("result_type"),
+                        enum_options_by_metric.get(mid),
+                    ),
                 }
                 # For filled scale entries, use stored context instead of current config
                 sc = scale_context_map.get(entry["id"])
@@ -337,6 +346,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                 "id": None,
                 "recorded_at": None,
                 "value": computed_val,
+                "display_value": format_display_value(computed_val, "computed", result_type),
             }
 
     # Auto metrics
@@ -385,6 +395,38 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
          "value": d.isocalendar()[1]},
     ])
 
+    # Progress calculation (skip computed/integration, text=filled if note_count>0, multi-slot each slot separately)
+    progress_filled = 0
+    progress_total = 0
+    for item in result:
+        mt = item["type"]
+        if mt in ("computed", "integration"):
+            continue
+        if mt == "text":
+            progress_total += 1
+            if item.get("note_count", 0) > 0:
+                progress_filled += 1
+            continue
+        if item["slots"]:
+            for s in item["slots"]:
+                progress_total += 1
+                if s["entry"] is not None:
+                    progress_filled += 1
+        else:
+            progress_total += 1
+            if item["entry"] is not None:
+                progress_filled += 1
+    progress_percent = round(progress_filled / progress_total * 100) if progress_total > 0 else 0
+
     qt.mark("build")
     qt.log()
-    return {"date": date, "metrics": result, "auto_metrics": auto_metrics}
+    return {
+        "date": date,
+        "metrics": result,
+        "auto_metrics": auto_metrics,
+        "progress": {
+            "filled": progress_filled,
+            "total": progress_total,
+            "percent": progress_percent,
+        },
+    }

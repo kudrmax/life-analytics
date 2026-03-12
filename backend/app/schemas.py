@@ -39,7 +39,7 @@ class CategoryOut(BaseModel):
 
 
 class MetricDefinitionCreate(BaseModel):
-    slug: str
+    slug: str | None = None
     name: str
     category_id: int | None = None
     new_category_name: str | None = None

@@ -1,4 +1,5 @@
 import json
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -9,6 +10,28 @@ from app.metric_helpers import build_metric_out, get_metric_slots, get_enum_opti
 from app.formula import validate_formula, get_referenced_metric_ids
 from app.integrations.todoist.registry import TODOIST_METRICS, TODOIST_ICON
 from app.integrations.activitywatch.registry import ACTIVITYWATCH_METRICS, ACTIVITYWATCH_ICON
+
+
+def _generate_slug(name: str) -> str:
+    """Generate a slug from metric name: lowercase, spaces to underscores, strip special chars."""
+    slug = name.lower().replace(" ", "_")
+    slug = re.sub(r"[^a-z0-9_а-яё]", "", slug)
+    return slug or f"metric_{int(__import__('time').time())}"
+
+
+async def _unique_slug(db, user_id: int, base_slug: str) -> str:
+    """Ensure slug is unique for the user, appending _2, _3... if needed."""
+    slug = base_slug
+    suffix = 1
+    while True:
+        existing = await db.fetchval(
+            "SELECT id FROM metric_definitions WHERE slug = $1 AND user_id = $2",
+            slug, user_id,
+        )
+        if not existing:
+            return slug
+        suffix += 1
+        slug = f"{base_slug}_{suffix}"
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
@@ -160,12 +183,18 @@ async def create_metric(
         if len(set(data.enum_options)) != len(data.enum_options):
             raise HTTPException(400, "Enum option labels must be unique")
 
-    existing = await db.fetchval(
-        "SELECT id FROM metric_definitions WHERE slug = $1 AND user_id = $2",
-        data.slug, current_user["id"],
-    )
-    if existing:
-        raise HTTPException(409, "Metric with this slug already exists")
+    # Generate slug from name if not provided
+    if data.slug:
+        existing = await db.fetchval(
+            "SELECT id FROM metric_definitions WHERE slug = $1 AND user_id = $2",
+            data.slug, current_user["id"],
+        )
+        if existing:
+            raise HTTPException(409, "Metric with this slug already exists")
+        slug = data.slug
+    else:
+        base_slug = _generate_slug(data.name)
+        slug = await _unique_slug(db, current_user["id"], base_slug)
 
     if data.type == MetricType.scale:
         s_min = data.scale_min if data.scale_min is not None else 1
@@ -197,7 +226,7 @@ async def create_metric(
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            RETURNING id""",
         current_user["id"],
-        data.slug,
+        slug,
         data.name,
         cat_id,
         icon,
