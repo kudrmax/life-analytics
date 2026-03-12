@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.database import get_db
 from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut, MetricType
-from app.auth import get_current_user
+from app.auth import get_current_user, get_privacy_mode
 from app.metric_helpers import build_metric_out, get_metric_slots, get_enum_options
 from app.formula import validate_formula, get_referenced_metric_ids
 from app.integrations.todoist.registry import TODOIST_METRICS, TODOIST_ICON
@@ -41,6 +41,7 @@ async def list_metrics(
     enabled_only: bool = False,
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    privacy_mode: bool = Depends(get_privacy_mode),
 ):
     query = """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
                       cc.formula, cc.result_type,
@@ -69,7 +70,7 @@ async def list_metrics(
     enum_opts_map = await get_enum_options(db, metric_ids) if metric_ids else {}
 
     return [
-        await build_metric_out(r, slots_map.get(r["id"]), enum_opts_map.get(r["id"]))
+        await build_metric_out(r, slots_map.get(r["id"]), enum_opts_map.get(r["id"]), privacy_mode)
         for r in rows
     ]
 
@@ -98,6 +99,7 @@ async def get_metric(
     metric_id: int,
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    privacy_mode: bool = Depends(get_privacy_mode),
 ):
     row = await db.fetchrow(
         """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
@@ -123,7 +125,7 @@ async def get_metric(
 
     slots_map = await get_metric_slots(db, [metric_id])
     enum_opts_map = await get_enum_options(db, [metric_id])
-    return await build_metric_out(row, slots_map.get(metric_id), enum_opts_map.get(metric_id))
+    return await build_metric_out(row, slots_map.get(metric_id), enum_opts_map.get(metric_id), privacy_mode)
 
 
 @router.post("", response_model=MetricDefinitionOut, status_code=201)
@@ -131,6 +133,7 @@ async def create_metric(
     data: MetricDefinitionCreate,
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    privacy_mode: bool = Depends(get_privacy_mode),
 ):
     if data.type == MetricType.integration:
         if not data.provider:
@@ -222,8 +225,8 @@ async def create_metric(
 
     metric_id = await db.fetchval(
         """INSERT INTO metric_definitions
-           (user_id, slug, name, category_id, icon, type, enabled, sort_order)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           (user_id, slug, name, category_id, icon, type, enabled, sort_order, private)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            RETURNING id""",
         current_user["id"],
         slug,
@@ -233,6 +236,7 @@ async def create_metric(
         data.type.value,
         data.enabled,
         data.sort_order,
+        data.private,
     )
 
     if data.type == MetricType.integration:
@@ -314,7 +318,7 @@ async def create_metric(
                 metric_id, i, label,
             )
 
-    return await get_metric(metric_id, db, current_user)
+    return await get_metric(metric_id, db, current_user, privacy_mode)
 
 
 @router.patch("/{metric_id}", response_model=MetricDefinitionOut)
@@ -323,6 +327,7 @@ async def update_metric(
     data: MetricDefinitionUpdate,
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    privacy_mode: bool = Depends(get_privacy_mode),
 ):
     row = await db.fetchrow(
         "SELECT * FROM metric_definitions WHERE id = $1 AND user_id = $2",
@@ -342,6 +347,8 @@ async def update_metric(
         updates["enabled"] = data.enabled
     if data.sort_order is not None:
         updates["sort_order"] = data.sort_order
+    if data.private is not None:
+        updates["private"] = data.private
 
     if updates:
         set_parts = []
@@ -529,7 +536,7 @@ async def update_metric(
                             s["id"],
                         )
 
-    return await get_metric(metric_id, db, current_user)
+    return await get_metric(metric_id, db, current_user, privacy_mode)
 
 
 @router.delete("/{metric_id}", status_code=204)

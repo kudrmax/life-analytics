@@ -176,6 +176,12 @@ MIGRATIONS = [
     (5, "add_p_value_to_correlation_pairs", """
         ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS p_value FLOAT;
     """),
+    (6, "add_private_column", """
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS private BOOLEAN NOT NULL DEFAULT FALSE;
+    """),
+    (7, "add_privacy_mode_to_users", """
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS privacy_mode BOOLEAN NOT NULL DEFAULT FALSE;
+    """),
 ]
 
 

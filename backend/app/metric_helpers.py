@@ -9,21 +9,38 @@ import asyncpg
 
 from app.schemas import MetricDefinitionOut, MeasurementSlotOut
 
+PRIVATE_MASK = "***"
+PRIVATE_ICON = "🔒"
+
+
+def mask_name(name: str, is_private: bool, privacy_mode: bool) -> str:
+    return PRIVATE_MASK if (is_private and privacy_mode) else name
+
+
+def mask_icon(icon: str, is_private: bool, privacy_mode: bool) -> str:
+    return PRIVATE_ICON if (is_private and privacy_mode) else icon
+
+
+def is_blocked(is_private: bool, privacy_mode: bool) -> bool:
+    return is_private and privacy_mode
+
 
 async def build_metric_out(
     row: asyncpg.Record,
     slots: list | None = None,
     enum_opts: list | None = None,
+    privacy_mode: bool = False,
 ) -> MetricDefinitionOut:
     formula_raw = row.get("formula")
     if isinstance(formula_raw, str):
         formula_raw = json.loads(formula_raw)
+    is_private = row.get("private", False)
     return MetricDefinitionOut(
         id=row["id"],
         slug=row["slug"],
-        name=row["name"],
+        name=mask_name(row["name"], is_private, privacy_mode),
         category_id=row.get("category_id"),
-        icon=row.get("icon", ""),
+        icon=mask_icon(row.get("icon", ""), is_private, privacy_mode),
         type=row["type"],
         enabled=row["enabled"],
         sort_order=row["sort_order"],
@@ -42,6 +59,7 @@ async def build_metric_out(
         config_app_name=row.get("config_app_name"),
         enum_options=enum_opts,
         multi_select=row.get("multi_select"),
+        private=is_private,
     )
 
 

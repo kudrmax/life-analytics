@@ -322,6 +322,10 @@ h3 {
     border-color: #222;
 }
 
+.metric-private-hint { color: var(--text-dim); font-size: 13px; font-style: italic; padding: 8px 0; }
+.metric-card.metric-private { opacity: 0.6; }
+.trend-card-row.metric-private { opacity: 0.6; }
+
 .metric-card.filled .metric-label {
     color: var(--text-dim);
 }

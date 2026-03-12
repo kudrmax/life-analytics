@@ -20,6 +20,7 @@ entity "users" as users {
     --
     * username : VARCHAR(30) <<UNIQUE>>
     * password_hash : TEXT
+    * privacy_mode : BOOLEAN [FALSE]
     * created_at : TIMESTAMPTZ
 }
 
@@ -49,6 +50,7 @@ entity "metric_definitions" as md {
     * enabled : BOOLEAN
     * sort_order : INTEGER
     * icon : VARCHAR(600)
+    * private : BOOLEAN
     * created_at : TIMESTAMPTZ
     --
     <<UNIQUE>> (user_id, slug)

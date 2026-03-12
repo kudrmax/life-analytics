@@ -11,7 +11,8 @@ from pydantic import BaseModel
 
 from app import database as _db_module
 from app.database import get_db
-from app.auth import get_current_user
+from app.auth import get_current_user, get_privacy_mode
+from app.metric_helpers import mask_name, mask_icon, is_blocked, PRIVATE_MASK, PRIVATE_ICON
 from app.formula import convert_metric_value, evaluate_formula, get_referenced_metric_ids
 from app.correlation_blacklist import should_skip_pair
 from app.timing import timed_fetch, QueryTimer
@@ -356,6 +357,7 @@ async def trends(
     end: str = Query(..., description="YYYY-MM-DD"),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    privacy_mode: bool = Depends(get_privacy_mode),
 ):
     qt = QueryTimer(f"trends/{metric_id}")
     metric = await db.fetchrow(
@@ -369,6 +371,16 @@ async def trends(
     if not metric:
         return {"error": "Metric not found"}
     qt.mark("metric")
+
+    if is_blocked(metric.get("private", False), privacy_mode):
+        return {
+            "metric_id": metric_id,
+            "metric_name": PRIVATE_MASK,
+            "start": start,
+            "end": end,
+            "points": [],
+            "blocked": True,
+        }
 
     mt = metric["type"]
     if mt == "integration":
@@ -519,6 +531,7 @@ async def metric_stats(
     end: str = Query(..., description="YYYY-MM-DD"),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    privacy_mode: bool = Depends(get_privacy_mode),
 ):
     qt = QueryTimer(f"metric-stats/{metric_id}")
     metric = await db.fetchrow(
@@ -531,6 +544,8 @@ async def metric_stats(
     )
     if not metric:
         return {"error": "Metric not found"}
+    if is_blocked(metric.get("private", False), privacy_mode):
+        return {"blocked": True}
     qt.mark("metric")
 
     mt = metric["type"]
@@ -1216,21 +1231,31 @@ def _corr_hint_words(type_a: str, type_b: str, r: float) -> tuple[str, bool, str
     return (hint_a, True, hint_b, r > 0)
 
 
-def _format_pair(p: dict, metric_icons: dict[str, str]) -> dict:
+def _format_pair(p: dict, metric_icons: dict[str, str], privacy_mode: bool = False) -> dict:
+    priv_a = p.get("private_a", False)
+    priv_b = p.get("private_b", False)
+    blocked_a = is_blocked(priv_a, privacy_mode)
+    blocked_b = is_blocked(priv_b, privacy_mode)
     corr = p["correlation"]
     if corr is not None:
         hint_a, hint_a_pos, hint_b, hint_b_pos = _corr_hint_words(p["type_a"], p["type_b"], corr)
     else:
         hint_a, hint_a_pos, hint_b, hint_b_pos = "", True, "", True
+
+    label_a = PRIVATE_MASK if blocked_a else _pair_label(p["name_a"], p["label_a"], p["type_a"])
+    label_b = PRIVATE_MASK if blocked_b else _pair_label(p["name_b"], p["label_b"], p["type_b"])
+    icon_a = PRIVATE_ICON if blocked_a else _resolve_icon(p["icon_a"], p["label_a"], metric_icons)
+    icon_b = PRIVATE_ICON if blocked_b else _resolve_icon(p["icon_b"], p["label_b"], metric_icons)
+
     return {
-        "label_a": _pair_label(p["name_a"], p["label_a"], p["type_a"]),
-        "label_b": _pair_label(p["name_b"], p["label_b"], p["type_b"]),
-        "option_a": _pair_option(p["label_a"], p["type_a"], p["slot_a_id"]),
-        "option_b": _pair_option(p["label_b"], p["type_b"], p["slot_b_id"]),
+        "label_a": label_a,
+        "label_b": label_b,
+        "option_a": "" if blocked_a else _pair_option(p["label_a"], p["type_a"], p["slot_a_id"]),
+        "option_b": "" if blocked_b else _pair_option(p["label_b"], p["type_b"], p["slot_b_id"]),
         "type_a": p["type_a"],
         "type_b": p["type_b"],
-        "icon_a": _resolve_icon(p["icon_a"], p["label_a"], metric_icons),
-        "icon_b": _resolve_icon(p["icon_b"], p["label_b"], metric_icons),
+        "icon_a": icon_a,
+        "icon_b": icon_b,
         "slot_label_a": p["slot_label_a"] or "",
         "slot_label_b": p["slot_label_b"] or "",
         "correlation": corr,
@@ -1240,10 +1265,12 @@ def _format_pair(p: dict, metric_icons: dict[str, str]) -> dict:
         "metric_a_id": p["metric_a_id"],
         "metric_b_id": p["metric_b_id"],
         "pair_id": p["pair_id"],
-        "hint_a": hint_a,
-        "hint_b": hint_b,
+        "hint_a": "" if blocked_a else hint_a,
+        "hint_b": "" if blocked_b else hint_b,
         "hint_a_positive": hint_a_pos,
         "hint_b_positive": hint_b_pos,
+        "private_a": priv_a,
+        "private_b": priv_b,
     }
 
 
@@ -1264,6 +1291,7 @@ async def get_correlation_pairs(
     limit: int = 50,
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    privacy_mode: bool = Depends(get_privacy_mode),
 ):
     # Verify report belongs to user
     report_row = await db.fetchrow(
@@ -1288,8 +1316,8 @@ async def get_correlation_pairs(
                    cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days, cp.p_value,
                    cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
                    cp.label_a, cp.label_b,
-                   ma.name AS name_a, ma.icon AS icon_a,
-                   mb.name AS name_b, mb.icon AS icon_b,
+                   ma.name AS name_a, ma.icon AS icon_a, COALESCE(ma.private, FALSE) AS private_a,
+                   mb.name AS name_b, mb.icon AS icon_b, COALESCE(mb.private, FALSE) AS private_b,
                    sa.label AS slot_label_a,
                    sb.label AS slot_label_b
             FROM correlation_pairs cp
@@ -1313,7 +1341,7 @@ async def get_correlation_pairs(
         metric_icons = {m["name"]: m["icon"] for m in user_metrics if m["icon"]}
 
     return {
-        "pairs": [_format_pair(p, metric_icons) for p in pairs],
+        "pairs": [_format_pair(p, metric_icons, privacy_mode) for p in pairs],
         "total": total,
         "has_more": offset + limit < total,
     }
@@ -1417,6 +1445,7 @@ async def correlation_pair_chart(
     pair_id: int = Query(...),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    privacy_mode: bool = Depends(get_privacy_mode),
 ):
     row = await db.fetchrow(
         """SELECT cp.*, cr.period_start, cr.period_end, cr.user_id
@@ -1427,6 +1456,22 @@ async def correlation_pair_chart(
     )
     if not row or row["user_id"] != current_user["id"]:
         return {"dates": [], "values_a": [], "values_b": []}
+
+    # Check privacy for each side
+    priv_a = False
+    priv_b = False
+    if row["metric_a_id"] is not None:
+        ma_row = await db.fetchrow(
+            "SELECT private FROM metric_definitions WHERE id = $1", row["metric_a_id"]
+        )
+        priv_a = ma_row["private"] if ma_row else False
+    if row["metric_b_id"] is not None:
+        mb_row = await db.fetchrow(
+            "SELECT private FROM metric_definitions WHERE id = $1", row["metric_b_id"]
+        )
+        priv_b = mb_row["private"] if mb_row else False
+    blocked_a = is_blocked(priv_a, privacy_mode)
+    blocked_b = is_blocked(priv_b, privacy_mode)
 
     start_date = row["period_start"]
     end_date = row["period_end"]
@@ -1472,21 +1517,21 @@ async def correlation_pair_chart(
         ]
 
     return {
-        "dates": common,
-        "values_a": [data_a[d] for d in common],
-        "values_b": [data_b[d] for d in common],
+        "dates": common if not (blocked_a or blocked_b) else [],
+        "values_a": [data_a[d] for d in common] if not blocked_a else [],
+        "values_b": [data_b[d] for d in common] if not blocked_b else [],
         "type_a": type_a,
         "type_b": type_b,
-        "label_a": row["label_a"],
-        "label_b": row["label_b"],
+        "label_a": PRIVATE_MASK if blocked_a else row["label_a"],
+        "label_b": PRIVATE_MASK if blocked_b else row["label_b"],
         "correlation": row["correlation"],
         "lag_days": lag,
-        "original_dates_b": original_dates_b,
+        "original_dates_b": original_dates_b if not (blocked_a or blocked_b) else None,
     }
 
 
 @router.get("/streaks")
-async def streaks(db=Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def streaks(db=Depends(get_db), current_user: dict = Depends(get_current_user), privacy_mode: bool = Depends(get_privacy_mode)):
     metrics = await db.fetch(
         """SELECT * FROM metric_definitions
            WHERE enabled = TRUE AND user_id = $1 AND type = 'bool'
@@ -1496,6 +1541,8 @@ async def streaks(db=Depends(get_db), current_user: dict = Depends(get_current_u
 
     result = []
     for m in metrics:
+        m_private = m.get("private", False)
+        m_blocked = is_blocked(m_private, privacy_mode)
         # Group by date: day counts as True only if ALL slot entries are True
         rows = await db.fetch(
             """SELECT e.date, bool_and(vb.value) AS day_value
@@ -1516,8 +1563,8 @@ async def streaks(db=Depends(get_db), current_user: dict = Depends(get_current_u
         if current_streak > 0:
             result.append({
                 "metric_id": m["id"],
-                "metric_name": m["name"],
-                "current_streak": current_streak,
+                "metric_name": mask_name(m["name"], m_private, privacy_mode),
+                "current_streak": 0 if m_blocked else current_streak,
             })
 
     return {"streaks": result}

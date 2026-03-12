@@ -94,6 +94,14 @@ const api = {
     getCurrentUser() {
         return this.request('GET', '/api/auth/me');
     },
+    getPrivacyMode() {
+        return this.request('GET', '/api/auth/privacy-mode');
+    },
+    async setPrivacyMode(enabled) {
+        const result = await this.request('PUT', '/api/auth/privacy-mode', { enabled });
+        _responseCache.clear();
+        return result;
+    },
     logout() {
         clearToken();
     },

@@ -2,6 +2,16 @@
 const TODOIST_ICON = '<svg viewBox="0 0 512 512" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><rect width="512" height="512" rx="100" fill="#e44332"/><path d="M130 182l60 35 132-77 60 35" stroke="#fff" stroke-width="38" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M130 256l60 35 132-77 60 35" stroke="#fff" stroke-width="38" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M130 330l60 35 132-77 60 35" stroke="#fff" stroke-width="38" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
 const AW_ICON = '<svg viewBox="0 0 100 100" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="48" fill="#6c5ce7"/><circle cx="50" cy="50" r="30" stroke="#fff" stroke-width="5" fill="none"/><path d="M50 28v22l16 10" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
 
+// ─── Privacy Mode ───
+const PRIVACY_KEY = 'la_privacy_mode';
+function isPrivacyMode() { return localStorage.getItem(PRIVACY_KEY) === 'true'; }
+function setPrivacyMode(on) { localStorage.setItem(PRIVACY_KEY, on ? 'true' : 'false'); }
+const PRIVATE_MASK = '***';
+const PRIVATE_ICON = '🔒';
+function isMetricBlocked(m) { return m.private && isPrivacyMode(); }
+function metricIconHtml(m) { const i = m.icon || ''; return i ? '<span class="metric-icon">' + i + '</span>' : ''; }
+function metricLabelHtml(m) { return metricIconHtml(m) + m.name; }
+
 // ─── State ───
 let currentDate = todayStr();
 let metrics = [];
@@ -60,6 +70,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             api.getDailySummary(today),
             api.cachedGet('/api/metrics'),
             api.awGetStatus(),
+            api.getPrivacyMode().then(r => setPrivacyMode(r.privacy_mode)).catch(() => {}),
         ]);
         navigateTo('today');
     } else {
@@ -167,6 +178,7 @@ function renderLogin(container) {
             isAuthenticated = true;
             currentUser = { username: response.username };
             await loadMetrics();
+            api.getPrivacyMode().then(r => setPrivacyMode(r.privacy_mode)).catch(() => {});
             navigateTo('today');
         } catch (error) {
             errorEl.textContent = error.message || 'Неверные учетные данные';
@@ -490,6 +502,13 @@ async function renderTodayForm() {
 }
 
 function renderMetricInput(m) {
+    // Private metric blocked in privacy mode
+    if (isMetricBlocked(m)) {
+        return `<div class="metric-card metric-private">
+            <div class="metric-header"><label class="metric-label">${metricLabelHtml(m)}</label></div>
+            <div class="metric-private-hint">Сначала отключите приватный режим</div>
+        </div>`;
+    }
     // Integration metric — fetch button + standard card
     if (m.type === 'integration') {
         const entry = m.entry;
@@ -514,7 +533,7 @@ function renderMetricInput(m) {
         else if (m.filter_query) configHint = `<span class="integration-hint">Запрос: ${m.filter_query}</span>`;
         return `<div class="metric-card ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="integration" data-provider="${m.provider || ''}" data-entry-id="${entryId || ''}">
             <div class="metric-header">
-                <label class="metric-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</label>
+                <label class="metric-label">${metricLabelHtml(m)}</label>
                 ${clearBtn}
             </div>
             <div class="metric-input integration-input">
@@ -544,7 +563,7 @@ function renderMetricInput(m) {
         }
         return `<div class="metric-card ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="text">
             <div class="metric-header">
-                <label class="metric-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</label>
+                <label class="metric-label">${metricLabelHtml(m)}</label>
                 ${noteCount > 0 ? `<span class="note-count-badge">${noteCount}</span>` : ''}
             </div>
             <div class="notes-list">${notesHtml}</div>
@@ -575,7 +594,7 @@ function renderMetricInput(m) {
         }
         return `<div class="metric-card ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="computed">
             <div class="metric-header">
-                <label class="metric-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</label>
+                <label class="metric-label">${metricLabelHtml(m)}</label>
                 <span class="computed-badge">формула</span>
             </div>
             <div class="computed-value ${isFilled ? '' : 'empty'}">${displayVal}</div>
@@ -622,7 +641,7 @@ function renderMetricInput(m) {
 
         return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="">
             <div class="metric-header">
-                <label class="metric-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</label>
+                <label class="metric-label">${metricLabelHtml(m)}</label>
             </div>
             ${slotsHtml}
         </div>`;
@@ -650,7 +669,7 @@ function renderMetricInput(m) {
 
     return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}">
         <div class="metric-header">
-            <label class="metric-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</label>
+            <label class="metric-label">${metricLabelHtml(m)}</label>
             ${clearBtn}
         </div>
         <div class="metric-input">${input}</div>
@@ -1383,13 +1402,15 @@ async function showDayDetail(date) {
     let hasAny = false;
 
     for (const m of summary.metrics) {
+        const blocked = isMetricBlocked(m);
         if (m.type === 'text') {
             const notes = m.notes || [];
             if (notes.length === 0) continue;
             hasAny = true;
             for (const n of notes) {
                 const time = n.created_at ? new Date(n.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
-                html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span><span class="summary-value">${_escapeHtml(n.text)} <span class="note-time">${time}</span></span></div>`;
+                const val = blocked ? PRIVATE_MASK : `${_escapeHtml(n.text)} <span class="note-time">${time}</span>`;
+                html += `<div class="summary-row"><span class="summary-label">${metricLabelHtml(m)}</span><span class="summary-value">${val}</span></div>`;
             }
             continue;
         }
@@ -1398,12 +1419,14 @@ async function showDayDetail(date) {
             if (filledSlots.length === 0) continue;
             hasAny = true;
             for (const s of filledSlots) {
-                html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name} — ${s.label}</span><span class="summary-value">${s.entry.display_value}</span></div>`;
+                const val = blocked ? PRIVATE_MASK : s.entry.display_value;
+                html += `<div class="summary-row"><span class="summary-label">${metricLabelHtml(m)} — ${blocked ? PRIVATE_MASK : s.label}</span><span class="summary-value">${val}</span></div>`;
             }
         } else {
             if (!m.entry) continue;
             hasAny = true;
-            html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span><span class="summary-value">${m.entry.display_value}</span></div>`;
+            const val = blocked ? PRIVATE_MASK : m.entry.display_value;
+            html += `<div class="summary-row"><span class="summary-label">${metricLabelHtml(m)}</span><span class="summary-value">${val}</span></div>`;
         }
     }
 
@@ -1498,14 +1521,23 @@ async function loadChartsTrends(start, end) {
         const hasPoints = trend.points && trend.points.length > 0;
         const hasEnumSeries = trend.option_series && Object.keys(trend.option_series).length > 0;
         if (hasPoints || hasEnumSeries) {
-            trendData.push({ metric: m, points: trend.points || [], trend });
-            trendsHtml += `<div class="trend-card-row" data-metric-id="${m.id}" style="cursor:pointer">
-                <div class="trend-card-header">
-                    <h4>${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}<span class="trend-metric-name">${m.name}</span></h4>
-                    <i data-lucide="info" class="trend-info-icon"></i>
-                </div>
-                <div class="trend-chart-container"><canvas id="trend-chart-${m.id}"></canvas></div>
-            </div>`;
+            if (isMetricBlocked(m)) {
+                trendsHtml += `<div class="trend-card-row metric-private" data-metric-id="${m.id}" style="cursor:pointer">
+                    <div class="trend-card-header">
+                        <h4>${metricIconHtml(m)}<span class="trend-metric-name">${m.name}</span></h4>
+                    </div>
+                    <div class="metric-private-hint">Сначала отключите приватный режим</div>
+                </div>`;
+            } else {
+                trendData.push({ metric: m, points: trend.points || [], trend });
+                trendsHtml += `<div class="trend-card-row" data-metric-id="${m.id}" style="cursor:pointer">
+                    <div class="trend-card-header">
+                        <h4>${metricIconHtml(m)}<span class="trend-metric-name">${m.name}</span></h4>
+                        <i data-lucide="info" class="trend-info-icon"></i>
+                    </div>
+                    <div class="trend-chart-container"><canvas id="trend-chart-${m.id}"></canvas></div>
+                </div>`;
+            }
         }
     }
 
@@ -1896,17 +1928,21 @@ function renderCorrPair(p, report) {
     if (typeLeft === 'enum_bool' && optLeft) hintA = `<span class="corr-word-pos">✓ ${optLeft}</span>`;
     if (typeRight === 'enum_bool' && optRight) hintB = r > 0 ? `<span class="corr-word-pos">✓ ${optRight}</span>` : `<span class="corr-word-neg">✗ ${optRight}</span>`;
 
-    const labelA = renderCorrMetricLabel(isLagged ? p.label_b : p.label_a, isLagged ? p.icon_b : p.icon_a, isLagged ? p.slot_label_b : p.slot_label_a, hintA, isLagged ? 'вчера' : '');
-    const labelB = renderCorrMetricLabel(isLagged ? p.label_a : p.label_b, isLagged ? p.icon_a : p.icon_b, isLagged ? p.slot_label_a : p.slot_label_b, hintB, isLagged ? 'сегодня' : '');
+    const rawLabelA = isLagged ? p.label_b : p.label_a;
+    const rawIconA = (isLagged ? p.icon_b : p.icon_a) || '';
+    const rawLabelB = isLagged ? p.label_a : p.label_b;
+    const rawIconB = (isLagged ? p.icon_a : p.icon_b) || '';
+    const labelA = renderCorrMetricLabel(rawLabelA, rawIconA, isLagged ? p.slot_label_b : p.slot_label_a, hintA, isLagged ? 'вчера' : '');
+    const labelB = renderCorrMetricLabel(rawLabelB, rawIconB, isLagged ? p.slot_label_a : p.slot_label_b, hintB, isLagged ? 'сегодня' : '');
 
     const pairId = `corr-detail-${Math.random().toString(36).slice(2, 8)}`;
     corrPairData.set(pairId, {
         mAId: isLagged ? p.metric_b_id : p.metric_a_id,
         mBId: isLagged ? p.metric_a_id : p.metric_b_id,
-        lA: isLagged ? p.label_b : p.label_a,
-        lB: isLagged ? p.label_a : p.label_b,
-        iA: (isLagged ? p.icon_b : p.icon_a) || '',
-        iB: (isLagged ? p.icon_a : p.icon_b) || '',
+        lA: rawLabelA,
+        lB: rawLabelB,
+        iA: rawIconA,
+        iB: rawIconB,
         pStart: report.period_start,
         pEnd: report.period_end,
         dbPairId: p.pair_id,
@@ -2078,6 +2114,10 @@ function renderCorrPairChart(pairId, data) {
     const colorA = style.getPropertyValue('--accent').trim();
     const colorB = '#ff9800';
 
+    const d = corrPairData.get(pairId);
+    const dispLabelA = data.label_a;
+    const dispLabelB = data.label_b;
+
     const labels = data.dates.map(formatShortDate);
     const showPoints = data.dates.length <= 30;
     const isNeg = data.correlation < 0;
@@ -2103,7 +2143,7 @@ function renderCorrPairChart(pairId, data) {
 
     const datasets = [
         {
-            label: data.label_a,
+            label: dispLabelA,
             data: data.values_a,
             borderColor: colorA,
             backgroundColor: colorA + '22',
@@ -2113,7 +2153,7 @@ function renderCorrPairChart(pairId, data) {
             stepped: (data.type_a === 'bool' || data.type_a === 'enum_bool') ? 'middle' : false,
         },
         {
-            label: data.label_b,
+            label: dispLabelB,
             data: data.values_b,
             borderColor: colorB,
             backgroundColor: colorB + '22',
@@ -2354,13 +2394,26 @@ async function renderMetricDetail(container, metricId) {
     const metric = metrics.find(m => m.id === metricId);
     if (!metric) { navigateTo('charts'); return; }
 
+    if (isMetricBlocked(metric)) {
+        container.innerHTML = `
+            <div class="detail-header">
+                <button class="btn-small" id="detail-back"><i data-lucide="arrow-left"></i> Статистика</button>
+                <h2>${metricLabelHtml(metric)}</h2>
+            </div>
+            <div class="metric-private-hint" style="text-align:center;padding:32px 0;">Сначала отключите приватный режим</div>
+        `;
+        if (window.lucide) lucide.createIcons();
+        document.getElementById('detail-back').addEventListener('click', () => navigateTo('charts'));
+        return;
+    }
+
     const end = todayStr();
     const start = daysAgo(90);
 
     container.innerHTML = `
         <div class="detail-header">
             <button class="btn-small" id="detail-back"><i data-lucide="arrow-left"></i> Статистика</button>
-            <h2>${metric.icon ? '<span class="metric-icon">' + metric.icon + '</span>' : ''}${metric.name}</h2>
+            <h2>${metricLabelHtml(metric)}</h2>
         </div>
         <div class="detail-controls">
             <div id="detail-start-picker"></div>
@@ -2577,6 +2630,12 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     html += `<label class="theme-switch"><input type="checkbox" id="theme-switch-input" ${isLight ? '' : 'checked'}><span class="slider"></span></label>`;
     html += '</div>';
 
+    const privacyOn = isPrivacyMode();
+    html += '<div class="theme-row">';
+    html += `<span class="theme-row-label">🔒 <span>Приватный режим</span></span>`;
+    html += `<label class="theme-switch"><input type="checkbox" id="privacy-switch-input" ${privacyOn ? 'checked' : ''}><span class="slider"></span></label>`;
+    html += '</div>';
+
     html += '<h2>Настройки метрик</h2>';
     html += '<div class="settings-actions">';
     html += '<button class="btn-primary" id="add-metric"><i data-lucide="plus"></i> Новая метрика</button>';
@@ -2630,7 +2689,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             return `<div class="setting-row" data-metric-id="${m.id}">
                 <span class="drag-handle">⠿</span>
                 <div class="setting-info">
-                    <span class="setting-name">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span>
+                    <span class="setting-name">${metricLabelHtml(m)}</span>
                     <span class="setting-type">${typeIcon}</span>
                 </div>
                 <div class="setting-actions">
@@ -2682,7 +2741,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
             html += `<div class="setting-row archived-row">
                 <div class="setting-info">
-                    <span class="setting-name archived">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span>
+                    <span class="setting-name archived">${metricLabelHtml(m)}</span>
                     <span class="setting-type">${typeIcon}</span>
                 </div>
                 <div class="setting-actions">
@@ -2706,6 +2765,20 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     const themeSwitch = document.getElementById('theme-switch-input');
     if (themeSwitch) {
         themeSwitch.addEventListener('change', toggleTheme);
+    }
+
+    const privacySwitch = document.getElementById('privacy-switch-input');
+    if (privacySwitch) {
+        privacySwitch.addEventListener('change', async () => {
+            try {
+                await api.setPrivacyMode(privacySwitch.checked);
+                setPrivacyMode(privacySwitch.checked);
+            } catch (e) {
+                console.error('Failed to set privacy mode:', e);
+                privacySwitch.checked = !privacySwitch.checked;
+            }
+            renderSettings(container, { archiveOpen });
+        });
     }
 
     // Load integrations status
@@ -3733,6 +3806,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     </select>
                 </div>
 
+                <label class="enum-multi-select-label">
+                    <input type="checkbox" id="nm-private" ${existingMetric?.private ? 'checked' : ''}> 🔒 Приватная метрика
+                </label>
+
                 ${isEdit ? `
                 <div class="form-section" id="nm-type-section">
                     ${typeHintHtml(currentType)}
@@ -4488,7 +4565,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
             if (isEdit) {
                 const icon = existingMetric.type === 'integration' ? undefined : document.getElementById('nm-icon').value;
-                const updateData = { name, category_id: categoryIdVal ? parseInt(categoryIdVal) : 0 };
+                const privateCb = document.getElementById('nm-private');
+                const updateData = { name, category_id: categoryIdVal ? parseInt(categoryIdVal) : 0, private: privateCb ? privateCb.checked : false };
                 if (icon !== undefined) updateData.icon = icon;
                 if (existingMetric.type === 'computed') {
                     if (formulaTokens.length === 0) {
@@ -4546,7 +4624,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 const selectedType = getCurrentType();
 
                 const icon = document.getElementById('nm-icon').value;
-                const createData = { name, icon, type: selectedType };
+                const privateCb = document.getElementById('nm-private');
+                const createData = { name, icon, type: selectedType, private: privateCb ? privateCb.checked : false };
                 if (categoryIdVal) createData.category_id = parseInt(categoryIdVal);
 
                 if (selectedType === 'scale') {

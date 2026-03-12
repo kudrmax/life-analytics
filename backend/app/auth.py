@@ -5,9 +5,11 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from jose import JWTError, jwt
 import bcrypt
+
+from app.database import get_db
 
 # Environment configuration
 SECRET_KEY = os.getenv("LA_SECRET_KEY", "dev-secret-key-change-in-production")
@@ -82,9 +84,6 @@ def decode_token(token: str) -> dict:
         )
 
 
-from fastapi import Header
-
-
 async def get_current_user(authorization: str = Header(None)) -> dict:
     """
     FastAPI dependency to extract and verify current user from Authorization header.
@@ -116,3 +115,13 @@ async def get_current_user(authorization: str = Header(None)) -> dict:
 
     token = parts[1]
     return decode_token(token)
+
+
+async def get_privacy_mode(
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> bool:
+    row = await db.fetchrow(
+        "SELECT privacy_mode FROM users WHERE id = $1", current_user["id"]
+    )
+    return row["privacy_mode"] if row else False

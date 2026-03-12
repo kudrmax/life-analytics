@@ -5,7 +5,8 @@ from datetime import date as date_type
 from fastapi import APIRouter, Depends
 
 from app.database import get_db
-from app.auth import get_current_user
+from app.auth import get_current_user, get_privacy_mode
+from app.metric_helpers import mask_name, mask_icon, is_blocked
 from app.formula import convert_metric_value, evaluate_formula
 from app.metric_helpers import format_display_value
 from app.timing import QueryTimer
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/api/daily", tags=["daily"])
 
 
 @router.get("/{date}")
-async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depends(get_current_user), privacy_mode: bool = Depends(get_privacy_mode)):
     qt = QueryTimer(f"daily/{date}")
     metrics = await db.fetch(
         """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
@@ -210,17 +211,20 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
         metric_entries = entries_by_metric.get(mid, [])
         slots = enabled_slots.get(mid, [])
         extra_disabled = disabled_with_entries.get(mid, [])
+        m_private = m.get("private", False)
+        m_blocked = is_blocked(m_private, privacy_mode)
 
         item = {
             "metric_id": mid,
             "slug": m["slug"],
-            "name": m["name"],
-            "icon": m.get("icon", ""),
+            "name": mask_name(m["name"], m_private, privacy_mode),
+            "icon": mask_icon(m.get("icon", ""), m_private, privacy_mode),
             "category_id": m.get("category_id"),
             "type": m["type"],
             "scale_min": m["scale_min"],
             "scale_max": m["scale_max"],
             "scale_step": m["scale_step"],
+            "private": m_private,
             "entry": None,
             "slots": None,
             "formula": _parse_formula(m.get("formula")) or None,
@@ -233,6 +237,15 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "notes": notes_by_metric.get(mid, []) if m["type"] == "text" else None,
             "note_count": notes_count_map.get(mid, 0) if m["type"] == "text" else None,
         }
+
+        # If metric is blocked by privacy mode, hide all values
+        if m_blocked:
+            item["entry"] = None
+            item["slots"] = None
+            item["notes"] = [] if m["type"] == "text" else None
+            item["note_count"] = 0 if m["type"] == "text" else None
+            result.append(item)
+            continue
 
         if slots or extra_disabled:
             # Multi-slot metric: combine enabled + disabled-with-entries
@@ -355,14 +368,15 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
         m_info = metrics_by_id.get(item["metric_id"])
         if not m_info or m_info["type"] == "computed":
             continue
+        display_name = item["name"]  # already masked if needed
 
         # "note_count" — для text
         if m_info["type"] == "text":
             auto_metrics.append({
-                "name": f"{m_info['name']}: кол-во заметок",
+                "name": f"{display_name}: кол-во заметок",
                 "auto_type": "note_count",
                 "source_metric_id": item["metric_id"],
-                "source_metric_name": m_info["name"],
+                "source_metric_name": display_name,
                 "value": notes_count_map.get(item["metric_id"], 0),
             })
 
@@ -375,10 +389,10 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                 is_nonzero = (item["entry"] is not None and item["entry"]["value"] != 0)
 
             auto_metrics.append({
-                "name": f"{m_info['name']}: не ноль",
+                "name": f"{display_name}: не ноль",
                 "auto_type": "nonzero",
                 "source_metric_id": item["metric_id"],
-                "source_metric_name": m_info["name"],
+                "source_metric_name": display_name,
                 "value": is_nonzero,
             })
 
