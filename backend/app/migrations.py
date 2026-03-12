@@ -182,6 +182,27 @@ MIGRATIONS = [
     (7, "add_privacy_mode_to_users", """
         ALTER TABLE users ADD COLUMN IF NOT EXISTS privacy_mode BOOLEAN NOT NULL DEFAULT FALSE;
     """),
+    (8, "add_category_id_to_slots", """
+        -- Add category_id column to measurement_slots
+        ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS
+            category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL;
+
+        -- Copy metric category_id to all its slots
+        UPDATE measurement_slots ms
+        SET category_id = md.category_id
+        FROM metric_definitions md
+        WHERE ms.metric_id = md.id
+          AND ms.category_id IS NULL
+          AND md.category_id IS NOT NULL;
+
+        -- Clear category_id on multi-slot metrics (category now lives on slots)
+        UPDATE metric_definitions md
+        SET category_id = NULL
+        WHERE EXISTS (
+            SELECT 1 FROM measurement_slots ms
+            WHERE ms.metric_id = md.id AND ms.enabled = TRUE
+        );
+    """),
 ]
 
 

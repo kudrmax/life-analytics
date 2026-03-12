@@ -48,18 +48,20 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             current_user["id"],
         )
 
-        # Get slots for all metrics
+        # Get slots for all metrics (with category_id)
         metric_ids = [m["id"] for m in metrics]
         all_slots_rows = await db.fetch(
-            """SELECT metric_id, label, sort_order FROM measurement_slots
+            """SELECT metric_id, label, sort_order, category_id FROM measurement_slots
                WHERE metric_id = ANY($1) AND enabled = TRUE
                ORDER BY metric_id, sort_order""",
             metric_ids,
         ) if metric_ids else []
 
-        slots_by_metric: dict[int, list[str]] = defaultdict(list)
+        slots_by_metric: dict[int, list[dict]] = defaultdict(list)
         for r in all_slots_rows:
-            slots_by_metric[r["metric_id"]].append(r["label"])
+            slots_by_metric[r["metric_id"]].append({
+                "label": r["label"], "category_id": r["category_id"],
+            })
 
         # Load computed_config for all metrics
         computed_cfg_rows = await db.fetch(
@@ -105,7 +107,16 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             return c["name"]
 
         for m in metrics:
-            slot_labels = slots_by_metric.get(m["id"], [])
+            slot_data = slots_by_metric.get(m["id"], [])
+            # Export slot_labels: if any slot has category_id, use extended format
+            has_slot_cats = any(sd["category_id"] is not None for sd in slot_data)
+            if has_slot_cats:
+                slot_labels = [
+                    {"label": sd["label"], "category_path": _cat_path(sd["category_id"])}
+                    for sd in slot_data
+                ]
+            else:
+                slot_labels = [sd["label"] for sd in slot_data]
             # Export formula (slug-based, no IDs for portability)
             cc = computed_cfgs.get(m["id"])
             formula_export = ''
@@ -347,14 +358,24 @@ async def import_data(
                     csv_scale_max = row.get('scale_max', '')
                     csv_scale_step = row.get('scale_step', '')
 
-                    # Parse slot_labels from CSV
+                    # Parse slot_labels from CSV (supports legacy [str] and new [{label, category_path}])
                     csv_slot_labels_raw = row.get('slot_labels', '')
-                    csv_slot_labels = []
+                    csv_slot_configs: list[dict] = []  # [{label, category_id}]
                     if csv_slot_labels_raw:
                         try:
-                            csv_slot_labels = json.loads(csv_slot_labels_raw)
+                            parsed_slots = json.loads(csv_slot_labels_raw)
+                            for item in parsed_slots:
+                                if isinstance(item, str):
+                                    csv_slot_configs.append({"label": item})
+                                elif isinstance(item, dict):
+                                    cat_id = None
+                                    cp = item.get("category_path", "")
+                                    if cp:
+                                        cat_id = await _resolve_category_path(cp, current_user["id"])
+                                    csv_slot_configs.append({"label": item.get("label", ""), "category_id": cat_id})
                         except (json.JSONDecodeError, TypeError):
                             pass
+                    csv_slot_labels = [c["label"] for c in csv_slot_configs]
 
                     # Parse integration fields from CSV
                     csv_provider = row.get('provider', '')
@@ -421,8 +442,8 @@ async def import_data(
                             )
                             await _import_enum_options(db, existing["id"], csv_enum_options)
                         # Import slots if provided
-                        if len(csv_slot_labels) >= 2:
-                            await _import_slots(db, existing["id"], csv_slot_labels)
+                        if len(csv_slot_configs) >= 2:
+                            await _import_slots(db, existing["id"], csv_slot_configs)
                         metrics_updated += 1
                     else:
                         new_id = await db.fetchval(
@@ -469,11 +490,11 @@ async def import_data(
                                     new_id, i, label,
                                 )
                         # Create slots if provided
-                        if len(csv_slot_labels) >= 2:
-                            for i, label in enumerate(csv_slot_labels):
+                        if len(csv_slot_configs) >= 2:
+                            for i, cfg in enumerate(csv_slot_configs):
                                 await db.execute(
-                                    "INSERT INTO measurement_slots (metric_id, sort_order, label) VALUES ($1, $2, $3)",
-                                    new_id, i, label,
+                                    "INSERT INTO measurement_slots (metric_id, sort_order, label, category_id) VALUES ($1, $2, $3, $4)",
+                                    new_id, i, cfg["label"], cfg.get("category_id"),
                                 )
                         metrics_imported += 1
 
@@ -747,27 +768,38 @@ async def _import_enum_options(db, metric_id: int, labels: list[str]):
             )
 
 
-async def _import_slots(db, metric_id: int, labels: list[str]):
-    """Create or update slots during import (same logic as update_metric)."""
+async def _import_slots(db, metric_id: int, configs: list[dict]):
+    """Create or update slots during import (same logic as update_metric).
+
+    configs: list of {label: str, category_id: int | None}
+    """
     existing_slots = await db.fetch(
         "SELECT * FROM measurement_slots WHERE metric_id = $1 ORDER BY sort_order",
         metric_id,
     )
-    for i, label in enumerate(labels):
+    for i, cfg in enumerate(configs):
+        label = cfg["label"] if isinstance(cfg, dict) else cfg
+        cat_id = cfg.get("category_id") if isinstance(cfg, dict) else None
         matching = [s for s in existing_slots if s["sort_order"] == i]
         if matching:
             await db.execute(
-                "UPDATE measurement_slots SET label = $1, enabled = TRUE WHERE id = $2",
-                label, matching[0]["id"],
+                "UPDATE measurement_slots SET label = $1, enabled = TRUE, category_id = $2 WHERE id = $3",
+                label, cat_id, matching[0]["id"],
             )
         else:
             await db.execute(
-                "INSERT INTO measurement_slots (metric_id, sort_order, label) VALUES ($1, $2, $3)",
-                metric_id, i, label,
+                "INSERT INTO measurement_slots (metric_id, sort_order, label, category_id) VALUES ($1, $2, $3, $4)",
+                metric_id, i, label, cat_id,
             )
     for s in existing_slots:
-        if s["sort_order"] >= len(labels):
+        if s["sort_order"] >= len(configs):
             await db.execute(
                 "UPDATE measurement_slots SET enabled = FALSE WHERE id = $1",
                 s["id"],
             )
+    # Defensive rule: clear metric category_id when slots have categories
+    if any(isinstance(c, dict) and c.get("category_id") for c in configs):
+        await db.execute(
+            "UPDATE metric_definitions SET category_id = NULL WHERE id = $1",
+            metric_id,
+        )

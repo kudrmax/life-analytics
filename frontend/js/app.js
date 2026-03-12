@@ -680,6 +680,46 @@ function renderMetricInput(m) {
         </div>`;
     }
 
+    // Split single slot — render as regular card with composite name
+    if (m.is_slot_split && m.slots && m.slots.length === 1) {
+        const slot = m.slots[0];
+        const entry = slot.entry;
+        const val = entry ? entry.value : null;
+        const entryId = entry ? entry.id : null;
+        const isFilled = !!entry;
+        const filledClass = isFilled ? 'filled' : '';
+
+        let input;
+        if (m.type === 'enum') input = renderEnum(val, m.enum_options, m.multi_select, !!entry);
+        else if (m.type === 'time') input = renderTime(val);
+        else if (m.type === 'duration') input = renderDuration(val);
+        else if (m.type === 'number') input = renderNumber(val);
+        else if (m.type === 'scale') {
+            const sMin = (entry && entry.scale_min != null) ? entry.scale_min : m.scale_min;
+            const sMax = (entry && entry.scale_max != null) ? entry.scale_max : m.scale_max;
+            const sStep = (entry && entry.scale_step != null) ? entry.scale_step : m.scale_step;
+            input = renderScale(val, sMin, sMax, sStep);
+        }
+        else input = renderBoolean(val);
+
+        const clearBtn = entry
+            ? `<button class="metric-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`
+            : '';
+
+        const slotBadge = `<span class="slot-badge">${slot.label}</span>`;
+        const labelHtml = m.icon
+            ? `<span class="metric-icon">${m.icon}</span> ${m.name}${slotBadge}`
+            : `${m.name}${slotBadge}`;
+
+        return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}" data-slot-id="${slot.slot_id}">
+            <div class="metric-header">
+                <label class="metric-label">${labelHtml}</label>
+                ${clearBtn}
+            </div>
+            <div class="metric-input">${input}</div>
+        </div>`;
+    }
+
     // Multi-slot metric
     if (m.slots && m.slots.length > 0) {
         const allFilled = m.slots.every(s => s.entry !== null);
@@ -829,7 +869,7 @@ async function handleNumberChange(e) {
     const metricId = card.dataset.metricId;
     const slotEl = input.closest('.metric-slot');
     const entryId = slotEl ? slotEl.dataset.entryId : card.dataset.entryId;
-    const slotId = slotEl ? slotEl.dataset.slotId : null;
+    const slotId = slotEl ? slotEl.dataset.slotId : (card.dataset.slotId || null);
 
     const raw = input.value.trim();
     if (raw === '') {
@@ -1047,7 +1087,7 @@ async function handleFormClick(e) {
     const metricId = card.dataset.metricId;
     const slotEl = btn.closest('.metric-slot');
     const entryId = slotEl ? slotEl.dataset.entryId : card.dataset.entryId;
-    const slotId = slotEl ? slotEl.dataset.slotId : null;
+    const slotId = slotEl ? slotEl.dataset.slotId : (card.dataset.slotId || null);
 
     // Integration fetch
     if (btn.dataset.action === 'fetch-integration') {
@@ -2813,6 +2853,31 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         const settingsMetricsByCat = {};
         const settingsUncategorized = [];
         for (const m of activeMetrics) {
+            // Check if multi-slot metric has slots in different categories
+            if (m.slots && m.slots.length >= 2) {
+                const slotCats = new Set(m.slots.map(s => s.category_id || null));
+                if (slotCats.size > 1) {
+                    // Different categories → separate row per slot
+                    for (const slot of m.slots) {
+                        const slotItem = Object.assign({}, m, { _slot: slot, _isSlotRow: true });
+                        const catId = slot.category_id;
+                        if (catId && settingsCatById[catId]) {
+                            if (!settingsMetricsByCat[catId]) settingsMetricsByCat[catId] = [];
+                            settingsMetricsByCat[catId].push(slotItem);
+                        } else {
+                            settingsUncategorized.push(slotItem);
+                        }
+                    }
+                    continue;
+                }
+                // All slots in same category — use slot's category_id
+                const slotCatId = m.slots[0].category_id;
+                if (slotCatId && settingsCatById[slotCatId]) {
+                    if (!settingsMetricsByCat[slotCatId]) settingsMetricsByCat[slotCatId] = [];
+                    settingsMetricsByCat[slotCatId].push(m);
+                    continue;
+                }
+            }
             if (m.category_id && settingsCatById[m.category_id]) {
                 if (!settingsMetricsByCat[m.category_id]) settingsMetricsByCat[m.category_id] = [];
                 settingsMetricsByCat[m.category_id].push(m);
@@ -2823,7 +2888,11 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         const hasSettingsCategories = settingsCategories.length > 0;
 
         function renderSettingRow(m) {
-            const slotsBadge = m.slots && m.slots.length > 0
+            const isSlotRow = m._isSlotRow;
+            const slot = m._slot;
+            const slotAttr = isSlotRow ? ` data-slot-id="${slot.id}"` : '';
+            const slotBadge = isSlotRow ? `<span class="slot-badge">${slot.label}</span>` : '';
+            const slotsBadge = (!isSlotRow && m.slots && m.slots.length > 0)
                 ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
             const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
                 : m.type === 'duration' ? '<i data-lucide="timer"></i> Длительность'
@@ -2834,10 +2903,10 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
                 : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
-            return `<div class="setting-row" data-metric-id="${m.id}">
+            return `<div class="setting-row" data-metric-id="${m.id}"${slotAttr}>
                 <span class="drag-handle">⠿</span>
                 <div class="setting-info">
-                    <span class="setting-name">${metricLabelHtml(m)}</span>
+                    <span class="setting-name">${metricLabelHtml(m)}${slotBadge}</span>
                     <span class="setting-type">${typeIcon}</span>
                 </div>
                 <div class="setting-actions">
@@ -3144,11 +3213,16 @@ function setupMetricDragDrop(container) {
         rows.forEach((row, index) => {
             const catDiv = row.closest('.category[data-category-id]');
             const catIdStr = catDiv ? catDiv.dataset.categoryId : '';
-            items.push({
+            const catId = catIdStr && !isNaN(parseInt(catIdStr)) ? parseInt(catIdStr) : null;
+            const item = {
                 id: parseInt(row.dataset.metricId),
                 sort_order: index * 10,
-                category_id: catIdStr ? parseInt(catIdStr) : null,
-            });
+                category_id: catId,
+            };
+            if (row.dataset.slotId) {
+                item.slot_id = parseInt(row.dataset.slotId);
+            }
+            items.push(item);
         });
         return items;
     }
@@ -4533,12 +4607,13 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     if (window.lucide) lucide.createIcons();
 
     // ─── Populate category select ───
+    let modalCategories = [];
     (async () => {
         try {
-            const cats = await api.getCategories();
+            modalCategories = await api.getCategories();
             const sel = document.getElementById('nm-category-id');
             if (!sel) return;
-            for (const c of cats) {
+            for (const c of modalCategories) {
                 const opt = document.createElement('option');
                 opt.value = c.id;
                 opt.textContent = c.name;
@@ -4551,6 +4626,14 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     if (existingMetric?.category_id === ch.id) chOpt.selected = true;
                     sel.appendChild(chOpt);
                 }
+            }
+            // Refresh slot category selects rendered before categories loaded
+            const slotListEl = document.getElementById('nm-slot-labels');
+            if (slotListEl) {
+                slotListEl.querySelectorAll('.slot-category-select').forEach(selEl => {
+                    const currentCatId = selEl.dataset.categoryId ? parseInt(selEl.dataset.categoryId) : null;
+                    selEl.innerHTML = _buildCategoryOptions(currentCatId);
+                });
             }
         } catch(e) { console.warn('Failed to load categories for modal', e); }
     })();
@@ -4951,10 +5034,22 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         });
     });
 
-    function addSlotField(label = '') {
+    function _buildCategoryOptions(selectedCatId) {
+        let html = '<option value="">Без категории</option>';
+        for (const c of modalCategories) {
+            html += `<option value="${c.id}" ${selectedCatId === c.id ? 'selected' : ''}>${c.name}</option>`;
+            for (const ch of (c.children || [])) {
+                html += `<option value="${ch.id}" ${selectedCatId === ch.id ? 'selected' : ''}>  └ ${ch.name}</option>`;
+            }
+        }
+        return html;
+    }
+
+    function addSlotField(label = '', categoryId = null) {
         const row = document.createElement('div');
         row.className = 'slot-label-row';
         row.innerHTML = `<input type="text" class="form-input slot-label-input" placeholder="Например: Утро" value="${label}">
+            <select class="form-select slot-category-select" data-category-id="${categoryId || ''}">${_buildCategoryOptions(categoryId)}</select>
             <button type="button" class="btn-remove-slot">&times;</button>`;
         slotList.appendChild(row);
         row.querySelector('.btn-remove-slot').onclick = () => { row.remove(); updatePreview(); };
@@ -4966,7 +5061,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         // Pre-fill slots in edit mode
         if (isEdit && existingMetric?.slots) {
             for (const s of existingMetric.slots) {
-                addSlotField(s.label);
+                addSlotField(s.label, s.category_id);
             }
             updatePreview();
         }
@@ -4975,6 +5070,20 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     function getSlotLabels() {
         const inputs = slotList ? slotList.querySelectorAll('.slot-label-input') : [];
         return Array.from(inputs).map(i => i.value.trim()).filter(v => v !== '');
+    }
+
+    function getSlotConfigs() {
+        if (!slotList) return [];
+        const rows = slotList.querySelectorAll('.slot-label-row');
+        const configs = [];
+        for (const row of rows) {
+            const label = row.querySelector('.slot-label-input').value.trim();
+            if (!label) continue;
+            const catSelect = row.querySelector('.slot-category-select');
+            const catId = catSelect && catSelect.value ? parseInt(catSelect.value) : null;
+            configs.push({ label, category_id: catId });
+        }
+        return configs;
     }
 
     document.getElementById('nm-cancel').onclick = () => overlay.remove();
@@ -4990,11 +5099,13 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
         try {
             const slotLabels = getSlotLabels();
+            const slotConfigs = getSlotConfigs();
 
             if (isEdit) {
                 const icon = existingMetric.type === 'integration' ? undefined : document.getElementById('nm-icon').value;
                 const privateCb = document.getElementById('nm-private');
-                const updateData = { name, category_id: categoryIdVal ? parseInt(categoryIdVal) : 0, private: privateCb ? privateCb.checked : false };
+                const hasSlotConfigs = slotConfigs.length >= 2;
+                const updateData = { name, category_id: hasSlotConfigs ? 0 : (categoryIdVal ? parseInt(categoryIdVal) : 0), private: privateCb ? privateCb.checked : false };
                 if (icon !== undefined) updateData.icon = icon;
                 if (existingMetric.type === 'computed') {
                     if (formulaTokens.length === 0) {
@@ -5036,10 +5147,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     }
                     updateData.enum_options = opts;
                 }
-                // Send slot_labels if user configured slots (not for computed/integration)
+                // Send slot_configs if user configured slots (not for computed/integration)
                 if (existingMetric.type !== 'computed' && existingMetric.type !== 'integration') {
-                    if (slotLabels.length >= 2) {
-                        updateData.slot_labels = slotLabels;
+                    if (slotConfigs.length >= 2) {
+                        updateData.slot_configs = slotConfigs;
                     } else if (slotLabels.length === 0 && (!existingMetric.slots || existingMetric.slots.length === 0)) {
                         // No slots before, no slots now — don't send
                     } else if (slotLabels.length < 2 && existingMetric.slots && existingMetric.slots.length > 0) {
@@ -5162,8 +5273,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     }
                 }
 
-                if (!['computed', 'integration'].includes(selectedType) && slotLabels.length >= 2) {
-                    createData.slot_labels = slotLabels;
+                if (!['computed', 'integration'].includes(selectedType) && slotConfigs.length >= 2) {
+                    createData.slot_configs = slotConfigs;
+                    // Defensive rule: category on slots, not metric
+                    delete createData.category_id;
                 }
 
                 await api.createMetric(createData);

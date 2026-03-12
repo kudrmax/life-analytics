@@ -71,7 +71,7 @@ async def get_metric_slots(
     """Return {metric_id: [{id, label, sort_order}, ...]}."""
     condition = "AND ms.enabled = TRUE" if enabled_only else ""
     rows = await conn.fetch(
-        f"""SELECT ms.id, ms.metric_id, ms.label, ms.sort_order
+        f"""SELECT ms.id, ms.metric_id, ms.label, ms.sort_order, ms.category_id
             FROM measurement_slots ms
             WHERE ms.metric_id = ANY($1) {condition}
             ORDER BY ms.metric_id, ms.sort_order""",
@@ -81,6 +81,7 @@ async def get_metric_slots(
     for r in rows:
         result[r["metric_id"]].append({
             "id": r["id"], "label": r["label"], "sort_order": r["sort_order"],
+            "category_id": r["category_id"],
         })
     return result
 

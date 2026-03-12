@@ -174,8 +174,15 @@ async def _init_db_schema(conn):
             metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
             sort_order INTEGER NOT NULL DEFAULT 0,
             label VARCHAR(100) NOT NULL DEFAULT '',
-            enabled BOOLEAN NOT NULL DEFAULT TRUE
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL
         )
+    """)
+
+    # Add category_id column to measurement_slots (for existing DBs)
+    await conn.execute("""
+        ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS
+            category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL
     """)
 
     # Add slot_id column to entries (nullable)

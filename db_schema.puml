@@ -79,6 +79,7 @@ entity "measurement_slots" as slots {
     * sort_order : INTEGER
     * label : VARCHAR(100)
     * enabled : BOOLEAN
+    category_id : INTEGER <<FK>>
 }
 
 entity "values_bool" as vb {
@@ -310,6 +311,7 @@ users ||--o{ notes : "user_id"
 
 cat ||--o{ cat : "parent_id"
 cat ||--o{ md : "category_id"
+cat ||--o{ slots : "category_id"
 
 md ||--o{ entries : "metric_id"
 md ||--o{ slots : "metric_id"

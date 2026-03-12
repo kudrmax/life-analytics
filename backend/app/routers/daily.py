@@ -60,7 +60,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
 
     # Get enabled slots for all metrics
     enabled_slots_rows = await db.fetch(
-        """SELECT ms.id, ms.metric_id, ms.label, ms.sort_order
+        """SELECT ms.id, ms.metric_id, ms.label, ms.sort_order, ms.category_id
            FROM measurement_slots ms
            WHERE ms.metric_id = ANY($1) AND ms.enabled = TRUE
            ORDER BY ms.metric_id, ms.sort_order""",
@@ -76,7 +76,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
     disabled_slot_ids_with_entries = []
     if metric_ids:
         disabled_slot_ids_with_entries = await db.fetch(
-            """SELECT DISTINCT ms.id, ms.metric_id, ms.label, ms.sort_order
+            """SELECT DISTINCT ms.id, ms.metric_id, ms.label, ms.sort_order, ms.category_id
                FROM measurement_slots ms
                JOIN entries e ON e.slot_id = ms.id AND e.date = $1 AND e.user_id = $2
                WHERE ms.metric_id = ANY($3) AND ms.enabled = FALSE
@@ -264,6 +264,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                 slot_item = {
                     "slot_id": s["id"],
                     "label": s["label"],
+                    "category_id": s.get("category_id"),
                     "entry": None,
                 }
                 if entry:
@@ -431,6 +432,35 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             if item["entry"] is not None:
                 progress_filled += 1
     progress_percent = round(progress_filled / progress_total * 100) if progress_total > 0 else 0
+
+    # Post-process: split multi-slot metrics by slot categories
+    final_result = []
+    for item in result:
+        if not item["slots"] or len(item["slots"]) == 0:
+            final_result.append(item)
+            continue
+
+        # Defensive rule: for metrics with slots, category_id always from slots
+        groups: dict[int | None, list] = {}
+        for s in item["slots"]:
+            cat = s.get("category_id")
+            groups.setdefault(cat, []).append(s)
+
+        if len(groups) == 1:
+            # All slots in one category — single item with slot's category_id
+            cat_id = next(iter(groups.keys()))
+            item["category_id"] = cat_id
+            final_result.append(item)
+        else:
+            # Different categories — split into separate items
+            for cat_id, cat_slots in groups.items():
+                split_item = {**item}
+                split_item["category_id"] = cat_id
+                split_item["slots"] = cat_slots
+                split_item["is_slot_split"] = True
+                final_result.append(split_item)
+
+    result = final_result
 
     qt.mark("build")
     qt.log()
