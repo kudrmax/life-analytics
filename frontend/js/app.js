@@ -469,25 +469,11 @@ async function renderTodayForm() {
         actionsEl.style.display = hasUserMetrics ? '' : 'none';
     }
 
-    // Update progress bar (skip computed metrics)
-    let total = 0;
-    let filled = 0;
-    for (const m of summary.metrics) {
-        if (m.type === 'computed' || m.type === 'integration') continue;
-        if (m.type === 'text') {
-            total += 1;
-            filled += (m.note_count > 0) ? 1 : 0;
-            continue;
-        }
-        if (m.slots && m.slots.length > 0) {
-            total += m.slots.length;
-            filled += m.slots.filter(s => s.entry !== null).length;
-        } else {
-            total += 1;
-            filled += m.entry !== null ? 1 : 0;
-        }
-    }
-    const pct = total > 0 ? Math.round((filled / total) * 100) : 0;
+    // Update progress bar from backend
+    const prog = summary.progress || {};
+    const pct = prog.percent ?? 0;
+    const filled = prog.filled ?? 0;
+    const total = prog.total ?? 0;
     document.getElementById('progress-count').textContent = `${pct}%`;
     const progressFill = document.getElementById('progress-fill');
     progressFill.style.width = `${pct}%`;
@@ -804,9 +790,9 @@ function _renderAWSummaryCard(awSummary) {
     if (awSummary.synced) {
         const activeTime = _awFormatDuration(awSummary.active_seconds);
         const totalTime = _awFormatDuration(awSummary.total_seconds);
-        const afkPct = awSummary.total_seconds > 0
+        const afkPct = awSummary.afk_percent ?? (awSummary.total_seconds > 0
             ? Math.round((1 - awSummary.active_seconds / awSummary.total_seconds) * 100)
-            : 0;
+            : 0);
 
         html += `<div class="aw-summary-card filled">
             <div class="aw-summary-stats">
@@ -815,12 +801,12 @@ function _renderAWSummaryCard(awSummary) {
                 <div class="aw-stat"><div class="aw-stat-value">${afkPct}%</div><div class="aw-stat-label">AFK</div></div>
             </div>`;
 
-        const topApps = (awSummary.apps || []).slice(0, 7);
+        const topApps = awSummary.apps || [];
         if (topApps.length > 0) {
             html += '<div class="aw-top-apps">';
             for (const app of topApps) {
-                const pct = awSummary.active_seconds > 0
-                    ? Math.round(app.duration_seconds / awSummary.active_seconds * 100) : 0;
+                const pct = app.percent ?? (awSummary.active_seconds > 0
+                    ? Math.round(app.duration_seconds / awSummary.active_seconds * 100) : 0);
                 html += `<div class="aw-app-row">
                     <span class="aw-app-name">${_escapeHtml(app.app_name)}</span>
                     <span class="aw-app-dur">${_awFormatDuration(app.duration_seconds)}</span>
@@ -830,12 +816,12 @@ function _renderAWSummaryCard(awSummary) {
             html += '</div>';
         }
 
-        const topDomains = (awSummary.domains || []).slice(0, 5);
+        const topDomains = awSummary.domains || [];
         if (topDomains.length > 0) {
             html += '<div class="aw-top-apps" style="margin-top:8px"><div class="aw-stat-label" style="margin-bottom:4px">Сайты</div>';
             for (const d of topDomains) {
-                const pct = awSummary.active_seconds > 0
-                    ? Math.round(d.duration_seconds / awSummary.active_seconds * 100) : 0;
+                const pct = d.percent ?? (awSummary.active_seconds > 0
+                    ? Math.round(d.duration_seconds / awSummary.active_seconds * 100) : 0);
                 html += `<div class="aw-app-row">
                     <span class="aw-app-name">${_escapeHtml(d.domain)}</span>
                     <span class="aw-app-dur">${_awFormatDuration(d.duration_seconds)}</span>
@@ -1383,25 +1369,11 @@ async function showDayDetail(date) {
     const summary = await api.getDailySummary(date);
     if (myVersion !== _historyRenderVersion) return;
 
-    // Update progress bar (skip computed metrics)
-    let total = 0;
-    let filled = 0;
-    for (const m of summary.metrics) {
-        if (m.type === 'computed' || m.type === 'integration') continue;
-        if (m.type === 'text') {
-            total += 1;
-            filled += (m.note_count > 0) ? 1 : 0;
-            continue;
-        }
-        if (m.slots && m.slots.length > 0) {
-            total += m.slots.length;
-            filled += m.slots.filter(s => s.entry !== null).length;
-        } else {
-            total += 1;
-            filled += m.entry !== null ? 1 : 0;
-        }
-    }
-    const pct = total > 0 ? Math.round((filled / total) * 100) : 0;
+    // Update progress bar from backend
+    const prog = summary.progress || {};
+    const pct = prog.percent ?? 0;
+    const filled = prog.filled ?? 0;
+    const total = prog.total ?? 0;
     const progressCount = document.getElementById('hist-progress-count');
     const progressFill = document.getElementById('hist-progress-fill');
     if (progressCount) progressCount.textContent = `${pct}%`;
@@ -1430,13 +1402,13 @@ async function showDayDetail(date) {
             if (filledSlots.length === 0) continue;
             hasAny = true;
             for (const s of filledSlots) {
-                const valStr = _formatEntryValue(s.entry, m.type, m.result_type, m.enum_options);
+                const valStr = s.entry.display_value ?? _formatEntryValue(s.entry, m.type, m.result_type, m.enum_options);
                 html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name} — ${s.label}</span><span class="summary-value">${valStr}</span></div>`;
             }
         } else {
             if (!m.entry) continue;
             hasAny = true;
-            const valStr = _formatEntryValue(m.entry, m.type, m.result_type, m.enum_options);
+            const valStr = m.entry.display_value ?? _formatEntryValue(m.entry, m.type, m.result_type, m.enum_options);
             html += `<div class="summary-row"><span class="summary-label">${m.icon ? '<span class="metric-icon">' + m.icon + '</span>' : ''}${m.name}</span><span class="summary-value">${valStr}</span></div>`;
         }
     }
@@ -1608,8 +1580,8 @@ async function loadChartsTrends(start, end) {
             const options = trendObj.options || [];
             const dates = Object.values(trendObj.option_series)[0]?.map(p => formatShortDate(p.date)) || [];
             const datasets = options.map((opt, idx) => ({
-                label: opt,
-                data: (trendObj.option_series[opt] || []).map(p => p.value),
+                label: opt.label,
+                data: (trendObj.option_series[opt.label] || []).map(p => p.value),
                 backgroundColor: optColors[idx % optColors.length] + 'cc',
                 borderRadius: 3,
             }));
@@ -1639,7 +1611,7 @@ async function loadChartsTrends(start, end) {
         if (awCanvas) {
             const labels = awTrendPoints.map(p => p.date.slice(5));
             const activeData = awTrendPoints.map(p => p.active_hours);
-            const afkData = awTrendPoints.map((p, i) => Math.max(0, p.total_hours - activeData[i]));
+            const afkData = awTrendPoints.map((p, i) => p.afk_hours ?? Math.max(0, p.total_hours - activeData[i]));
             const chart = new Chart(awCanvas.getContext('2d'), {
                 type: 'bar',
                 data: {
@@ -1934,6 +1906,13 @@ async function fetchMetricStats(metricId, start, end) {
 
 function formatMetricStatsHtml(stats) {
     if (!stats || stats.error) return '<span class="corr-stats-na">нет данных</span>';
+    // Use backend display_stats if available
+    if (stats.display_stats && stats.display_stats.length > 0) {
+        return stats.display_stats.map(s =>
+            `<div class="corr-stats-row"><span>${s.label}</span><span>${s.value}</span></div>`
+        ).join('');
+    }
+    // Fallback to local logic
     const rows = [];
     rows.push(`<div class="corr-stats-row"><span>Заполнение</span><span>${stats.fill_rate}%</span></div>`);
     const mt = stats.metric_type;
@@ -1984,7 +1963,15 @@ function renderCorrPair(p, report) {
 
     const typeLeft = isLagged ? p.type_b : p.type_a;
     const typeRight = isLagged ? p.type_a : p.type_b;
-    let [hintA, hintB] = corrHintWords(typeLeft, typeRight, r);
+    // Use backend hints with fallback to local computation
+    let hintA, hintB;
+    if (isLagged) {
+        hintA = p.hint_b ?? corrHintWords(typeLeft, typeRight, r)[0];
+        hintB = p.hint_a ?? corrHintWords(typeLeft, typeRight, r)[1];
+    } else {
+        hintA = p.hint_a ?? corrHintWords(typeLeft, typeRight, r)[0];
+        hintB = p.hint_b ?? corrHintWords(typeLeft, typeRight, r)[1];
+    }
     const optLeft = isLagged ? (p.option_b || '') : (p.option_a || '');
     const optRight = isLagged ? (p.option_a || '') : (p.option_b || '');
     if (typeLeft === 'enum_bool' && optLeft) hintA = `<span class="corr-word-pos">✓ ${optLeft}</span>`;
@@ -2514,8 +2501,8 @@ async function loadMetricDetail(metricId, metric, start, end) {
         const options = trend.options || [];
         const dates = Object.values(trend.option_series)[0]?.map(p => formatShortDate(p.date)) || [];
         const datasets = options.map((opt, idx) => ({
-            label: opt,
-            data: (trend.option_series[opt] || []).map(p => p.value),
+            label: opt.label,
+            data: (trend.option_series[opt.label] || []).map(p => p.value),
             backgroundColor: optColors[idx % optColors.length] + 'cc',
             borderRadius: 3,
         }));
@@ -4639,13 +4626,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             } else {
                 const selectedType = getCurrentType();
 
-                const slug = name.toLowerCase()
-                    .replace(/\s+/g, '_')
-                    .replace(/[^a-z0-9_а-яё]/gi, '')
-                    || 'metric_' + Date.now();
-
                 const icon = document.getElementById('nm-icon').value;
-                const createData = { slug, name, icon, type: selectedType };
+                const createData = { name, icon, type: selectedType };
                 if (categoryIdVal) createData.category_id = parseInt(categoryIdVal);
 
                 if (selectedType === 'scale') {

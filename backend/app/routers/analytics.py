@@ -585,6 +585,7 @@ async def metric_stats(
                     "min": round(min(values), 2),
                     "max": round(max(values), 2),
                 })
+        result["display_stats"] = _build_display_stats(result, "computed")
         return result
 
     if mt == "text":
@@ -600,7 +601,7 @@ async def metric_stats(
         fill_rate = round(days_with_notes / total_days * 100, 1) if total_days > 0 else 0
         counts = [r["cnt"] for r in rows]
         qt.log()
-        return {
+        text_result = {
             "metric_id": metric_id,
             "metric_type": "text",
             "total_entries": days_with_notes,
@@ -610,6 +611,8 @@ async def metric_stats(
             "average_per_day": round(total_notes / days_with_notes, 1) if days_with_notes > 0 else 0,
             "max_per_day": max(counts) if counts else 0,
         }
+        text_result["display_stats"] = _build_display_stats(text_result, "text")
+        return text_result
 
     if mt == "enum":
         rows = await db.fetch(
@@ -646,7 +649,7 @@ async def metric_stats(
         most_common = max(option_stats, key=lambda x: x["count"])["label"] if option_stats else "—"
 
         qt.log()
-        return {
+        enum_result = {
             "metric_id": metric_id,
             "metric_type": "enum",
             "total_entries": total_entries,
@@ -655,6 +658,8 @@ async def metric_stats(
             "option_stats": option_stats,
             "most_common": most_common,
         }
+        enum_result["display_stats"] = _build_display_stats(enum_result, "enum")
+        return enum_result
 
     value_table, extra_cols = _get_value_table(mt)
     rows = await db.fetch(
@@ -763,8 +768,43 @@ async def metric_stats(
         else:
             result.update({"average": 0, "min": 0, "max": 0})
 
+    # Build display_stats — ready-to-render list of {label, value}
+    result["display_stats"] = _build_display_stats(result, mt)
+
     qt.log()
     return result
+
+
+def _build_display_stats(stats: dict, mt: str) -> list[dict]:
+    """Build a list of {label, value} for UI display based on metric type."""
+    rows: list[dict] = []
+    rows.append({"label": "Заполнение", "value": f"{stats['fill_rate']}%"})
+    rt = stats.get("result_type")
+    if mt == "bool" or (mt == "computed" and rt == "bool"):
+        if "yes_percent" in stats:
+            rows.append({"label": "Да", "value": f"{stats['yes_percent']}%"})
+    elif mt == "time" or (mt == "computed" and rt == "time"):
+        if stats.get("average"):
+            rows.append({"label": "Среднее", "value": str(stats["average"])})
+    elif mt == "scale":
+        if stats.get("average") is not None:
+            rows.append({"label": "Среднее", "value": f"{stats['average']}%"})
+    elif mt == "duration" or (mt == "computed" and rt == "duration"):
+        if stats.get("average"):
+            rows.append({"label": "Среднее", "value": str(stats["average"])})
+    elif mt == "text":
+        if stats.get("average_per_day") is not None:
+            rows.append({"label": "Среднее/день", "value": str(stats["average_per_day"])})
+    elif mt == "enum":
+        if stats.get("most_common"):
+            rows.append({"label": "Частый", "value": str(stats["most_common"])})
+    else:
+        # number, computed float/int
+        if stats.get("average") is not None:
+            rows.append({"label": "Среднее", "value": str(stats["average"])})
+        if stats.get("min") is not None and stats.get("max") is not None:
+            rows.append({"label": "Диапазон", "value": f"{stats['min']} – {stats['max']}"})
+    return rows
 
 
 class CorrelationReportRequest(BaseModel):
@@ -1154,7 +1194,31 @@ def _pair_option(label: str | None, pair_type: str | None, slot_id: int | None) 
     return raw[colon_idx + 2:] if colon_idx != -1 else ""
 
 
+def _corr_type_words(type_: str) -> tuple[str, str]:
+    """Return (positive_word, negative_word) for a metric type in correlation context."""
+    if type_ in ("bool", "enum_bool"):
+        return ("да", "нет")
+    if type_ == "time":
+        return ("позже", "раньше")
+    if type_ == "scale":
+        return ("выше", "ниже")
+    return ("больше", "меньше")
+
+
+def _corr_hint_words(type_a: str, type_b: str, r: float) -> tuple[str, str]:
+    """Return (hint_a, hint_b) — human-readable words describing correlation direction."""
+    if not type_a or not type_b:
+        return ("", "")
+    pos_a, _ = _corr_type_words(type_a)
+    pos_b, neg_b = _corr_type_words(type_b)
+    hint_a = pos_a
+    hint_b = pos_b if r > 0 else neg_b
+    return (hint_a, hint_b)
+
+
 def _format_pair(p: dict, metric_icons: dict[str, str]) -> dict:
+    corr = p["correlation"]
+    hint_a, hint_b = _corr_hint_words(p["type_a"], p["type_b"], corr) if corr is not None else ("", "")
     return {
         "label_a": _pair_label(p["name_a"], p["label_a"], p["type_a"]),
         "label_b": _pair_label(p["name_b"], p["label_b"], p["type_b"]),
@@ -1166,13 +1230,15 @@ def _format_pair(p: dict, metric_icons: dict[str, str]) -> dict:
         "icon_b": _resolve_icon(p["icon_b"], p["label_b"], metric_icons),
         "slot_label_a": p["slot_label_a"] or "",
         "slot_label_b": p["slot_label_b"] or "",
-        "correlation": p["correlation"],
+        "correlation": corr,
         "data_points": p["data_points"],
         "lag_days": p["lag_days"],
-        "p_value": p["p_value"] if p["p_value"] is not None else (round(_p_value(p["correlation"], p["data_points"]), 4) if p["correlation"] is not None else None),
+        "p_value": p["p_value"] if p["p_value"] is not None else (round(_p_value(corr, p["data_points"]), 4) if corr is not None else None),
         "metric_a_id": p["metric_a_id"],
         "metric_b_id": p["metric_b_id"],
         "pair_id": p["pair_id"],
+        "hint_a": hint_a,
+        "hint_b": hint_b,
     }
 
 

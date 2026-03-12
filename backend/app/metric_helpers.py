@@ -245,6 +245,55 @@ async def get_metric_type(conn: asyncpg.Connection, metric_id: int, user_id: int
     return row["type"] if row else None
 
 
+def format_display_value(
+    value: bool | str | int | list[int] | float | None,
+    metric_type: str,
+    result_type: str | None = None,
+    enum_options: list[dict] | None = None,
+) -> str:
+    """Format a raw metric value into a human-readable display string."""
+    if value is None:
+        return "—"
+
+    if metric_type == "enum":
+        if not isinstance(value, list):
+            return "—"
+        if enum_options:
+            id_to_label = {opt["id"]: opt["label"] for opt in enum_options}
+            return ", ".join(id_to_label.get(oid, str(oid)) for oid in value)
+        return ", ".join(str(v) for v in value)
+
+    if metric_type == "computed":
+        rt = result_type or "float"
+        if rt == "bool":
+            return "Да" if value else "Нет"
+        if rt in ("time", "duration"):
+            return str(value)
+        if rt == "int":
+            return str(round(value)) if isinstance(value, (int, float)) else str(value)
+        # float
+        return f"{value:.2f}" if isinstance(value, float) else str(value)
+
+    if metric_type == "integration":
+        return str(value)
+
+    if metric_type == "duration":
+        minutes = int(value)
+        h, m = divmod(minutes, 60)
+        if h > 0:
+            return f"{h}ч {m}м"
+        return f"{m}м"
+
+    if metric_type == "time":
+        return str(value) if value else "—"
+
+    if metric_type in ("number", "scale"):
+        return str(value) if value is not None else "—"
+
+    # bool
+    return "Да" if value else "Нет"
+
+
 def _parse_time(value: str, entry_date: date_type | None) -> datetime:
     """Parse 'HH:MM' string and combine with entry_date into a TIMESTAMPTZ."""
     parts = value.split(":")
