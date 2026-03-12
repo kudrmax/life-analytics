@@ -2891,15 +2891,39 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         const settingsMetricsByCat = {};
         const settingsUncategorized = [];
         for (const m of activeMetrics) {
-            // Check if multi-slot metric has slots in different categories
             if (m.slots && m.slots.length >= 2) {
-                // Always group as single row — use first slot's category_id
-                const slotCatId = m.slots[0].category_id;
-                if (slotCatId && settingsCatById[slotCatId]) {
-                    if (!settingsMetricsByCat[slotCatId]) settingsMetricsByCat[slotCatId] = [];
-                    settingsMetricsByCat[slotCatId].push(m);
-                    continue;
+                // Group slots by category_id
+                const slotsByCat = {};
+                for (const s of m.slots) {
+                    const key = s.category_id != null ? String(s.category_id) : 'null';
+                    if (!slotsByCat[key]) slotsByCat[key] = [];
+                    slotsByCat[key].push(s);
                 }
+
+                const uniqueCats = Object.keys(slotsByCat);
+                if (uniqueCats.length === 1) {
+                    // All slots in one category — single row as before
+                    const catId = m.slots[0].category_id;
+                    if (catId && settingsCatById[catId]) {
+                        if (!settingsMetricsByCat[catId]) settingsMetricsByCat[catId] = [];
+                        settingsMetricsByCat[catId].push(m);
+                    } else {
+                        settingsUncategorized.push(m);
+                    }
+                } else {
+                    // Slots in different categories — split into view items
+                    for (const [key, catSlots] of Object.entries(slotsByCat)) {
+                        const catId = key === 'null' ? null : parseInt(key);
+                        const viewItem = { ...m, _displaySlots: catSlots };
+                        if (catId && settingsCatById[catId]) {
+                            if (!settingsMetricsByCat[catId]) settingsMetricsByCat[catId] = [];
+                            settingsMetricsByCat[catId].push(viewItem);
+                        } else {
+                            settingsUncategorized.push(viewItem);
+                        }
+                    }
+                }
+                continue;
             }
             if (m.category_id && settingsCatById[m.category_id]) {
                 if (!settingsMetricsByCat[m.category_id]) settingsMetricsByCat[m.category_id] = [];
@@ -2915,8 +2939,15 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         for (const m of activeMetrics) settingsMetricNameMap[m.id] = m.name;
 
         function renderSettingRow(m) {
-            const slotsBadge = (m.slots && m.slots.length > 0)
-                ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
+            const displaySlots = m._displaySlots || m.slots || [];
+            const slotIds = displaySlots.map(s => s.id).join(',');
+            const slotsBadge = displaySlots.length > 1
+                ? `<span class="setting-slots">${displaySlots.length}x</span>`
+                : displaySlots.length === 1
+                    ? `<span class="setting-slots">${displaySlots[0].label}</span>`
+                    : (m.slots && m.slots.length > 0)
+                        ? `<span class="setting-slots">${m.slots.length}x</span>`
+                        : '';
             const condBadge = m.condition_metric_id
                 ? `<span class="setting-condition" title="Зависит от: ${settingsMetricNameMap[m.condition_metric_id] || '?'}"><i data-lucide="git-branch"></i></span>` : '';
             const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
@@ -2928,7 +2959,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
                 : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge + condBadge;
-            return `<div class="setting-row" data-metric-id="${m.id}">
+            return `<div class="setting-row" data-metric-id="${m.id}"${slotIds ? ` data-slot-ids="${slotIds}"` : ''}>
                 <span class="drag-handle">⠿</span>
                 <div class="setting-info">
                     <span class="setting-name">${metricLabelHtml(m)}</span>
@@ -3240,12 +3271,27 @@ function setupMetricDragDrop(container) {
             const catDiv = row.closest('.category[data-category-id]');
             const catIdStr = catDiv ? catDiv.dataset.categoryId : '';
             const catId = catIdStr && !isNaN(parseInt(catIdStr)) ? parseInt(catIdStr) : null;
-            const item = {
-                id: parseInt(row.dataset.metricId),
-                sort_order: index * 10,
-                category_id: catId,
-            };
-            items.push(item);
+            const metricId = parseInt(row.dataset.metricId);
+            const slotIdsAttr = row.dataset.slotIds;
+
+            if (slotIdsAttr) {
+                // Split metric — send per-slot items
+                const slotIds = slotIdsAttr.split(',').map(Number);
+                for (const slotId of slotIds) {
+                    items.push({
+                        id: metricId,
+                        sort_order: index * 10,
+                        category_id: catId,
+                        slot_id: slotId,
+                    });
+                }
+            } else {
+                items.push({
+                    id: metricId,
+                    sort_order: index * 10,
+                    category_id: catId,
+                });
+            }
         });
         return items;
     }
