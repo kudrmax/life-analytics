@@ -3539,8 +3539,8 @@ emoji-picker {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
+    width: 160px;
     flex-shrink: 0;
-    max-width: 180px;
 }
 
 .insight-metric-tag {
@@ -3552,8 +3552,11 @@ emoji-picker {
     font-size: 12px;
     background: var(--surface2);
     border: 1px solid var(--border);
-    white-space: nowrap;
     color: var(--text);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .insight-metric-tag .metric-icon {
