@@ -305,6 +305,24 @@ entity "values_enum" as ve {
     * selected_option_ids : INTEGER[]
 }
 
+entity "insights" as ins {
+    * **id** : SERIAL <<PK>>
+    --
+    * user_id : INTEGER <<FK>>
+    * text : TEXT
+    * created_at : TIMESTAMPTZ
+    * updated_at : TIMESTAMPTZ
+}
+
+entity "insight_metrics" as insm {
+    * **id** : SERIAL <<PK>>
+    --
+    * insight_id : INTEGER <<FK>>
+    metric_id : INTEGER <<FK>>
+    custom_label : VARCHAR(200)
+    * sort_order : INTEGER
+}
+
 ' ── Relationships ──
 
 users ||--o{ cat : "user_id"
@@ -318,6 +336,7 @@ users ||--o{ aau : "user_id"
 users ||--o{ acat : "user_id"
 users ||--o{ aacm : "user_id"
 users ||--o{ notes : "user_id"
+users ||--o{ ins : "user_id"
 
 cat ||--o{ cat : "parent_id"
 cat ||--o{ md : "category_id"
@@ -348,6 +367,9 @@ entries ||--o| vdu : "entry_id"
 entries ||--o| ve : "entry_id"
 
 cr ||--o{ cp : "report_id"
+
+ins ||--o{ insm : "insight_id"
+md ||--o{ insm : "metric_id"
 
 acat ||--o{ aacm : "activitywatch_category_id"
 acat ||--o{ icatc : "activitywatch_category_id"

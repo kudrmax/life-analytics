@@ -954,6 +954,10 @@ input[type="month"], input[type="date"] {
     border-radius: 12px;
     padding: 8px 12px;
 }
+.stats-header .btn-primary,
+.stats-header .btn-sm {
+    margin-bottom: 0;
+}
 .stats-title {
     margin: 0;
     padding: 0;
@@ -1196,6 +1200,9 @@ input[type="month"], input[type="date"] {
 .btn-sm {
     padding: 4px 12px;
     font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .corr-pair-row {
@@ -1763,9 +1770,9 @@ details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-siz
     }
     nav button {
         flex-direction: row;
-        gap: 6px;
-        font-size: 13px;
-        padding: 16px 14px;
+        gap: 4px;
+        font-size: 12px;
+        padding: 16px 8px;
     }
     nav button svg { width: 18px; height: 18px; }
     .nav-inner { height: 52px; }
@@ -3507,5 +3514,145 @@ emoji-picker {
 
 .convert-mapping-section {
     margin-bottom: 8px;
+}
+
+/* ═══════════════════════════════════════════════════════ */
+/* Insights Page                                          */
+/* ═══════════════════════════════════════════════════════ */
+
+.insight-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 6px;
+    overflow: hidden;
+}
+
+.insight-card-body {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+}
+
+.insight-metrics-col {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    flex-shrink: 0;
+    max-width: 180px;
+}
+
+.insight-metric-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+    color: var(--text);
+}
+
+.insight-metric-tag .metric-icon {
+    font-size: 13px;
+    width: auto;
+    height: auto;
+    background: none;
+    border-radius: 0;
+}
+
+.insight-metric-tag.custom {
+    border-style: dashed;
+    color: var(--text-dim);
+}
+
+.insight-content-col {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.insight-text {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text);
+    word-break: break-word;
+}
+
+.insight-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.insight-no-metrics {
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.btn-icon-sm {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-dim);
+    padding: 2px;
+    display: inline-flex;
+    align-items: center;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+}
+
+.btn-icon-sm:hover {
+    opacity: 1;
+}
+
+.btn-icon-sm svg {
+    width: 14px;
+    height: 14px;
+}
+
+.btn-icon-sm.insight-delete-btn:hover {
+    color: var(--red);
+}
+
+.insight-corr-panel {
+    border-top: 1px solid var(--border);
+    padding: 8px 14px 14px;
+}
+
+.insight-corr-pairs {
+    margin-top: 4px;
+}
+
+/* Insight modal */
+.insight-metric-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.insight-metric-row select {
+    flex: 1;
+    min-width: 0;
+}
+
+.insight-metric-row .insight-custom-input {
+    flex: 1;
+    min-width: 0;
+}
+
+@media (max-width: 480px) {
+    .insight-card-body {
+        flex-direction: column;
+    }
+    .insight-metrics-col {
+        max-width: none;
+    }
 }
 

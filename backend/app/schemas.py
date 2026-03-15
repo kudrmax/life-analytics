@@ -224,3 +224,36 @@ class MetricConvertRequest(BaseModel):
 class MetricConvertResponse(BaseModel):
     converted: int
     deleted: int
+
+
+# Insight schemas
+class InsightMetricItem(BaseModel):
+    metric_id: int | None = None
+    custom_label: str | None = None
+
+
+class InsightCreate(BaseModel):
+    text: str
+    metrics: list[InsightMetricItem] = []
+
+
+class InsightUpdate(BaseModel):
+    text: str | None = None
+    metrics: list[InsightMetricItem] | None = None
+
+
+class InsightMetricOut(BaseModel):
+    id: int
+    metric_id: int | None
+    metric_name: str | None
+    metric_icon: str | None
+    custom_label: str | None
+    sort_order: int
+
+
+class InsightOut(BaseModel):
+    id: int
+    text: str
+    metrics: list[InsightMetricOut]
+    created_at: str
+    updated_at: str

@@ -63,7 +63,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `formula.py` — formula engine for computed metrics: tokenizer, validator, recursive descent evaluator
 - `correlation_blacklist.py` — `should_skip_pair()` rules for filtering meaningless correlation pairs
 
-**Routers** (all under `/api/`): `auth`, `metrics`, `entries`, `daily`, `analytics`, `export_import`, `integrations`, `categories`, `notes`
+**Routers** (all under `/api/`): `auth`, `metrics`, `entries`, `daily`, `analytics`, `export_import`, `integrations`, `categories`, `notes`, `insights`
 
 ### Database Schema (PostgreSQL)
 
@@ -87,6 +87,8 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `computed_config` — metric_id (PK/FK), formula JSONB (token array), result_type VARCHAR ('float'|'int'|'bool'|'time'|'duration')
 - `notes` — id, metric_id (FK), user_id (FK), date, text, created_at (multiple notes per metric per day, for text metrics)
 - `metric_condition` — metric_id (PK/FK), depends_on_metric_id (FK), condition_type VARCHAR ('filled'|'equals'|'not_equals'), condition_value JSONB
+- `insights` — id, user_id (FK), text (TEXT), created_at, updated_at (user conclusions about metric relationships)
+- `insight_metrics` — id, insight_id (FK), metric_id (FK, nullable), custom_label VARCHAR(200), sort_order (links insights to metrics; custom_label for free-text metric names without metric_id)
 - `correlation_reports` — id, user_id (FK), status ('running'/'done'/'error'), period_start, period_end, created_at, finished_at
 - `correlation_pairs` — id, report_id (FK), metric_a_id, metric_b_id, slot_a_id, slot_b_id, label_a, label_b, type_a, type_b, correlation (FLOAT), data_points (INTEGER), lag_days (INTEGER), p_value (FLOAT)
 - `user_integrations` — id, user_id (FK), provider (VARCHAR), encrypted_token (TEXT), enabled, created_at; UNIQUE(user_id, provider)
@@ -129,7 +131,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `js/app.js` — all page logic: routing, rendering, event handling
 - `css/style.css` — dark/light theme via CSS custom properties
 
-**Navigation:** Сегодня, Статистика, Анализ, История, Настройки.
+**Navigation:** Сегодня, Статистика, Анализ, Выводы, История, Настройки.
 
 **Routing:** `navigateTo(page, params = {})` — поддерживает параметры (e.g. `{ metricId }`, `{ openAddModal: true }`).
 
@@ -137,6 +139,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - Сегодня (today): ввод метрик за текущий день; `today-actions` кнопки «Добавить метрику» / «Редактировать метрики»
 - Статистика (charts): `stats-header` с выбором периода, тренды с мини-чартами для всех метрик + ActivityWatch
 - Анализ (analysis): `stats-header` с выбором периода, корреляционные отчёты с polling
+- Выводы (insights): список карточек с тегами метрик и текстом; кнопка «i» показывает корреляции (переиспользует `renderCorrPair`/`toggleCorrDetail` со страницы Анализ); модалка создания/редактирования с динамическим списком метрик (реальные + произвольные названия)
 - Детализация метрики (metric-detail): Chart.js графики (bar для bool, line для остальных); переход через `navigateTo('metric-detail', { metricId })`; кнопка «Назад» ведёт на `charts`; `detailChartInstance` глобальная переменная для cleanup
 - Настройки (settings): принимает `{ openAddModal: true }` для автооткрытия модалки добавления метрики; раздел "Интеграции" внизу с кнопками подключения/отключения Todoist
 
@@ -239,6 +242,17 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 **Deployment:** Docker Compose on VDSina VPS. Auto-deploy via GitHub Actions on push to master (SSH → git pull → docker compose up --build). Memory limits set in docker-compose.yml (512M db, 512M backend, 64M frontend). PostgreSQL tuned for 2 GB RAM. Swap 2 GB on VPS for safety.
 
 **Metric queries with config:** Routers that list/return metrics use LEFT JOIN to include type-specific config (e.g. `LEFT JOIN scale_config sc ON sc.metric_id = md.id`). The `build_metric_out` helper uses `.get()` for config fields since they may be NULL for non-matching types.
+
+**Frontend visual consistency:** All new pages and components MUST reuse existing CSS classes — never invent new ones when existing fit. Key patterns:
+- **Cards/rows:** `setting-row` pattern (flex, `background: var(--surface)`, `border: 1px solid var(--border)`, `border-radius: 8px`, `padding: 12px 14px`, `margin-bottom: 6px`)
+- **Headers:** `stats-header` + `stats-title` (flex, space-between, 12px border-radius, 8px 12px padding)
+- **Buttons:** `btn-primary`, `btn-small`, `btn-icon` (36x36), `btn-icon-tiny` (13x13 svg, no border), `btn-icon-danger` — never create new button classes
+- **Modals:** `modal-overlay` → `modal` → `h3` → `modal-form` → `form-section` + `label-text` → `modal-actions` with `btn-small` + `btn-primary`
+- **Inputs in modals:** styled by `.modal input, .modal select` (surface2 bg, border, 6px radius). Use `note-textarea` class for textareas
+- **Empty state:** `empty-state` → `empty-state-icon` → `empty-state-text` → `btn-primary`
+- **Action buttons in rows:** use `btn-icon-tiny` + `btn-icon-danger` pattern (no border, dim color, hover opacity)
+- **Tags/badges:** `border-radius: 4px`, `font-size: 12px`, `padding: 2px 8px`, `background: var(--surface2)`
+- Always verify nav fits in `max-width: 600px` with all items
 
 **JSONB deserialization pattern:** asyncpg does **not** auto-deserialize JSONB columns — they come back as raw JSON strings (e.g. `'true'`, `'[1,2]'`). No global `set_type_codec('jsonb', ...)` is configured in this project. Every JSONB column must be explicitly deserialized via `json.loads()` when read. Current JSONB columns and where they are deserialized: `computed_config.formula` → `metric_helpers.py` (`build_metric_out`), `metric_condition.condition_value` → `metric_helpers.py` (`build_metric_out`) + `daily.py` (condition evaluation). When writing JSONB, use `json.dumps(value)` + `::jsonb` cast — this is correct. When exporting JSONB to CSV, pass the raw string as-is (it's already valid JSON) — do **not** wrap in `json.dumps()` again.
 

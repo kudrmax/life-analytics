@@ -553,4 +553,32 @@ async def _init_db_schema(conn):
         ON notes(metric_id, user_id, date)
     """)
 
+    # Insights (user conclusions about metric relationships)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS insights (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            text TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+    """)
+
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS insight_metrics (
+            id SERIAL PRIMARY KEY,
+            insight_id INTEGER NOT NULL REFERENCES insights(id) ON DELETE CASCADE,
+            metric_id INTEGER REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            custom_label VARCHAR(200),
+            sort_order INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_insights_user ON insights(user_id)
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_insight_metrics_insight ON insight_metrics(insight_id)
+    """)
+
 

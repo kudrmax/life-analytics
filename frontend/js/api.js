@@ -191,8 +191,9 @@ const api = {
     getCorrelationReport() {
         return this.request('GET', '/api/analytics/correlation-report');
     },
-    getCorrelationPairs(reportId, { category = 'all', offset = 0, limit = 50 } = {}) {
+    getCorrelationPairs(reportId, { category = 'all', offset = 0, limit = 50, metric_ids = null } = {}) {
         const params = new URLSearchParams({ category, offset, limit });
+        if (metric_ids) params.set('metric_ids', metric_ids);
         return this.request('GET', `/api/analytics/correlation-report/${reportId}/pairs?${params}`);
     },
     getCorrelationPairChart(pairId) {
@@ -306,6 +307,26 @@ const api = {
     },
     listNotes(metricId, start, end) {
         return this.request('GET', `/api/notes?metric_id=${metricId}&start=${start}&end=${end}`);
+    },
+
+    // Insights
+    getInsights() {
+        return this.request('GET', '/api/insights');
+    },
+    async createInsight(data) {
+        const result = await this.request('POST', '/api/insights', data);
+        invalidateCache('/api/insights');
+        return result;
+    },
+    async updateInsight(id, data) {
+        const result = await this.request('PUT', `/api/insights/${id}`, data);
+        invalidateCache('/api/insights');
+        return result;
+    },
+    async deleteInsight(id) {
+        const result = await this.request('DELETE', `/api/insights/${id}`);
+        invalidateCache('/api/insights');
+        return result;
     },
 
     // Categories

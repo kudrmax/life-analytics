@@ -131,7 +131,7 @@ function navigateTo(page, params = {}) {
         nav.style.display = (page === 'login' || page === 'register') ? 'none' : '';
     }
 
-    const activePage = page === 'metric-detail' ? 'charts' : page === 'categories' ? 'settings' : page;
+    const activePage = page === 'metric-detail' ? 'charts' : page === 'categories' ? 'settings' : page === 'insights' ? 'insights' : page;
     document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === activePage));
     const main = document.getElementById('main');
 
@@ -142,6 +142,7 @@ function navigateTo(page, params = {}) {
         case 'history': renderHistory(main); break;
         case 'charts': renderCharts(main); break;
         case 'analysis': renderAnalysis(main); break;
+        case 'insights': renderInsights(main); break;
         case 'metric-detail': renderMetricDetail(main, params.metricId); break;
         case 'settings': renderSettings(main, params); break;
         case 'categories': renderCategoryManager(main); break;
@@ -1857,6 +1858,302 @@ async function loadChartsTrends(start, end) {
     });
 
     console.debug(`[render] charts  ${(performance.now() - _t0).toFixed(0)}ms`);
+}
+
+// ─── Insights Page (Выводы) ───
+
+async function renderInsights(container) {
+    const _t0 = performance.now();
+    container.innerHTML = '<div class="stats-header"><h2 class="stats-title">Выводы</h2></div><div style="color:var(--text-dim);font-size:13px;">Загрузка...</div>';
+
+    let insightsData;
+    try {
+        insightsData = await api.getInsights();
+    } catch (e) {
+        container.innerHTML = '<div class="stats-header"><h2 class="stats-title">Выводы</h2></div><p style="color:var(--red)">Ошибка загрузки</p>';
+        return;
+    }
+
+    let html = `
+        <div class="stats-header">
+            <h2 class="stats-title">Выводы</h2>
+            <button class="btn-primary btn-sm" id="insight-add-btn"><i data-lucide="plus"></i> Добавить</button>
+        </div>
+    `;
+
+    if (insightsData.length === 0) {
+        html += `
+            <div class="empty-state">
+                <div class="empty-state-icon"><i data-lucide="lightbulb"></i></div>
+                <div class="empty-state-text">Записывайте выводы о связях между метриками</div>
+                <button class="btn-primary" id="insight-empty-add"><i data-lucide="plus"></i> Добавить вывод</button>
+            </div>
+        `;
+    } else {
+        html += '<div id="insights-list">';
+        for (const insight of insightsData) {
+            html += renderInsightCard(insight);
+        }
+        html += '</div>';
+    }
+
+    container.innerHTML = html;
+    if (window.lucide) lucide.createIcons();
+
+    // Event listeners
+    const addBtn = document.getElementById('insight-add-btn');
+    if (addBtn) addBtn.addEventListener('click', () => showInsightModal());
+
+    const emptyAdd = document.getElementById('insight-empty-add');
+    if (emptyAdd) emptyAdd.addEventListener('click', () => showInsightModal());
+
+    // Event delegation for insight actions
+    const list = document.getElementById('insights-list');
+    if (list) {
+        list.addEventListener('click', async (e) => {
+            const editBtn = e.target.closest('.insight-edit-btn');
+            if (editBtn) {
+                const id = parseInt(editBtn.dataset.insightId);
+                const insight = insightsData.find(ins => ins.id === id);
+                if (insight) showInsightModal(insight);
+                return;
+            }
+
+            const deleteBtn = e.target.closest('.insight-delete-btn');
+            if (deleteBtn) {
+                const id = parseInt(deleteBtn.dataset.insightId);
+                if (confirm('Удалить вывод?')) {
+                    await api.deleteInsight(id);
+                    renderInsights(container);
+                }
+                return;
+            }
+
+            const corrBtn = e.target.closest('.insight-corr-btn');
+            if (corrBtn) {
+                toggleInsightCorrelations(corrBtn);
+                return;
+            }
+
+            // Delegation for correlation detail buttons inside insight panels
+            const detailBtn = e.target.closest('.corr-detail-btn');
+            if (detailBtn) {
+                e.stopPropagation();
+                const d = corrPairData.get(detailBtn.dataset.pairId);
+                if (d) toggleCorrDetail(detailBtn.dataset.pairId, d.mAId, d.mBId, d.lA, d.iA, d.lB, d.iB, d.pStart, d.pEnd);
+                return;
+            }
+        });
+    }
+
+    console.debug(`[render] insights  ${(performance.now() - _t0).toFixed(0)}ms`);
+}
+
+function renderInsightCard(insight) {
+    const metricTags = insight.metrics.map(m => {
+        if (m.metric_id) {
+            const icon = m.metric_icon ? `<span class="metric-icon">${m.metric_icon}</span>` : '';
+            return `<span class="insight-metric-tag">${icon}${m.metric_name || 'Удалённая метрика'}</span>`;
+        } else {
+            return `<span class="insight-metric-tag custom">${m.custom_label || ''}</span>`;
+        }
+    }).join('');
+
+    const realMetricIds = insight.metrics
+        .filter(m => m.metric_id)
+        .map(m => m.metric_id);
+    const corrBtnHtml = realMetricIds.length >= 2
+        ? `<button class="insight-corr-btn btn-icon-sm" data-metric-ids="${realMetricIds.join(',')}" title="Показать корреляции"><i data-lucide="info"></i></button>`
+        : '';
+
+    const textHtml = insight.text
+        ? `<div class="insight-text">${insight.text.replace(/\n/g, '<br>')}</div>`
+        : '';
+
+    return `<div class="insight-card" data-insight-id="${insight.id}">
+        <div class="insight-card-body">
+            <div class="insight-metrics-col">${metricTags || '<span class="insight-no-metrics">Нет метрик</span>'}</div>
+            <div class="insight-content-col">${textHtml}</div>
+            <div class="insight-actions">
+                ${corrBtnHtml}
+                <button class="insight-edit-btn btn-icon-sm" data-insight-id="${insight.id}" title="Редактировать"><i data-lucide="pencil"></i></button>
+                <button class="insight-delete-btn btn-icon-sm" data-insight-id="${insight.id}" title="Удалить"><i data-lucide="trash-2"></i></button>
+            </div>
+        </div>
+        <div class="insight-corr-panel" id="insight-corr-${insight.id}" style="display:none"></div>
+    </div>`;
+}
+
+async function showInsightModal(existing = null) {
+    const isEdit = !!existing;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const initialMetrics = existing ? existing.metrics : [];
+
+    function renderMetricRows(metricsArr) {
+        return metricsArr.map((m, i) => {
+            const isCustom = !m.metric_id;
+            const selectHtml = `<select class="insight-metric-select" data-idx="${i}">
+                <option value="">— Выберите метрику —</option>
+                ${metrics.filter(mt => mt.enabled).map(mt =>
+                    `<option value="${mt.id}" ${m.metric_id === mt.id ? 'selected' : ''}>${mt.icon || ''} ${mt.name}</option>`
+                ).join('')}
+                <option value="custom" ${isCustom && m.custom_label ? 'selected' : ''}>Произвольное название...</option>
+            </select>`;
+            const customInput = isCustom
+                ? `<input type="text" class="insight-custom-input" data-idx="${i}" value="${m.custom_label || ''}" placeholder="Название">`
+                : '';
+            return `<div class="insight-metric-row">
+                ${selectHtml}
+                ${customInput}
+                <button class="insight-metric-remove btn-icon-tiny btn-icon-danger" data-idx="${i}" title="Удалить"><i data-lucide="x"></i></button>
+            </div>`;
+        }).join('');
+    }
+
+    overlay.innerHTML = `
+        <div class="modal">
+            <h3>${isEdit ? 'Редактировать вывод' : 'Новый вывод'}</h3>
+            <div class="modal-form">
+                <div class="form-section">
+                    <span class="label-text">Метрики</span>
+                    <div id="insight-modal-metrics">${renderMetricRows(initialMetrics)}</div>
+                    <button class="btn-small btn-sm" id="insight-add-metric" style="margin-top:4px"><i data-lucide="plus"></i> Добавить метрику</button>
+                </div>
+                <div class="form-section">
+                    <span class="label-text">Текст вывода</span>
+                    <textarea id="insight-modal-text" class="note-textarea" rows="4" placeholder="Опишите вывод о связи..." style="min-height:80px">${existing ? existing.text : ''}</textarea>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-small" id="insight-modal-cancel">Отмена</button>
+                <button class="btn-primary" id="insight-modal-save">${isEdit ? 'Сохранить' : 'Создать'}</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+    if (window.lucide) lucide.createIcons();
+
+    let modalMetrics = initialMetrics.map(m => ({
+        metric_id: m.metric_id || null,
+        custom_label: m.custom_label || null,
+    }));
+
+    function refreshRows() {
+        const container = document.getElementById('insight-modal-metrics');
+        container.innerHTML = renderMetricRows(modalMetrics.map((m, i) => ({
+            metric_id: m.metric_id,
+            custom_label: m.custom_label,
+            metric_name: m.metric_id ? (metrics.find(mt => mt.id === m.metric_id) || {}).name : null,
+            metric_icon: m.metric_id ? (metrics.find(mt => mt.id === m.metric_id) || {}).icon : null,
+        })));
+        if (window.lucide) lucide.createIcons();
+        attachRowListeners();
+    }
+
+    function attachRowListeners() {
+        const container = document.getElementById('insight-modal-metrics');
+        container.querySelectorAll('.insight-metric-select').forEach(sel => {
+            sel.addEventListener('change', () => {
+                const idx = parseInt(sel.dataset.idx);
+                if (sel.value === 'custom') {
+                    modalMetrics[idx] = { metric_id: null, custom_label: '' };
+                } else if (sel.value) {
+                    modalMetrics[idx] = { metric_id: parseInt(sel.value), custom_label: null };
+                } else {
+                    modalMetrics[idx] = { metric_id: null, custom_label: null };
+                }
+                refreshRows();
+            });
+        });
+        container.querySelectorAll('.insight-custom-input').forEach(inp => {
+            inp.addEventListener('input', () => {
+                const idx = parseInt(inp.dataset.idx);
+                modalMetrics[idx].custom_label = inp.value;
+            });
+        });
+        container.querySelectorAll('.insight-metric-remove').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.idx);
+                modalMetrics.splice(idx, 1);
+                refreshRows();
+            });
+        });
+    }
+
+    attachRowListeners();
+
+    document.getElementById('insight-add-metric').addEventListener('click', () => {
+        modalMetrics.push({ metric_id: null, custom_label: null });
+        refreshRows();
+    });
+
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.getElementById('insight-modal-cancel').addEventListener('click', () => overlay.remove());
+
+    document.getElementById('insight-modal-save').addEventListener('click', async () => {
+        const text = document.getElementById('insight-modal-text').value.trim();
+        const metricsPayload = modalMetrics
+            .filter(m => m.metric_id || (m.custom_label && m.custom_label.trim()))
+            .map(m => ({
+                metric_id: m.metric_id || null,
+                custom_label: m.custom_label ? m.custom_label.trim() : null,
+            }));
+
+        try {
+            if (isEdit) {
+                await api.updateInsight(existing.id, { text, metrics: metricsPayload });
+            } else {
+                await api.createInsight({ text, metrics: metricsPayload });
+            }
+            overlay.remove();
+            renderInsights(document.getElementById('main'));
+        } catch (err) {
+            alert('Ошибка: ' + err.message);
+        }
+    });
+}
+
+async function toggleInsightCorrelations(btn) {
+    const metricIdsStr = btn.dataset.metricIds;
+    const card = btn.closest('.insight-card');
+    const panel = card.querySelector('.insight-corr-panel');
+
+    if (panel.style.display !== 'none') {
+        panel.style.display = 'none';
+        panel.innerHTML = '';
+        return;
+    }
+
+    panel.style.display = '';
+    panel.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:12px;">Загрузка корреляций...</div>';
+
+    try {
+        const reportData = await api.getCorrelationReport();
+        if (!reportData.report) {
+            panel.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:12px;">Нет рассчитанных отчётов. Сначала рассчитайте корреляции на странице «Анализ».</div>';
+            return;
+        }
+
+        const report = reportData.report;
+        const data = await api.getCorrelationPairs(report.id, { category: 'all', limit: 200, metric_ids: metricIdsStr });
+
+        if (data.pairs.length === 0) {
+            panel.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:12px;">Нет корреляций между этими метриками.</div>';
+            return;
+        }
+
+        let html = '<div class="insight-corr-pairs">';
+        for (const p of data.pairs) {
+            html += renderCorrPair(p, report);
+        }
+        html += '</div>';
+        panel.innerHTML = html;
+    } catch (err) {
+        panel.innerHTML = `<div style="color:var(--red);font-size:13px;padding:12px;">Ошибка: ${err.message}</div>`;
+    }
 }
 
 // ─── Analysis Page (Анализ) ───

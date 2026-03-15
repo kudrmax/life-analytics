@@ -1289,6 +1289,7 @@ async def get_correlation_pairs(
     category: str = "all",
     offset: int = 0,
     limit: int = 50,
+    metric_ids: str | None = Query(None),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
     privacy_mode: bool = Depends(get_privacy_mode),
@@ -1303,14 +1304,26 @@ async def get_correlation_pairs(
 
     cat_filter = _CATEGORY_FILTERS.get(category, "")
 
+    # Optional metric_ids filter
+    metric_filter = ""
+    args_base: list = [report_id]
+    if metric_ids:
+        ids_list = [int(x) for x in metric_ids.split(",") if x.strip()]
+        if ids_list:
+            idx = len(args_base) + 1
+            metric_filter = f" AND cp.metric_a_id = ANY(${idx}::int[]) AND cp.metric_b_id = ANY(${idx}::int[])"
+            args_base.append(ids_list)
+
     # Count total for this category
     total_row = await db.fetchrow(
-        f"SELECT COUNT(*) AS cnt FROM correlation_pairs WHERE report_id = $1 {cat_filter}",
-        report_id,
+        f"SELECT COUNT(*) AS cnt FROM correlation_pairs cp WHERE cp.report_id = $1 {cat_filter}{metric_filter}",
+        *args_base,
     )
     total = total_row["cnt"]
 
     # Fetch page of pairs
+    limit_idx = len(args_base) + 1
+    offset_idx = len(args_base) + 2
     pairs = await db.fetch(
         f"""SELECT cp.id AS pair_id,
                    cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days, cp.p_value,
@@ -1325,10 +1338,10 @@ async def get_correlation_pairs(
             LEFT JOIN metric_definitions mb ON mb.id = cp.metric_b_id
             LEFT JOIN measurement_slots sa ON sa.id = cp.slot_a_id
             LEFT JOIN measurement_slots sb ON sb.id = cp.slot_b_id
-            WHERE cp.report_id = $1 {cat_filter}
+            WHERE cp.report_id = $1 {cat_filter}{metric_filter}
             ORDER BY ABS(cp.correlation) DESC
-            LIMIT $2 OFFSET $3""",
-        report_id, limit, offset,
+            LIMIT ${limit_idx} OFFSET ${offset_idx}""",
+        *args_base, limit, offset,
     )
 
     # Resolve icons for auto metrics
