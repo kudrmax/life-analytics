@@ -100,3 +100,11 @@ async def set_privacy_mode(
         body.enabled, current_user["id"],
     )
     return {"privacy_mode": body.enabled}
+
+
+@router.delete("/account", status_code=204)
+async def delete_account(
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    await db.execute("DELETE FROM users WHERE id = $1", current_user["id"])

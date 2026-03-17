@@ -74,4 +74,4 @@ app.include_router(insights.router)
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "env": os.environ.get("LA_ENV", "local")}
