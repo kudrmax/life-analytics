@@ -241,6 +241,9 @@ MIGRATIONS = [
         ALTER TABLE correlation_pairs DROP COLUMN IF EXISTS label_a;
         ALTER TABLE correlation_pairs DROP COLUMN IF EXISTS label_b;
     """),
+    (12, "add_quality_issue_to_correlation_pairs", """
+        ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS quality_issue VARCHAR(30);
+    """),
 ]
 
 
