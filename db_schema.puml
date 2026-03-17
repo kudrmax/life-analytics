@@ -151,6 +151,7 @@ entity "correlation_pairs" as cp {
     * data_points : INTEGER
     * lag_days : INTEGER
     p_value : FLOAT
+    quality_issue : VARCHAR(30)
 }
 
 entity "user_integrations" as ui {

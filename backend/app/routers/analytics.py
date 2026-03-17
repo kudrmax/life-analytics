@@ -4,6 +4,7 @@ import logging
 import math
 from collections import defaultdict
 from datetime import date as date_type, timedelta
+from enum import Enum
 from statistics import mean, median, stdev
 
 from fastapi import APIRouter, Depends, Query
@@ -30,6 +31,26 @@ def _parse_formula(raw):
     return raw
 
 logger = logging.getLogger(__name__)
+
+
+class QualityIssue(str, Enum):
+    LOW_DATA_POINTS = "low_data_points"
+    HIGH_P_VALUE = "high_p_value"
+
+
+QUALITY_ISSUE_LABELS: dict[str, str] = {
+    QualityIssue.LOW_DATA_POINTS: "Мало данных (менее 10 дней)",
+    QualityIssue.HIGH_P_VALUE: "Статистически незначимо (p ≥ 0.05)",
+}
+
+
+def _determine_quality_issue(n: int, p_value: float) -> str | None:
+    if n < 10:
+        return QualityIssue.LOW_DATA_POINTS.value
+    if p_value >= 0.05:
+        return QualityIssue.HIGH_P_VALUE.value
+    return None
+
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -1039,31 +1060,34 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     # lag=0: same-day correlation
                     r, n = _compute_pearson(source_data[i], source_data[j])
                     if r is not None:
+                        p_val = round(_p_value(r, n), 4)
                         pairs_to_insert.append((
                             report_id,
                             sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
                             key_i, key_j, mt_i, mt_j,
-                            r, n, 0, round(_p_value(r, n), 4),
+                            r, n, 0, p_val, _determine_quality_issue(n, p_val),
                         ))
 
                     # lag=1: yesterday's j → today's i
                     r_lag, n_lag = _compute_pearson(source_data[i], _shift_dates(source_data[j], 1))
                     if r_lag is not None:
+                        p_val_lag = round(_p_value(r_lag, n_lag), 4)
                         pairs_to_insert.append((
                             report_id,
                             sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
                             key_i, key_j, mt_i, mt_j,
-                            r_lag, n_lag, 1, round(_p_value(r_lag, n_lag), 4),
+                            r_lag, n_lag, 1, p_val_lag, _determine_quality_issue(n_lag, p_val_lag),
                         ))
 
                     # lag=1: yesterday's i → today's j
                     r_lag2, n_lag2 = _compute_pearson(source_data[j], _shift_dates(source_data[i], 1))
                     if r_lag2 is not None:
+                        p_val_lag2 = round(_p_value(r_lag2, n_lag2), 4)
                         pairs_to_insert.append((
                             report_id,
                             sk_j.metric_id, sk_i.metric_id, sk_j.slot_id, sk_i.slot_id,
                             key_j, key_i, mt_j, mt_i,
-                            r_lag2, n_lag2, 1, round(_p_value(r_lag2, n_lag2), 4),
+                            r_lag2, n_lag2, 1, p_val_lag2, _determine_quality_issue(n_lag2, p_val_lag2),
                         ))
 
             qt.mark(f"compute_{len(pairs_to_insert)}_pairs")
@@ -1072,8 +1096,8 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 await conn.executemany(
                     """INSERT INTO correlation_pairs
                        (report_id, metric_a_id, metric_b_id, slot_a_id, slot_b_id,
-                        source_key_a, source_key_b, type_a, type_b, correlation, data_points, lag_days, p_value)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)""",
+                        source_key_a, source_key_b, type_a, type_b, correlation, data_points, lag_days, p_value, quality_issue)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)""",
                     pairs_to_insert,
                 )
 
@@ -1132,13 +1156,11 @@ async def get_latest_correlation_report(
         counts_row = await db.fetchrow(
             """SELECT
                    COUNT(*) AS total,
-                   COUNT(*) FILTER (WHERE data_points >= 10 AND p_value IS NOT NULL AND p_value < 0.05
-                                    AND ABS(correlation) > 0.7) AS sig_strong,
-                   COUNT(*) FILTER (WHERE data_points >= 10 AND p_value IS NOT NULL AND p_value < 0.05
-                                    AND ABS(correlation) > 0.3 AND ABS(correlation) <= 0.7) AS sig_medium,
-                   COUNT(*) FILTER (WHERE data_points >= 10 AND p_value IS NOT NULL AND p_value < 0.05
-                                    AND ABS(correlation) <= 0.3) AS sig_weak,
-                   COUNT(*) FILTER (WHERE data_points < 10 OR p_value IS NULL OR p_value >= 0.05) AS insig
+                   COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) > 0.7) AS sig_strong,
+                   COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) > 0.3
+                                    AND ABS(correlation) <= 0.7) AS sig_medium,
+                   COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) <= 0.3) AS sig_weak,
+                   COUNT(*) FILTER (WHERE quality_issue IS NOT NULL) AS insig
                FROM correlation_pairs WHERE report_id = $1""",
             done_row["id"],
         )
@@ -1270,14 +1292,16 @@ def _format_pair(
         "hint_b_positive": hint_b_pos,
         "private_a": priv_a,
         "private_b": priv_b,
+        "quality_issue": p.get("quality_issue"),
+        "quality_issue_label": QUALITY_ISSUE_LABELS.get(p.get("quality_issue")) if p.get("quality_issue") else None,
     }
 
 
 _CATEGORY_FILTERS: dict[str, str] = {
-    "sig_strong": "AND data_points >= 10 AND p_value IS NOT NULL AND p_value < 0.05 AND ABS(correlation) > 0.7",
-    "sig_medium": "AND data_points >= 10 AND p_value IS NOT NULL AND p_value < 0.05 AND ABS(correlation) > 0.3 AND ABS(correlation) <= 0.7",
-    "sig_weak": "AND data_points >= 10 AND p_value IS NOT NULL AND p_value < 0.05 AND ABS(correlation) <= 0.3",
-    "insig": "AND (data_points < 10 OR p_value IS NULL OR p_value >= 0.05)",
+    "sig_strong": "AND quality_issue IS NULL AND ABS(correlation) > 0.7",
+    "sig_medium": "AND quality_issue IS NULL AND ABS(correlation) > 0.3 AND ABS(correlation) <= 0.7",
+    "sig_weak": "AND quality_issue IS NULL AND ABS(correlation) <= 0.3",
+    "insig": "AND quality_issue IS NOT NULL",
     "all": "",
 }
 
@@ -1325,7 +1349,7 @@ async def get_correlation_pairs(
     offset_idx = len(args_base) + 2
     pairs = await db.fetch(
         f"""SELECT cp.id AS pair_id,
-                   cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days, cp.p_value,
+                   cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days, cp.p_value, cp.quality_issue,
                    cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
                    cp.source_key_a, cp.source_key_b,
                    ma.name AS name_a, ma.icon AS icon_a, COALESCE(ma.private, FALSE) AS private_a,

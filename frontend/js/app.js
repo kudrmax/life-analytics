@@ -2487,6 +2487,7 @@ function renderCorrPair(p, report) {
             <span>p-value</span><span>${p.p_value !== null && p.p_value !== undefined ? p.p_value.toFixed(4) : '—'}</span>
             <span>Дней данных</span><span>${p.data_points}</span>
             <span>Сдвиг</span><span>${isLagged ? p.lag_days + ' дн.' : 'нет'}</span>
+            ${p.quality_issue_label ? `<span>Причина</span><span style="color:var(--yellow)">${p.quality_issue_label}</span>` : ''}
         </div>
         <div class="corr-detail-stats" id="${pairId}-stats"></div>
         <div class="corr-detail-chart-wrap" id="${pairId}-chart-wrap" style="display:none;"><canvas id="${pairId}-chart"></canvas></div>
