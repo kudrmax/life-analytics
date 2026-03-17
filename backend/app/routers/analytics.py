@@ -5,7 +5,7 @@ import math
 from collections import defaultdict
 from datetime import date as date_type, timedelta
 from enum import Enum
-from statistics import mean, median, stdev
+from statistics import mean, median, stdev, variance
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -35,21 +35,25 @@ logger = logging.getLogger(__name__)
 
 class QualityIssue(str, Enum):
     LOW_DATA_POINTS = "low_data_points"
+    INSUFFICIENT_VARIANCE = "insufficient_variance"
     HIGH_P_VALUE = "high_p_value"
 
 
 QUALITY_ISSUE_LABELS: dict[str, str] = {
     QualityIssue.LOW_DATA_POINTS: "Мало данных (менее 10 дней)",
+    QualityIssue.INSUFFICIENT_VARIANCE: "Недостаточная дисперсия (значение почти не меняется)",
     QualityIssue.HIGH_P_VALUE: "Статистически незначимо (p ≥ 0.05)",
 }
 
 
-def _determine_quality_issue(n: int, p_value: float) -> str | None:
-    if n < 10:
-        return QualityIssue.LOW_DATA_POINTS.value
-    if p_value >= 0.05:
-        return QualityIssue.HIGH_P_VALUE.value
-    return None
+def _determine_quality_issue(n: int, p_value: float, low_variance: bool = False) -> str | None:
+    # Priority order: first match wins. Reorder to change priority.
+    checks = [
+        (n < 10,          QualityIssue.LOW_DATA_POINTS),
+        (low_variance,    QualityIssue.INSUFFICIENT_VARIANCE),
+        (p_value >= 0.05, QualityIssue.HIGH_P_VALUE),
+    ]
+    return next((issue.value for cond, issue in checks if cond), None)
 
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -1045,6 +1049,26 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 elif sk.auto_type == AutoSourceType.WEEK_NUMBER:
                     source_data[idx] = {d: float(date_type.fromisoformat(d).isocalendar()[1]) for d in all_dates}
 
+            # Pre-compute low-variance sources
+            _BINARY_VAR_THRESHOLD = 0.10
+            _ZERO_VAR_EPS = 1e-9
+            low_var_sources: set[int] = set()
+            for idx in range(len(sources)):
+                data = source_data.get(idx)
+                if not data:
+                    continue
+                vals = list(data.values())
+                if len(vals) < 2:
+                    low_var_sources.add(idx)
+                    continue
+                var = variance(vals)
+                if var < _ZERO_VAR_EPS:
+                    low_var_sources.add(idx)
+                    continue
+                is_binary = all(v == 0.0 or v == 1.0 for v in vals)
+                if is_binary and var <= _BINARY_VAR_THRESHOLD:
+                    low_var_sources.add(idx)
+
             # Compute all pairs (i < j, different metrics only)
             pairs_to_insert = []
             for i in range(len(sources)):
@@ -1056,6 +1080,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
 
                     key_i = sk_i.to_str()
                     key_j = sk_j.to_str()
+                    low_var = (i in low_var_sources) or (j in low_var_sources)
 
                     # lag=0: same-day correlation
                     r, n = _compute_pearson(source_data[i], source_data[j])
@@ -1065,7 +1090,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             report_id,
                             sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
                             key_i, key_j, mt_i, mt_j,
-                            r, n, 0, p_val, _determine_quality_issue(n, p_val),
+                            r, n, 0, p_val, _determine_quality_issue(n, p_val, low_var),
                         ))
 
                     # lag=1: yesterday's j → today's i
@@ -1076,7 +1101,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             report_id,
                             sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
                             key_i, key_j, mt_i, mt_j,
-                            r_lag, n_lag, 1, p_val_lag, _determine_quality_issue(n_lag, p_val_lag),
+                            r_lag, n_lag, 1, p_val_lag, _determine_quality_issue(n_lag, p_val_lag, low_var),
                         ))
 
                     # lag=1: yesterday's i → today's j
@@ -1087,7 +1112,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             report_id,
                             sk_j.metric_id, sk_i.metric_id, sk_j.slot_id, sk_i.slot_id,
                             key_j, key_i, mt_j, mt_i,
-                            r_lag2, n_lag2, 1, p_val_lag2, _determine_quality_issue(n_lag2, p_val_lag2),
+                            r_lag2, n_lag2, 1, p_val_lag2, _determine_quality_issue(n_lag2, p_val_lag2, low_var),
                         ))
 
             qt.mark(f"compute_{len(pairs_to_insert)}_pairs")

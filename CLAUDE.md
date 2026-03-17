@@ -232,6 +232,7 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 - Lag correlations: for each pair, computes lag=0 (same-day) + lag=1 (yesterday→today, both directions)
 - Blacklist (`correlation_blacklist.py`): skips same-metric pairs (except different enum options), auto+parent pairs, two autos from same parent, two calendar autos
 - P-value: stored in DB on computation; fallback to on-the-fly `_p_value(r, n)` (t-test + beta distribution) for old reports
+- Quality issues: `quality_issue` column на `correlation_pairs` — см. `docs/correlation-quality.md` (при изменениях quality issues — обновить документацию)
 - Фронтенд: polling каждые 3 секунды до завершения
 
 **Data isolation:** All queries filter by `current_user["id"]`. Return 404 (not 403) on unauthorized access.
