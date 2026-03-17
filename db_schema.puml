@@ -143,8 +143,8 @@ entity "correlation_pairs" as cp {
     metric_b_id : INTEGER
     slot_a_id : INTEGER
     slot_b_id : INTEGER
-    * label_a : VARCHAR(200)
-    * label_b : VARCHAR(200)
+    * source_key_a : VARCHAR(100)
+    * source_key_b : VARCHAR(100)
     * type_a : VARCHAR(20)
     * type_b : VARCHAR(20)
     correlation : FLOAT

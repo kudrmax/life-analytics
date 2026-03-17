@@ -1,10 +1,9 @@
 """Blacklist for correlation pairs that should be skipped."""
 
-# Auto types that are calendar-based
-_CALENDAR_TYPES = {"day_of_week", "month", "week_number"}
+from app.source_key import AutoSourceType, SourceKey, _CALENDAR_TYPES
 
 
-def should_skip_pair(i, j, sources, auto_info, enum_source_info=None):
+def should_skip_pair(a: SourceKey, b: SourceKey) -> bool:
     """Check if a correlation pair should be skipped.
 
     Rules:
@@ -15,34 +14,29 @@ def should_skip_pair(i, j, sources, auto_info, enum_source_info=None):
     - Two calendar metrics (day_of_week, month, week_number) — skip
     """
     # Same metric (different slots)
-    if sources[i][0] == sources[j][0] and sources[i][0] is not None:
+    if a.metric_id is not None and a.metric_id == b.metric_id and not a.is_auto and not b.is_auto:
         # Exception: enum option sources from the same metric with different option_ids
-        if enum_source_info and i in enum_source_info and j in enum_source_info:
-            opt_i = enum_source_info[i][0]
-            opt_j = enum_source_info[j][0]
-            if opt_i != opt_j:
+        if a.enum_option_id is not None and b.enum_option_id is not None:
+            if a.enum_option_id != b.enum_option_id:
                 return False  # different options = independent data
         return True
 
-    ai = auto_info.get(i)
-    aj = auto_info.get(j)
-
-    if not ai and not aj:
+    if not a.is_auto and not b.is_auto:
         return False
 
     # Both auto
-    if ai and aj:
+    if a.is_auto and b.is_auto:
         # Same parent — skip
-        if ai[1] is not None and ai[1] == aj[1]:
+        if a.auto_parent_metric_id is not None and a.auto_parent_metric_id == b.auto_parent_metric_id:
             return True
-        # Both calendar — skip (бессмысленные пары типа день недели ↔ месяц)
-        if ai[0] in _CALENDAR_TYPES and aj[0] in _CALENDAR_TYPES:
+        # Both calendar — skip
+        if a.auto_type in _CALENDAR_TYPES and b.auto_type in _CALENDAR_TYPES:
             return True
         return False
 
     # One auto, one regular — skip if regular is auto's parent
-    auto, regular_idx = (ai, j) if ai else (aj, i)
-    if auto[1] is not None and sources[regular_idx][0] == auto[1]:
+    auto, regular = (a, b) if a.is_auto else (b, a)
+    if auto.auto_parent_metric_id is not None and regular.metric_id == auto.auto_parent_metric_id:
         return True
 
     return False

@@ -15,6 +15,9 @@ from app.auth import get_current_user, get_privacy_mode
 from app.metric_helpers import mask_name, mask_icon, is_blocked, PRIVATE_MASK, PRIVATE_ICON
 from app.formula import convert_metric_value, evaluate_formula, get_referenced_metric_ids
 from app.correlation_blacklist import should_skip_pair
+from app.source_key import (
+    AutoSourceType, SourceKey, AUTO_DISPLAY_NAMES, AUTO_ICONS,
+)
 from app.timing import timed_fetch, QueryTimer
 
 
@@ -905,51 +908,42 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 for r in eo_rows:
                     enum_opts_by_metric[r["metric_id"]].append(r)
 
-            # Build data sources: (metric_id, slot_id, type, label)
-            metric_names = {m["id"]: m["name"] for m in metrics_rows}
-            sources = []
-            enum_source_info = {}  # source_index -> (option_id, slot_id)
+            # Build data sources: list of (SourceKey, source_type)
+            sources: list[tuple[SourceKey, str]] = []
             for m in metrics_rows:
                 mid = m["id"]
                 mt = m["type"]
                 if mt == "text":
                     continue  # text metrics handled via auto note_count source
                 if mt == "computed":
-                    sources.append((mid, None, mt, m["name"]))
+                    sources.append((SourceKey(metric_id=mid), mt))
                     continue
                 if mt == "enum":
-                    # Each enum option is a separate bool source
                     opts = enum_opts_by_metric.get(mid, [])
                     metric_slots = slots_by_metric.get(mid, [])
                     for opt in opts:
-                        # Aggregate source (across all slots)
-                        idx = len(sources)
-                        sources.append((mid, None, "enum_bool", f"{m['name']}: {opt['label']}"))
-                        enum_source_info[idx] = (opt["id"], None)
+                        sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"]), "enum_bool"))
                         if metric_slots:
                             for s in metric_slots:
-                                idx = len(sources)
-                                sources.append((mid, s["id"], "enum_bool", f"{m['name']}: {opt['label']} — {s['label']}"))
-                                enum_source_info[idx] = (opt["id"], s["id"])
+                                sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"], slot_id=s["id"]), "enum_bool"))
                     continue
                 metric_slots = slots_by_metric.get(mid, [])
                 if metric_slots:
-                    sources.append((mid, None, mt, m["name"]))
+                    sources.append((SourceKey(metric_id=mid), mt))
                     for s in metric_slots:
-                        sources.append((mid, s["id"], mt, f"{m['name']} — {s['label']}"))
+                        sources.append((SourceKey(metric_id=mid, slot_id=s["id"]), mt))
                 else:
-                    sources.append((mid, None, mt, m["name"]))
+                    sources.append((SourceKey(metric_id=mid), mt))
 
             # Fetch data for each source
-            source_data = {}
-            for i, (mid, sid, mt, _label) in enumerate(sources):
-                if i in enum_source_info:
-                    opt_id, slot_id = enum_source_info[i]
+            source_data: dict[int, dict[str, float]] = {}
+            for i, (sk, mt) in enumerate(sources):
+                if sk.enum_option_id is not None:
                     source_data[i] = await _values_by_date_for_enum_option(
-                        conn, mid, opt_id, start_date, end_date, user_id, slot_id=slot_id,
+                        conn, sk.metric_id, sk.enum_option_id, start_date, end_date, user_id, slot_id=sk.slot_id,
                     )
                 elif mt == "computed":
-                    cfg = computed_cfgs.get(mid)
+                    cfg = computed_cfgs.get(sk.metric_id)
                     if cfg and cfg["formula"]:
                         formula = _parse_formula(cfg["formula"])
                         rt = cfg["result_type"] or "float"
@@ -961,45 +955,36 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                         source_data[i] = {}
                 else:
                     source_data[i] = await _values_by_date_for_slot(
-                        conn, mid, mt, start_date, end_date, user_id, slot_id=sid,
+                        conn, sk.metric_id, mt, start_date, end_date, user_id, slot_id=sk.slot_id,
                     )
 
             qt.mark(f"fetch_{len(sources)}_sources")
             # --- Auto sources ---
-            auto_info = {}  # source_index -> (auto_type, parent_metric_id)
 
             # Find aggregate source indices (slot_id=None, not computed)
-            aggregate_indices = {}  # metric_id -> source_index
-            for i, (mid, sid, mt, _label) in enumerate(sources):
-                if sid is None and mt != "computed":
-                    aggregate_indices[mid] = i
+            aggregate_indices: dict[int, int] = {}  # metric_id -> source_index
+            for i, (sk, mt) in enumerate(sources):
+                if sk.slot_id is None and mt != "computed" and sk.metric_id is not None:
+                    aggregate_indices[sk.metric_id] = i
 
-            # Per-metric auto sources
+            # Per-metric auto sources: "nonzero" for number/duration
             for m in metrics_rows:
                 if m["type"] == "computed":
                     continue
                 mid = m["id"]
                 if mid not in aggregate_indices:
                     continue
-
-                # "nonzero" for number and duration
                 if m["type"] in ("number", "duration"):
-                    idx = len(sources)
-                    sources.append((None, None, "bool", f"{m['name']}: не ноль"))
-                    auto_info[idx] = ("nonzero", mid)
+                    sources.append((SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=mid), "bool"))
 
-            # "note_count" for text metrics (not in main sources)
+            # "note_count" for text metrics
             for m in metrics_rows:
                 if m["type"] == "text":
-                    idx = len(sources)
-                    sources.append((None, None, "number", f"{m['name']}: кол-во заметок"))
-                    auto_info[idx] = ("note_count", m["id"])
+                    sources.append((SourceKey(auto_type=AutoSourceType.NOTE_COUNT, auto_parent_metric_id=m["id"]), "number"))
 
             # Calendar auto sources
-            for cal_name, cal_type in [("День недели", "day_of_week"), ("Месяц", "month"), ("Неделя года", "week_number")]:
-                idx = len(sources)
-                sources.append((None, None, "number", cal_name))
-                auto_info[idx] = (cal_type, None)
+            for auto_type in (AutoSourceType.DAY_OF_WEEK, AutoSourceType.MONTH, AutoSourceType.WEEK_NUMBER):
+                sources.append((SourceKey(auto_type=auto_type), "number"))
 
             # ActivityWatch screen time auto source
             aw_rows = await conn.fetch(
@@ -1009,8 +994,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             )
             if aw_rows:
                 idx = len(sources)
-                sources.append((None, None, "number", "Экранное время (активное)"))
-                auto_info[idx] = ("aw_active", None)
+                sources.append((SourceKey(auto_type=AutoSourceType.AW_ACTIVE), "number"))
                 source_data[idx] = {
                     str(r["date"]): r["active_seconds"] / 3600.0
                     for r in aw_rows
@@ -1019,40 +1003,46 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             # Compute auto source data
             all_dates = [str(start_date + timedelta(days=i)) for i in range((end_date - start_date).days + 1)]
 
-            for idx, (auto_type, parent_mid) in auto_info.items():
-                if auto_type == "nonzero":
-                    parent_data = source_data[aggregate_indices[parent_mid]]
+            for idx, (sk, _mt) in enumerate(sources):
+                if not sk.is_auto or idx in source_data:
+                    continue
+                if sk.auto_type == AutoSourceType.NONZERO:
+                    parent_data = source_data[aggregate_indices[sk.auto_parent_metric_id]]
                     source_data[idx] = {d: (1.0 if v > 0 else 0.0) for d, v in parent_data.items()}
-                elif auto_type == "note_count":
+                elif sk.auto_type == AutoSourceType.NOTE_COUNT:
                     nc_rows = await conn.fetch(
                         """SELECT date, COUNT(*) AS cnt FROM notes
                            WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4
                            GROUP BY date""",
-                        parent_mid, user_id, start_date, end_date,
+                        sk.auto_parent_metric_id, user_id, start_date, end_date,
                     )
                     source_data[idx] = {str(r["date"]): float(r["cnt"]) for r in nc_rows}
-                elif auto_type == "day_of_week":
+                elif sk.auto_type == AutoSourceType.DAY_OF_WEEK:
                     source_data[idx] = {d: float(date_type.fromisoformat(d).isoweekday()) for d in all_dates}
-                elif auto_type == "month":
+                elif sk.auto_type == AutoSourceType.MONTH:
                     source_data[idx] = {d: float(date_type.fromisoformat(d).month) for d in all_dates}
-                elif auto_type == "week_number":
+                elif sk.auto_type == AutoSourceType.WEEK_NUMBER:
                     source_data[idx] = {d: float(date_type.fromisoformat(d).isocalendar()[1]) for d in all_dates}
 
             # Compute all pairs (i < j, different metrics only)
             pairs_to_insert = []
             for i in range(len(sources)):
                 for j in range(i + 1, len(sources)):
-                    if should_skip_pair(i, j, sources, auto_info, enum_source_info):
+                    sk_i, mt_i = sources[i]
+                    sk_j, mt_j = sources[j]
+                    if should_skip_pair(sk_i, sk_j):
                         continue
-                    si, sj = sources[i], sources[j]
+
+                    key_i = sk_i.to_str()
+                    key_j = sk_j.to_str()
 
                     # lag=0: same-day correlation
                     r, n = _compute_pearson(source_data[i], source_data[j])
                     if r is not None:
                         pairs_to_insert.append((
                             report_id,
-                            si[0], sj[0], si[1], sj[1],
-                            si[3], sj[3], si[2], sj[2],
+                            sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
+                            key_i, key_j, mt_i, mt_j,
                             r, n, 0, round(_p_value(r, n), 4),
                         ))
 
@@ -1061,8 +1051,8 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     if r_lag is not None:
                         pairs_to_insert.append((
                             report_id,
-                            si[0], sj[0], si[1], sj[1],
-                            si[3], sj[3], si[2], sj[2],
+                            sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
+                            key_i, key_j, mt_i, mt_j,
                             r_lag, n_lag, 1, round(_p_value(r_lag, n_lag), 4),
                         ))
 
@@ -1071,8 +1061,8 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     if r_lag2 is not None:
                         pairs_to_insert.append((
                             report_id,
-                            sj[0], si[0], sj[1], si[1],
-                            sj[3], si[3], sj[2], si[2],
+                            sk_j.metric_id, sk_i.metric_id, sk_j.slot_id, sk_i.slot_id,
+                            key_j, key_i, mt_j, mt_i,
                             r_lag2, n_lag2, 1, round(_p_value(r_lag2, n_lag2), 4),
                         ))
 
@@ -1082,7 +1072,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 await conn.executemany(
                     """INSERT INTO correlation_pairs
                        (report_id, metric_a_id, metric_b_id, slot_a_id, slot_b_id,
-                        label_a, label_b, type_a, type_b, correlation, data_points, lag_days, p_value)
+                        source_key_a, source_key_b, type_a, type_b, correlation, data_points, lag_days, p_value)
                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)""",
                     pairs_to_insert,
                 )
@@ -1172,41 +1162,34 @@ async def get_latest_correlation_report(
 
 # ─── Helpers for pair formatting (shared by pairs endpoint) ───
 
-AUTO_CALENDAR_ICONS: dict[str, str] = {"День недели": "📅", "Месяц": "🗓️", "Неделя года": "📆"}
 
-
-def _resolve_icon(icon: str | None, label: str | None, metric_icons: dict[str, str]) -> str:
-    if icon:
-        return icon
-    if label and label in AUTO_CALENDAR_ICONS:
-        return AUTO_CALENDAR_ICONS[label]
-    if label and label.endswith(": не ноль"):
-        parent_name = label[:-len(": не ноль")]
-        return metric_icons.get(parent_name, "")
+def _resolve_icon(source_key_str: str, db_icon: str | None, metric_icons_by_id: dict[int, str]) -> str:
+    if db_icon:
+        return db_icon
+    sk = SourceKey.parse(source_key_str)
+    if sk.auto_type and sk.auto_type in AUTO_ICONS:
+        return AUTO_ICONS[sk.auto_type]
+    if sk.auto_parent_metric_id is not None:
+        return metric_icons_by_id.get(sk.auto_parent_metric_id, "")
     return ""
 
 
-def _pair_label(name: str | None, label: str | None, pair_type: str | None) -> str:
-    if pair_type == "enum_bool":
-        if name:
-            return name
-        if label:
-            colon_idx = label.find(": ")
-            return label[:colon_idx] if colon_idx != -1 else label
-        return "Удалённая метрика"
-    return name or label or "Удалённая метрика"
-
-
-def _pair_option(label: str | None, pair_type: str | None, slot_id: int | None) -> str:
-    if pair_type != "enum_bool" or not label:
-        return ""
-    raw = label
-    if slot_id:
-        dash_idx = raw.rfind(" — ")
-        if dash_idx != -1:
-            raw = raw[:dash_idx]
-    colon_idx = raw.find(": ")
-    return raw[colon_idx + 2:] if colon_idx != -1 else ""
+def _build_display_label(
+    source_key_str: str,
+    metric_name: str | None,
+    parent_metric_name: str | None,
+) -> str:
+    sk = SourceKey.parse(source_key_str)
+    if sk.auto_type:
+        display = AUTO_DISPLAY_NAMES.get(sk.auto_type)
+        if display:
+            return display
+        if sk.auto_type == AutoSourceType.NONZERO and parent_metric_name:
+            return f"{parent_metric_name}: не ноль"
+        if sk.auto_type == AutoSourceType.NOTE_COUNT and parent_metric_name:
+            return f"{parent_metric_name}: кол-во заметок"
+        return "Авто-источник"
+    return metric_name or "Удалённая метрика"
 
 
 def _corr_type_words(type_: str) -> tuple[str, str]:
@@ -1231,7 +1214,13 @@ def _corr_hint_words(type_a: str, type_b: str, r: float) -> tuple[str, bool, str
     return (hint_a, True, hint_b, r > 0)
 
 
-def _format_pair(p: dict, metric_icons: dict[str, str], privacy_mode: bool = False) -> dict:
+def _format_pair(
+    p: dict,
+    metric_icons_by_id: dict[int, str],
+    enum_labels: dict[int, str],
+    parent_names: dict[int, str],
+    privacy_mode: bool = False,
+) -> dict:
     priv_a = p.get("private_a", False)
     priv_b = p.get("private_b", False)
     blocked_a = is_blocked(priv_a, privacy_mode)
@@ -1242,16 +1231,26 @@ def _format_pair(p: dict, metric_icons: dict[str, str], privacy_mode: bool = Fal
     else:
         hint_a, hint_a_pos, hint_b, hint_b_pos = "", True, "", True
 
-    label_a = PRIVATE_MASK if blocked_a else _pair_label(p["name_a"], p["label_a"], p["type_a"])
-    label_b = PRIVATE_MASK if blocked_b else _pair_label(p["name_b"], p["label_b"], p["type_b"])
-    icon_a = PRIVATE_ICON if blocked_a else _resolve_icon(p["icon_a"], p["label_a"], metric_icons)
-    icon_b = PRIVATE_ICON if blocked_b else _resolve_icon(p["icon_b"], p["label_b"], metric_icons)
+    sk_a = SourceKey.parse(p["source_key_a"])
+    sk_b = SourceKey.parse(p["source_key_b"])
+
+    label_a = PRIVATE_MASK if blocked_a else _build_display_label(
+        p["source_key_a"], p["name_a"], parent_names.get(sk_a.auto_parent_metric_id),
+    )
+    label_b = PRIVATE_MASK if blocked_b else _build_display_label(
+        p["source_key_b"], p["name_b"], parent_names.get(sk_b.auto_parent_metric_id),
+    )
+    icon_a = PRIVATE_ICON if blocked_a else _resolve_icon(p["source_key_a"], p["icon_a"], metric_icons_by_id)
+    icon_b = PRIVATE_ICON if blocked_b else _resolve_icon(p["source_key_b"], p["icon_b"], metric_icons_by_id)
+
+    option_a = "" if blocked_a else (enum_labels.get(sk_a.enum_option_id, "") if sk_a.enum_option_id else "")
+    option_b = "" if blocked_b else (enum_labels.get(sk_b.enum_option_id, "") if sk_b.enum_option_id else "")
 
     return {
         "label_a": label_a,
         "label_b": label_b,
-        "option_a": "" if blocked_a else _pair_option(p["label_a"], p["type_a"], p["slot_a_id"]),
-        "option_b": "" if blocked_b else _pair_option(p["label_b"], p["type_b"], p["slot_b_id"]),
+        "option_a": option_a,
+        "option_b": option_b,
         "type_a": p["type_a"],
         "type_b": p["type_b"],
         "icon_a": icon_a,
@@ -1328,7 +1327,7 @@ async def get_correlation_pairs(
         f"""SELECT cp.id AS pair_id,
                    cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days, cp.p_value,
                    cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
-                   cp.label_a, cp.label_b,
+                   cp.source_key_a, cp.source_key_b,
                    ma.name AS name_a, ma.icon AS icon_a, COALESCE(ma.private, FALSE) AS private_a,
                    mb.name AS name_b, mb.icon AS icon_b, COALESCE(mb.private, FALSE) AS private_b,
                    sa.label AS slot_label_a,
@@ -1344,17 +1343,41 @@ async def get_correlation_pairs(
         *args_base, limit, offset,
     )
 
-    # Resolve icons for auto metrics
-    metric_icons: dict[str, str] = {}
-    if any(p["metric_a_id"] is None or p["metric_b_id"] is None for p in pairs):
-        user_metrics = await db.fetch(
-            "SELECT name, icon FROM metric_definitions WHERE user_id = $1",
-            current_user["id"],
+    # Collect all referenced IDs from source_keys for batch lookups
+    all_parent_metric_ids: set[int] = set()
+    all_enum_option_ids: set[int] = set()
+    for p in pairs:
+        for key_col in ("source_key_a", "source_key_b"):
+            sk = SourceKey.parse(p[key_col])
+            if sk.auto_parent_metric_id is not None:
+                all_parent_metric_ids.add(sk.auto_parent_metric_id)
+            if sk.enum_option_id is not None:
+                all_enum_option_ids.add(sk.enum_option_id)
+
+    # Batch: metric icons and names by id (for auto parents + all referenced metrics)
+    metric_icons_by_id: dict[int, str] = {}
+    parent_names: dict[int, str] = {}
+    if all_parent_metric_ids:
+        pm_rows = await db.fetch(
+            "SELECT id, name, icon FROM metric_definitions WHERE id = ANY($1)",
+            list(all_parent_metric_ids),
         )
-        metric_icons = {m["name"]: m["icon"] for m in user_metrics if m["icon"]}
+        for r in pm_rows:
+            parent_names[r["id"]] = r["name"]
+            if r["icon"]:
+                metric_icons_by_id[r["id"]] = r["icon"]
+
+    # Batch: enum option labels
+    enum_labels: dict[int, str] = {}
+    if all_enum_option_ids:
+        eo_rows = await db.fetch(
+            "SELECT id, label FROM enum_options WHERE id = ANY($1)",
+            list(all_enum_option_ids),
+        )
+        enum_labels = {r["id"]: r["label"] for r in eo_rows}
 
     return {
-        "pairs": [_format_pair(p, metric_icons, privacy_mode) for p in pairs],
+        "pairs": [_format_pair(p, metric_icons_by_id, enum_labels, parent_names, privacy_mode) for p in pairs],
         "total": total,
         "has_more": offset + limit < total,
     }
@@ -1362,33 +1385,66 @@ async def get_correlation_pairs(
 
 async def _reconstruct_source_data(
     conn,
-    metric_id: int | None,
-    slot_id: int | None,
+    source_key_str: str,
     source_type: str,
-    label: str,
     start_date: date_type,
     end_date: date_type,
     user_id: int,
 ) -> dict[str, float]:
-    """Reconstruct time-series data for a correlation source from its stored metadata."""
-    if source_type == "enum_bool" and metric_id is not None:
-        # Parse option label from stored label: "{name}: {opt}" or "{name}: {opt} — {slot}"
-        parts = label.split(": ", 1)
-        option_label = parts[1].split(" — ")[0] if len(parts) > 1 else ""
-        opt_row = await conn.fetchrow(
-            "SELECT id FROM enum_options WHERE metric_id = $1 AND label = $2",
-            metric_id, option_label,
-        )
-        if not opt_row:
-            return {}
+    """Reconstruct time-series data for a correlation source from its stored source_key."""
+    sk = SourceKey.parse(source_key_str)
+
+    # Auto sources
+    if sk.is_auto:
+        all_dates = [
+            str(start_date + timedelta(days=i))
+            for i in range((end_date - start_date).days + 1)
+        ]
+        if sk.auto_type == AutoSourceType.DAY_OF_WEEK:
+            return {d: float(date_type.fromisoformat(d).isoweekday()) for d in all_dates}
+        if sk.auto_type == AutoSourceType.MONTH:
+            return {d: float(date_type.fromisoformat(d).month) for d in all_dates}
+        if sk.auto_type == AutoSourceType.WEEK_NUMBER:
+            return {d: float(date_type.fromisoformat(d).isocalendar()[1]) for d in all_dates}
+        if sk.auto_type == AutoSourceType.AW_ACTIVE:
+            rows = await conn.fetch(
+                """SELECT date, active_seconds FROM activitywatch_daily_summary
+                   WHERE user_id = $1 AND date >= $2 AND date <= $3""",
+                user_id, start_date, end_date,
+            )
+            return {str(r["date"]): r["active_seconds"] / 3600.0 for r in rows}
+        if sk.auto_type == AutoSourceType.NONZERO and sk.auto_parent_metric_id is not None:
+            parent = await conn.fetchrow(
+                "SELECT id, type FROM metric_definitions WHERE id = $1",
+                sk.auto_parent_metric_id,
+            )
+            if not parent:
+                return {}
+            raw = await _values_by_date_for_slot(
+                conn, parent["id"], parent["type"], start_date, end_date, user_id,
+            )
+            return {d: (1.0 if v > 0 else 0.0) for d, v in raw.items()}
+        if sk.auto_type == AutoSourceType.NOTE_COUNT and sk.auto_parent_metric_id is not None:
+            nc_rows = await conn.fetch(
+                """SELECT date, COUNT(*) AS cnt FROM notes
+                   WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4
+                   GROUP BY date""",
+                sk.auto_parent_metric_id, user_id, start_date, end_date,
+            )
+            return {str(r["date"]): float(r["cnt"]) for r in nc_rows}
+        return {}
+
+    # Enum option source
+    if sk.enum_option_id is not None and sk.metric_id is not None:
         return await _values_by_date_for_enum_option(
-            conn, metric_id, opt_row["id"], start_date, end_date, user_id, slot_id=slot_id,
+            conn, sk.metric_id, sk.enum_option_id, start_date, end_date, user_id, slot_id=sk.slot_id,
         )
 
-    if source_type == "computed" and metric_id is not None:
+    # Computed metric
+    if source_type == "computed" and sk.metric_id is not None:
         cfg = await conn.fetchrow(
             "SELECT formula, result_type FROM computed_config WHERE metric_id = $1",
-            metric_id,
+            sk.metric_id,
         )
         if not cfg or not cfg["formula"]:
             return {}
@@ -1399,58 +1455,13 @@ async def _reconstruct_source_data(
             conn, formula, rt, ref_ids, start_date, end_date, user_id,
         )
 
-    if metric_id is None:
-        # Auto source — determine from label
-        all_dates = [
-            str(start_date + timedelta(days=i))
-            for i in range((end_date - start_date).days + 1)
-        ]
-        if label == "День недели":
-            return {d: float(date_type.fromisoformat(d).isoweekday()) for d in all_dates}
-        if label == "Месяц":
-            return {d: float(date_type.fromisoformat(d).month) for d in all_dates}
-        if label == "Неделя года":
-            return {d: float(date_type.fromisoformat(d).isocalendar()[1]) for d in all_dates}
-        if label == "Экранное время (активное)":
-            rows = await conn.fetch(
-                """SELECT date, active_seconds FROM activitywatch_daily_summary
-                   WHERE user_id = $1 AND date >= $2 AND date <= $3""",
-                user_id, start_date, end_date,
-            )
-            return {str(r["date"]): r["active_seconds"] / 3600.0 for r in rows}
-        if label.endswith(": не ноль"):
-            parent_name = label[: -len(": не ноль")]
-            parent = await conn.fetchrow(
-                "SELECT id, type FROM metric_definitions WHERE user_id = $1 AND name = $2",
-                user_id, parent_name,
-            )
-            if not parent:
-                return {}
-            raw = await _values_by_date_for_slot(
-                conn, parent["id"], parent["type"], start_date, end_date, user_id,
-            )
-            return {d: (1.0 if v > 0 else 0.0) for d, v in raw.items()}
-        if label.endswith(": кол-во заметок"):
-            parent_name = label[: -len(": кол-во заметок")]
-            parent = await conn.fetchrow(
-                "SELECT id FROM metric_definitions WHERE user_id = $1 AND name = $2",
-                user_id, parent_name,
-            )
-            if not parent:
-                return {}
-            nc_rows = await conn.fetch(
-                """SELECT date, COUNT(*) AS cnt FROM notes
-                   WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4
-                   GROUP BY date""",
-                parent["id"], user_id, start_date, end_date,
-            )
-            return {str(r["date"]): float(r["cnt"]) for r in nc_rows}
-        return {}
-
     # Regular metric
-    return await _values_by_date_for_slot(
-        conn, metric_id, source_type, start_date, end_date, user_id, slot_id=slot_id,
-    )
+    if sk.metric_id is not None:
+        return await _values_by_date_for_slot(
+            conn, sk.metric_id, source_type, start_date, end_date, user_id, slot_id=sk.slot_id,
+        )
+
+    return {}
 
 
 @router.get("/correlation-pair-chart")
@@ -1491,12 +1502,10 @@ async def correlation_pair_chart(
     uid = current_user["id"]
 
     data_a = await _reconstruct_source_data(
-        db, row["metric_a_id"], row["slot_a_id"],
-        row["type_a"], row["label_a"], start_date, end_date, uid,
+        db, row["source_key_a"], row["type_a"], start_date, end_date, uid,
     )
     data_b = await _reconstruct_source_data(
-        db, row["metric_b_id"], row["slot_b_id"],
-        row["type_b"], row["label_b"], start_date, end_date, uid,
+        db, row["source_key_b"], row["type_b"], start_date, end_date, uid,
     )
 
     lag = row["lag_days"] or 0
@@ -1529,14 +1538,45 @@ async def correlation_pair_chart(
             str(date_type.fromisoformat(d) - timedelta(days=lag)) for d in common
         ]
 
+    # Resolve display labels from source_keys
+    sk_a = SourceKey.parse(row["source_key_a"])
+    sk_b = SourceKey.parse(row["source_key_b"])
+
+    # Batch-lookup parent metric names for auto sources
+    parent_ids = {mid for mid in (sk_a.auto_parent_metric_id, sk_b.auto_parent_metric_id) if mid is not None}
+    parent_names: dict[int, str] = {}
+    if parent_ids:
+        pm_rows = await db.fetch(
+            "SELECT id, name FROM metric_definitions WHERE id = ANY($1)",
+            list(parent_ids),
+        )
+        parent_names = {r["id"]: r["name"] for r in pm_rows}
+
+    # Metric names from JOIN (ma/mb)
+    ma_name: str | None = None
+    mb_name: str | None = None
+    if row["metric_a_id"] is not None:
+        ma_row = await db.fetchrow("SELECT name FROM metric_definitions WHERE id = $1", row["metric_a_id"])
+        ma_name = ma_row["name"] if ma_row else None
+    if row["metric_b_id"] is not None:
+        mb_row = await db.fetchrow("SELECT name FROM metric_definitions WHERE id = $1", row["metric_b_id"])
+        mb_name = mb_row["name"] if mb_row else None
+
+    display_label_a = PRIVATE_MASK if blocked_a else _build_display_label(
+        row["source_key_a"], ma_name, parent_names.get(sk_a.auto_parent_metric_id),
+    )
+    display_label_b = PRIVATE_MASK if blocked_b else _build_display_label(
+        row["source_key_b"], mb_name, parent_names.get(sk_b.auto_parent_metric_id),
+    )
+
     return {
         "dates": common if not (blocked_a or blocked_b) else [],
         "values_a": [data_a[d] for d in common] if not blocked_a else [],
         "values_b": [data_b[d] for d in common] if not blocked_b else [],
         "type_a": type_a,
         "type_b": type_b,
-        "label_a": PRIVATE_MASK if blocked_a else row["label_a"],
-        "label_b": PRIVATE_MASK if blocked_b else row["label_b"],
+        "label_a": display_label_a,
+        "label_b": display_label_b,
         "correlation": row["correlation"],
         "lag_days": lag,
         "original_dates_b": original_dates_b if not (blocked_a or blocked_b) else None,

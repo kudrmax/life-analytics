@@ -61,7 +61,8 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `schemas.py` — Pydantic models for all request/response types
 - `metric_helpers.py` — shared value read/write logic across routers; `build_metric_out` converts DB rows to response models with slots; privacy masking (`mask_name`, `mask_icon`, `is_blocked`)
 - `formula.py` — formula engine for computed metrics: tokenizer, validator, recursive descent evaluator
-- `correlation_blacklist.py` — `should_skip_pair()` rules for filtering meaningless correlation pairs
+- `source_key.py` — `SourceKey` dataclass + `AutoSourceType` enum for deterministic identification of correlation data sources; format: `metric:{id}[:enum_opt:{oid}][:slot:{sid}]` or `auto:{type}[:metric:{id}]`
+- `correlation_blacklist.py` — `should_skip_pair(a: SourceKey, b: SourceKey)` rules for filtering meaningless correlation pairs
 
 **Routers** (all under `/api/`): `auth`, `metrics`, `entries`, `daily`, `analytics`, `export_import`, `integrations`, `categories`, `notes`, `insights`
 
@@ -90,7 +91,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - `insights` — id, user_id (FK), text (TEXT), created_at, updated_at (user conclusions about metric relationships)
 - `insight_metrics` — id, insight_id (FK), metric_id (FK, nullable), custom_label VARCHAR(200), sort_order (links insights to metrics; custom_label for free-text metric names without metric_id)
 - `correlation_reports` — id, user_id (FK), status ('running'/'done'/'error'), period_start, period_end, created_at, finished_at
-- `correlation_pairs` — id, report_id (FK), metric_a_id, metric_b_id, slot_a_id, slot_b_id, label_a, label_b, type_a, type_b, correlation (FLOAT), data_points (INTEGER), lag_days (INTEGER), p_value (FLOAT)
+- `correlation_pairs` — id, report_id (FK), metric_a_id, metric_b_id, slot_a_id, slot_b_id, source_key_a (VARCHAR(100), deterministic composite key — see `source_key.py`), source_key_b, type_a, type_b, correlation (FLOAT), data_points (INTEGER), lag_days (INTEGER), p_value (FLOAT)
 - `user_integrations` — id, user_id (FK), provider (VARCHAR), encrypted_token (TEXT), enabled, created_at; UNIQUE(user_id, provider)
 - `integration_config` — metric_id (PK/FK), provider (VARCHAR), metric_key (VARCHAR), value_type (VARCHAR)
 - `integration_filter_config` — metric_id (PK/FK), filter_name VARCHAR(200) — config for filter_tasks_count metrics

@@ -2458,7 +2458,7 @@ function renderCorrPair(p, report) {
     const labelA = renderCorrMetricLabel(rawLabelA, rawIconA, isLagged ? p.slot_label_b : p.slot_label_a, hintA, isLagged ? 'вчера' : '');
     const labelB = renderCorrMetricLabel(rawLabelB, rawIconB, isLagged ? p.slot_label_a : p.slot_label_b, hintB, isLagged ? 'сегодня' : '');
 
-    const pairId = `corr-detail-${Math.random().toString(36).slice(2, 8)}`;
+    const pairId = `corr-detail-${p.pair_id}`;
     corrPairData.set(pairId, {
         mAId: isLagged ? p.metric_b_id : p.metric_a_id,
         mBId: isLagged ? p.metric_a_id : p.metric_b_id,

@@ -230,6 +230,17 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_insights_user ON insights(user_id);
         CREATE INDEX IF NOT EXISTS idx_insight_metrics_insight ON insight_metrics(insight_id);
     """),
+    (11, "replace_labels_with_source_keys", """
+        -- Delete existing reports (max 1 per user, will be recomputed)
+        DELETE FROM correlation_pairs;
+        DELETE FROM correlation_reports;
+        -- Add new columns
+        ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS source_key_a VARCHAR(100) NOT NULL DEFAULT '';
+        ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS source_key_b VARCHAR(100) NOT NULL DEFAULT '';
+        -- Drop old columns
+        ALTER TABLE correlation_pairs DROP COLUMN IF EXISTS label_a;
+        ALTER TABLE correlation_pairs DROP COLUMN IF EXISTS label_b;
+    """),
 ]
 
 
