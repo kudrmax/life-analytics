@@ -2331,10 +2331,13 @@ function showCorrelationHelp() {
                 </div>
                 <p>Число справа отражает силу связи (корреляцию) по шкале от 0 до 1. Чем оно выше, тем устойчивее закономерность. Слова под иконками указывают направление: например, если зарядка утром помечена как «да», а настроение — «выше», это означает, что в дни с зарядкой настроение у вас, как правило, лучше.</p>
 
-                <h3>Первый раздел — закономерности, которым можно доверять.</h3>
+                <h3>Первый раздел — надёжные корреляции.</h3>
                 <p>Приложение проверило, не является ли каждое совпадение случайным, и включило сюда только те пары, где вероятность случайного совпадения очень мала (p-value &lt; 0.05). Иными словами, найденная связь, скорее всего, отражает реальную закономерность, а не случайность.</p>
 
-                <h3>Второй раздел — предварительные наблюдения.</h3>
+                <h3>Второй раздел — возможно ненадёжные.</h3>
+                <p>Доверительный интервал слишком широк — оценка силы связи неточная. Связь, вероятно, существует, но нужно больше данных чтобы понять насколько она сильная.</p>
+
+                <h3>Третий раздел — ненадёжные.</h3>
                 <p>Либо данных пока недостаточно для уверенного вывода, либо шанс случайного совпадения остаётся высоким — и найденная закономерность может ничего не отражать. Стоит понаблюдать дольше.</p>
 
                 <p>Показатели сравниваются не только внутри одного дня, но и между соседними днями — чтобы выявлять закономерности вида «вчера было X → сегодня наблюдается Y»:</p>
@@ -2398,7 +2401,7 @@ async function fetchMetricStats(metricId, start, end) {
 function formatMetricStatsHtml(stats) {
     if (!stats || stats.error) return '<span class="corr-stats-na">нет данных</span>';
     return stats.display_stats.map(s =>
-        `<div class="corr-stats-row"><span>${s.label}</span><span>${s.value}</span></div>`
+        `<span>${s.label}</span><span>${s.value}</span>`
     ).join('');
 }
 
@@ -2416,9 +2419,9 @@ async function toggleCorrDetail(pairId, metricAId, metricBId, labelA, iconA, lab
         d && d.dbPairId ? api.getCorrelationPairChart(d.dbPairId).catch(() => null) : Promise.resolve(null),
     ];
     const [statsA, statsB, chartData] = await Promise.all(promises);
-    const colA = `<div class="corr-stats-col"><div class="corr-stats-label">${iconA || ''} ${labelA}</div>${formatMetricStatsHtml(statsA)}</div>`;
-    const colB = `<div class="corr-stats-col"><div class="corr-stats-label">${iconB || ''} ${labelB}</div>${formatMetricStatsHtml(statsB)}</div>`;
-    statsEl.innerHTML = `<div class="corr-stats-columns">${colA}${colB}</div>`;
+    const blockA = `<div class="corr-stats-block"><div class="corr-stats-label">${iconA || ''} ${labelA}</div><div class="corr-detail-grid">${formatMetricStatsHtml(statsA)}</div></div>`;
+    const blockB = `<div class="corr-stats-block"><div class="corr-stats-label">${iconB || ''} ${labelB}</div><div class="corr-detail-grid">${formatMetricStatsHtml(statsB)}</div></div>`;
+    statsEl.innerHTML = `<div class="corr-stats-columns">${blockA}${blockB}</div>`;
     statsEl.dataset.loaded = '1';
     const chartWrap = document.getElementById(pairId + '-chart-wrap');
     if (chartData && chartData.dates && chartData.dates.length > 0 && chartWrap) {
@@ -2485,6 +2488,7 @@ function renderCorrPair(p, report) {
         <div class="corr-detail-grid">
             <span>Корреляция</span><span>${r > 0 ? '+' : ''}${r.toFixed(4)}</span>
             <span>p-value</span><span>${p.p_value !== null && p.p_value !== undefined ? p.p_value.toFixed(4) : '—'}</span>
+            ${p.ci_lower != null ? `<span>95% доверительный интервал</span><span>[${p.ci_lower.toFixed(4)}, ${p.ci_upper.toFixed(4)}]</span>` : ''}
             <span>Дней данных</span><span>${p.data_points}</span>
             <span>Сдвиг</span><span>${isLagged ? p.lag_days + ' дн.' : 'нет'}</span>
             ${p.quality_issue_label ? `<span>Причина</span><span style="color:var(--yellow)">${p.quality_issue_label}</span>` : ''}
@@ -2504,7 +2508,7 @@ function renderCorrelationReport(report, container) {
 
     const sigTotal = c.sig_strong + c.sig_medium + c.sig_weak;
     let html = '<div class="corr-section">';
-    html += '<h4>Статистически значимо <span class="corr-sig corr-sig-yes">p&lt;0.05</span></h4>';
+    html += '<h4>Надёжные корреляции <span class="corr-sig corr-sig-yes">p&lt;0.05</span></h4>';
 
     if (sigTotal > 0) {
         if (c.sig_strong > 0) {
@@ -2527,9 +2531,16 @@ function renderCorrelationReport(report, container) {
     }
     html += '</div>';
 
+    if (c.maybe > 0) {
+        html += '<details class="corr-section corr-section-low" id="corr-maybe-details">';
+        html += `<summary><h4>Возможно ненадёжные <span class="corr-cat-count">${c.maybe}</span></h4></summary>`;
+        html += '<div class="corr-category-pairs" id="corr-cat-maybe"></div>';
+        html += '</details>';
+    }
+
     if (c.insig > 0) {
         html += '<details class="corr-section corr-section-low" id="corr-insig-details">';
-        html += `<summary><h4>Незначимо или мало данных <span class="corr-cat-count">${c.insig}</span></h4></summary>`;
+        html += `<summary><h4>Ненадёжные <span class="corr-cat-count">${c.insig}</span></h4></summary>`;
         html += '<div class="corr-category-pairs" id="corr-cat-insig"></div>';
         html += '</details>';
     }
@@ -2541,6 +2552,19 @@ function renderCorrelationReport(report, container) {
     for (const cat of categoriesToLoad) {
         const el = document.getElementById(`corr-cat-${cat}`);
         if (el) loadCategoryPairs(report.id, cat, el, report, 0);
+    }
+
+    // Lazy load maybe on <details> open
+    const maybeDetails = document.getElementById('corr-maybe-details');
+    if (maybeDetails) {
+        maybeDetails.addEventListener('toggle', () => {
+            if (!maybeDetails.open) return;
+            const el = document.getElementById('corr-cat-maybe');
+            if (el && !el.dataset.loaded) {
+                el.dataset.loaded = '1';
+                loadCategoryPairs(report.id, 'maybe', el, report, 0);
+            }
+        });
     }
 
     // Lazy load insig on <details> open

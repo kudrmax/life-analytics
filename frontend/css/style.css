@@ -1272,9 +1272,14 @@ input[type="month"], input[type="date"] {
 .corr-detail-stats:empty { display: none; }
 
 .corr-stats-columns {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.corr-stats-block + .corr-stats-block {
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
 }
 
 .corr-stats-label {

@@ -37,21 +37,31 @@ class QualityIssue(str, Enum):
     LOW_DATA_POINTS = "low_data_points"
     INSUFFICIENT_VARIANCE = "insufficient_variance"
     HIGH_P_VALUE = "high_p_value"
+    WIDE_CI = "wide_ci"
 
 
 QUALITY_ISSUE_LABELS: dict[str, str] = {
     QualityIssue.LOW_DATA_POINTS: "Мало данных (менее 10 дней)",
     QualityIssue.INSUFFICIENT_VARIANCE: "Недостаточная дисперсия (значение почти не меняется)",
     QualityIssue.HIGH_P_VALUE: "Статистически незначимо (p ≥ 0.05)",
+    QualityIssue.WIDE_CI: "Широкий доверительный интервал",
+}
+
+QUALITY_SEVERITY: dict[str, str] = {
+    QualityIssue.LOW_DATA_POINTS: "bad",
+    QualityIssue.INSUFFICIENT_VARIANCE: "bad",
+    QualityIssue.HIGH_P_VALUE: "bad",
+    QualityIssue.WIDE_CI: "maybe",
 }
 
 
-def _determine_quality_issue(n: int, p_value: float, low_variance: bool = False) -> str | None:
+def _determine_quality_issue(n: int, p_value: float, low_variance: bool = False, wide_ci: bool = False) -> str | None:
     # Priority order: first match wins. Reorder to change priority.
     checks = [
         (n < 10,          QualityIssue.LOW_DATA_POINTS),
         (low_variance,    QualityIssue.INSUFFICIENT_VARIANCE),
         (p_value >= 0.05, QualityIssue.HIGH_P_VALUE),
+        (wide_ci,         QualityIssue.WIDE_CI),
     ]
     return next((issue.value for cond, issue in checks if cond), None)
 
@@ -376,6 +386,19 @@ def _p_value(r: float, n: int) -> float:
     df = n - 2
     t_sq = r * r * df / (1.0 - r * r)
     return _betai(df / 2.0, 0.5, df / (df + t_sq))
+
+
+def _confidence_interval(r: float, n: int) -> tuple[float, float] | None:
+    """95% confidence interval for Pearson r via Fisher z-transformation."""
+    if n < 4:
+        return None
+    if abs(r) >= 1.0:
+        return (r, r)
+    z = math.atanh(r)
+    se = 1.0 / math.sqrt(n - 3)
+    z_lower = z - 1.96 * se
+    z_upper = z + 1.96 * se
+    return (round(math.tanh(z_lower), 4), round(math.tanh(z_upper), 4))
 
 
 @router.get("/trends")
@@ -1086,33 +1109,39 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     r, n = _compute_pearson(source_data[i], source_data[j])
                     if r is not None:
                         p_val = round(_p_value(r, n), 4)
+                        ci = _confidence_interval(r, n)
+                        is_wide_ci = ci is not None and (ci[1] - ci[0]) > 0.5
                         pairs_to_insert.append((
                             report_id,
                             sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
                             key_i, key_j, mt_i, mt_j,
-                            r, n, 0, p_val, _determine_quality_issue(n, p_val, low_var),
+                            r, n, 0, p_val, _determine_quality_issue(n, p_val, low_var, is_wide_ci),
                         ))
 
                     # lag=1: yesterday's j → today's i
                     r_lag, n_lag = _compute_pearson(source_data[i], _shift_dates(source_data[j], 1))
                     if r_lag is not None:
                         p_val_lag = round(_p_value(r_lag, n_lag), 4)
+                        ci_lag = _confidence_interval(r_lag, n_lag)
+                        is_wide_ci_lag = ci_lag is not None and (ci_lag[1] - ci_lag[0]) > 0.5
                         pairs_to_insert.append((
                             report_id,
                             sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
                             key_i, key_j, mt_i, mt_j,
-                            r_lag, n_lag, 1, p_val_lag, _determine_quality_issue(n_lag, p_val_lag, low_var),
+                            r_lag, n_lag, 1, p_val_lag, _determine_quality_issue(n_lag, p_val_lag, low_var, is_wide_ci_lag),
                         ))
 
                     # lag=1: yesterday's i → today's j
                     r_lag2, n_lag2 = _compute_pearson(source_data[j], _shift_dates(source_data[i], 1))
                     if r_lag2 is not None:
                         p_val_lag2 = round(_p_value(r_lag2, n_lag2), 4)
+                        ci_lag2 = _confidence_interval(r_lag2, n_lag2)
+                        is_wide_ci_lag2 = ci_lag2 is not None and (ci_lag2[1] - ci_lag2[0]) > 0.5
                         pairs_to_insert.append((
                             report_id,
                             sk_j.metric_id, sk_i.metric_id, sk_j.slot_id, sk_i.slot_id,
                             key_j, key_i, mt_j, mt_i,
-                            r_lag2, n_lag2, 1, p_val_lag2, _determine_quality_issue(n_lag2, p_val_lag2, low_var),
+                            r_lag2, n_lag2, 1, p_val_lag2, _determine_quality_issue(n_lag2, p_val_lag2, low_var, is_wide_ci_lag2),
                         ))
 
             qt.mark(f"compute_{len(pairs_to_insert)}_pairs")
@@ -1185,7 +1214,8 @@ async def get_latest_correlation_report(
                    COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) > 0.3
                                     AND ABS(correlation) <= 0.7) AS sig_medium,
                    COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) <= 0.3) AS sig_weak,
-                   COUNT(*) FILTER (WHERE quality_issue IS NOT NULL) AS insig
+                   COUNT(*) FILTER (WHERE quality_issue = 'wide_ci') AS maybe,
+                   COUNT(*) FILTER (WHERE quality_issue IS NOT NULL AND quality_issue != 'wide_ci') AS insig
                FROM correlation_pairs WHERE report_id = $1""",
             done_row["id"],
         )
@@ -1200,6 +1230,7 @@ async def get_latest_correlation_report(
                 "sig_strong": counts_row["sig_strong"],
                 "sig_medium": counts_row["sig_medium"],
                 "sig_weak": counts_row["sig_weak"],
+                "maybe": counts_row["maybe"],
                 "insig": counts_row["insig"],
             },
         }
@@ -1293,6 +1324,8 @@ def _format_pair(
     option_a = "" if blocked_a else (enum_labels.get(sk_a.enum_option_id, "") if sk_a.enum_option_id else "")
     option_b = "" if blocked_b else (enum_labels.get(sk_b.enum_option_id, "") if sk_b.enum_option_id else "")
 
+    ci = _confidence_interval(corr, p["data_points"]) if corr is not None else None
+
     return {
         "label_a": label_a,
         "label_b": label_b,
@@ -1308,6 +1341,8 @@ def _format_pair(
         "data_points": p["data_points"],
         "lag_days": p["lag_days"],
         "p_value": p["p_value"] if p["p_value"] is not None else (round(_p_value(corr, p["data_points"]), 4) if corr is not None else None),
+        "ci_lower": ci[0] if ci else None,
+        "ci_upper": ci[1] if ci else None,
         "metric_a_id": p["metric_a_id"],
         "metric_b_id": p["metric_b_id"],
         "pair_id": p["pair_id"],
@@ -1319,6 +1354,7 @@ def _format_pair(
         "private_b": priv_b,
         "quality_issue": p.get("quality_issue"),
         "quality_issue_label": QUALITY_ISSUE_LABELS.get(p.get("quality_issue")) if p.get("quality_issue") else None,
+        "quality_severity": QUALITY_SEVERITY.get(p.get("quality_issue")) if p.get("quality_issue") else None,
     }
 
 
@@ -1326,7 +1362,8 @@ _CATEGORY_FILTERS: dict[str, str] = {
     "sig_strong": "AND quality_issue IS NULL AND ABS(correlation) > 0.7",
     "sig_medium": "AND quality_issue IS NULL AND ABS(correlation) > 0.3 AND ABS(correlation) <= 0.7",
     "sig_weak": "AND quality_issue IS NULL AND ABS(correlation) <= 0.3",
-    "insig": "AND quality_issue IS NOT NULL",
+    "maybe": "AND quality_issue = 'wide_ci'",
+    "insig": "AND quality_issue IS NOT NULL AND quality_issue != 'wide_ci'",
     "all": "",
 }
 
