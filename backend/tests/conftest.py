@@ -156,7 +156,7 @@ async def cleanup(db_pool: asyncpg.Pool):
                 break
         except Exception:
             break
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.1)
     for attempt in range(3):
         try:
             async with db_pool.acquire() as conn:

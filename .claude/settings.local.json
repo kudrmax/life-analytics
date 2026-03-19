@@ -65,7 +65,8 @@
       "WebFetch(domain:timeweb.com)",
       "Bash(make build-up:*)",
       "Bash(find:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(cd:*)"
     ]
   }
 }

@@ -37,7 +37,7 @@ async def _start_report(
 async def _wait_for_report_done(
     client: AsyncClient,
     token: str,
-    max_wait: int = 30,
+    max_wait: int = 200,
 ) -> dict:
     """Poll GET /correlation-report until a 'done' report appears.
 
@@ -54,7 +54,7 @@ async def _wait_for_report_done(
         if data.get("running") is None and data.get("report") is None:
             # No running and no done — something went wrong fast
             return data
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.15)
     return data
 
 
