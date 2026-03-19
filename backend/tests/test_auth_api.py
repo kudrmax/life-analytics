@@ -156,6 +156,54 @@ class TestPrivacyMode:
         assert resp.json()["privacy_mode"] is False
 
 
+class TestDeleteAccount:
+    """DELETE /api/auth/account"""
+
+    async def test_delete_returns_204(self, client: AsyncClient) -> None:
+        user = await register_user(client, "deleteme")
+        resp = await client.delete(
+            "/api/auth/account", headers=auth_headers(user["token"]),
+        )
+        assert resp.status_code == 204
+
+    async def test_user_gone_after_delete(self, client: AsyncClient) -> None:
+        user = await register_user(client, "gonegone")
+        await client.delete(
+            "/api/auth/account", headers=auth_headers(user["token"]),
+        )
+        resp = await client.get(
+            "/api/auth/me", headers=auth_headers(user["token"]),
+        )
+        assert resp.status_code == 404
+
+    async def test_delete_no_auth(self, client: AsyncClient) -> None:
+        resp = await client.delete("/api/auth/account")
+        assert resp.status_code == 401
+
+    async def test_other_user_unaffected(self, client: AsyncClient) -> None:
+        user_del = await register_user(client, "todelete")
+        user_keep = await register_user(client, "tokeep")
+        await client.delete(
+            "/api/auth/account", headers=auth_headers(user_del["token"]),
+        )
+        resp = await client.get(
+            "/api/auth/me", headers=auth_headers(user_keep["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["username"] == "tokeep"
+
+
+class TestHealth:
+    """GET /api/health"""
+
+    async def test_health_endpoint(self, client: AsyncClient) -> None:
+        resp = await client.get("/api/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert "env" in data
+
+
 class TestDataIsolation:
     """Users cannot see each other's data via /me."""
 

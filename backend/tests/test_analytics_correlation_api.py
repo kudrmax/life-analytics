@@ -148,7 +148,7 @@ class TestReportCompletion:
         assert "total" in counts
         assert isinstance(counts["total"], int)
         assert counts["total"] >= 0
-        for key in ("sig_strong", "sig_medium", "sig_weak", "insig"):
+        for key in ("sig_strong", "sig_medium", "sig_weak", "maybe", "insig"):
             assert key in counts
 
 
@@ -216,6 +216,23 @@ class TestPairsStructure:
         # Types
         assert "type_a" in pair
         assert "type_b" in pair
+
+        # Quality issue fields
+        assert "quality_issue" in pair
+        assert "quality_issue_label" in pair
+        assert "quality_severity" in pair
+        if pair["quality_issue"] is not None:
+            assert isinstance(pair["quality_issue"], str)
+            assert pair["quality_issue_label"] is not None
+            assert pair["quality_severity"] in ("bad", "maybe")
+
+        # Confidence interval
+        assert "ci_lower" in pair
+        assert "ci_upper" in pair
+        if pair["ci_lower"] is not None:
+            assert isinstance(pair["ci_lower"], (int, float))
+            assert isinstance(pair["ci_upper"], (int, float))
+            assert pair["ci_lower"] <= pair["ci_upper"]
 
     async def test_pairs_have_p_value(
         self, client: AsyncClient, user_a: dict,
@@ -1418,3 +1435,115 @@ class TestCorrelationTypeHints:
         assert "выше" in hints or "ниже" in hints, (
             f"Expected scale hints, got: {hints}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Quality issue integration tests
+# ---------------------------------------------------------------------------
+
+class TestQualityIssueIntegration:
+    """Integration tests for quality_issue computation and category filters."""
+
+    async def test_low_variance_metric_gets_issue(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Metric with constant values should get insufficient_variance issue."""
+        token = user_a["token"]
+
+        # Metric with zero variance (all values = 1)
+        const_m = await create_metric(
+            client, token, name="ConstVal", metric_type="number", slug="constval",
+        )
+        # Metric with varying values
+        var_m = await create_metric(
+            client, token, name="VaryVal", metric_type="number", slug="varyval",
+        )
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, const_m["id"], date_str, 1)
+            await create_entry(client, token, var_m["id"], date_str, day * 10)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # Find pairs involving ConstVal — they should have insufficient_variance
+        const_pairs = [
+            p for p in pairs_data["pairs"]
+            if p.get("metric_a_id") == const_m["id"]
+            or p.get("metric_b_id") == const_m["id"]
+        ]
+        assert len(const_pairs) > 0, "Expected pairs with constant metric"
+        for p in const_pairs:
+            assert p["quality_issue"] is not None, (
+                f"Constant metric pair should have quality_issue, got: {p}"
+            )
+
+    async def test_category_filter_maybe(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Pairs filtered by category=maybe all have quality_issue='wide_ci'."""
+        await _create_metrics_with_entries(client, user_a["token"])
+        report_body = await _start_report(client, user_a["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_a["token"])
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?category=maybe&limit=500",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        for pair in data["pairs"]:
+            assert pair["quality_issue"] == "wide_ci", (
+                f"maybe category should only have wide_ci, got: {pair['quality_issue']}"
+            )
+
+    async def test_category_filter_insig(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Pairs filtered by category=insig have non-null quality_issue != wide_ci."""
+        await _create_metrics_with_entries(client, user_a["token"])
+        report_body = await _start_report(client, user_a["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_a["token"])
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?category=insig&limit=500",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        for pair in data["pairs"]:
+            assert pair["quality_issue"] is not None, "insig pairs must have quality_issue"
+            assert pair["quality_issue"] != "wide_ci", (
+                f"insig should exclude wide_ci, got: {pair['quality_issue']}"
+            )
+
+    async def test_category_filter_sig_strong_excludes_issues(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Pairs filtered by category=sig_strong have quality_issue=None."""
+        await _create_metrics_with_entries(client, user_a["token"])
+        report_body = await _start_report(client, user_a["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_a["token"])
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?category=sig_strong&limit=500",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        for pair in data["pairs"]:
+            assert pair["quality_issue"] is None, (
+                f"sig_strong should have no quality_issue, got: {pair['quality_issue']}"
+            )
