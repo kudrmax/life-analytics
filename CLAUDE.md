@@ -46,9 +46,42 @@ make backup-now             # run one-off backup immediately
 
 **URLs:** Frontend :3000, Backend :8000, API docs :8000/docs, Health check: GET /api/health
 
-**No tests exist in this project.**
-
 Frontend is served by `python -m http.server` (local) or nginx (Docker). Both serve files from disk on each request — no restart needed for JS/CSS/HTML changes, just refresh the browser.
+
+## Testing
+
+**Run tests:** `cd backend && python -m pytest tests/ -v`. Requires running PostgreSQL container (`make up`).
+
+**Rule: always write tests.** Any backend change must include new or updated tests.
+
+### Structure
+
+- Tests live in `backend/tests/`
+- `conftest.py`: session-scoped DB pool, autouse cleanup, helpers (`register_user`, `create_metric`, `create_entry`, `auth_headers`)
+- Naming: `test_{module}_{type}.py` (e.g. `test_auth_api.py`, `test_auth_unit.py`, `test_aw_service_unit.py`)
+
+### Test types
+
+- **API tests** (integration): `AsyncClient` + httpx ASGI transport. Fixtures: `client`, `user_a`, `user_b`, `bool_metric`, `scale_metric`
+- **Unit tests**: pure functions, no HTTP. `unittest.TestCase` or pytest classes
+
+### Patterns
+
+- One test class = one scenario (`class TestCreateBoolMetric`, `class TestDataIsolation`)
+- Always test data isolation between users
+- Test error cases (404, 409, 400) alongside happy path
+- External APIs (Todoist) — mock via `unittest.mock.patch`
+
+### When to add tests
+
+- New endpoint → API test (CRUD + error cases + data isolation)
+- New business function → unit test
+- Bug fix → **must** write a test reproducing the bug BEFORE fixing. Investigate why existing tests missed it — add missing cases
+- Changed logic → update affected tests
+
+### Test-first thinking
+
+Define expected results from business logic understanding first, then write the test. If the test fails — decide what is wrong: the expectation or the code. Never adjust expected values to match actual program output.
 
 ## Architecture
 
