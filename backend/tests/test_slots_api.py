@@ -67,6 +67,29 @@ class TestListSlots:
         data = resp.json()
         assert data[0]["usage_metric_names"] == []
 
+    async def test_list_disabled_slot_not_counted_as_usage(self, client, user_a):
+        """Disabled metric_slots rows should not count as usage."""
+        slot_a = await create_slot(client, user_a["token"], "Утро")
+        slot_b = await create_slot(client, user_a["token"], "Вечер")
+        slot_c = await create_slot(client, user_a["token"], "Ночь")
+        m = await create_metric(
+            client, user_a["token"],
+            name="M", metric_type="bool",
+            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}, {"slot_id": slot_c["id"]}],
+        )
+        # Remove slot_c from metric (sets enabled=FALSE in metric_slots)
+        await client.patch(
+            f"/api/metrics/{m['id']}",
+            json={"slot_configs": [{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}]},
+            headers=auth_headers(user_a["token"]),
+        )
+        resp = await client.get("/api/slots", headers=auth_headers(user_a["token"]))
+        data = resp.json()
+        usage = {s["label"]: s["usage_count"] for s in data}
+        assert usage["Утро"] == 1
+        assert usage["Вечер"] == 1
+        assert usage["Ночь"] == 0  # disabled, should not count
+
 
 @pytest.mark.asyncio
 class TestCreateSlot:
@@ -158,6 +181,30 @@ class TestDeleteSlot:
         )
         assert resp.status_code == 409
         assert "используется" in resp.json()["detail"]
+
+    async def test_delete_disabled_slot_succeeds(self, client, user_a):
+        """Slot with only disabled metric_slots rows should be deletable."""
+        slot_a = await create_slot(client, user_a["token"], "Утро")
+        slot_b = await create_slot(client, user_a["token"], "Вечер")
+        slot_c = await create_slot(client, user_a["token"], "Ночь")
+        m = await create_metric(
+            client, user_a["token"],
+            name="M", metric_type="bool",
+            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}, {"slot_id": slot_c["id"]}],
+        )
+        # Remove slot_c by updating metric with only slot_a and slot_b
+        # This disables slot_c in metric_slots (enabled=FALSE)
+        await client.patch(
+            f"/api/metrics/{m['id']}",
+            json={"slot_configs": [{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}]},
+            headers=auth_headers(user_a["token"]),
+        )
+        # Now slot_c should be deletable (only has disabled metric_slots row)
+        resp = await client.delete(
+            f"/api/slots/{slot_c['id']}",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 204
 
     async def test_delete_nonexistent(self, client, user_a):
         resp = await client.delete(

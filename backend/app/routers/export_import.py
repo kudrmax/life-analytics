@@ -609,7 +609,7 @@ async def import_data(
                 """SELECT msl.metric_id, msl.sort_order, ms.id
                    FROM metric_slots msl
                    JOIN measurement_slots ms ON ms.id = msl.slot_id
-                   WHERE msl.metric_id = ANY($1)""",
+                   WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE""",
                 all_metric_ids,
             ) if all_metric_ids else []
             slot_lookup: dict[int, dict[int, int]] = defaultdict(dict)

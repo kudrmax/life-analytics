@@ -22,6 +22,7 @@ async def list_slots(
                       array_agg(DISTINCT md.name ORDER BY md.name) AS names
                FROM metric_slots msl
                JOIN metric_definitions md ON md.id = msl.metric_id
+               WHERE msl.enabled = TRUE
                GROUP BY msl.slot_id
            ) cnt ON cnt.slot_id = ms.id
            WHERE ms.user_id = $1
@@ -103,14 +104,27 @@ async def delete_slot(
         raise HTTPException(404, "Время замера не найдено")
 
     usage_count = await db.fetchval(
-        "SELECT COUNT(*) FROM metric_slots WHERE slot_id = $1",
+        "SELECT COUNT(*) FROM metric_slots WHERE slot_id = $1 AND enabled = TRUE",
         slot_id,
     )
     if usage_count > 0:
+        names_row = await db.fetch(
+            """SELECT DISTINCT md.name FROM metric_slots msl
+               JOIN metric_definitions md ON md.id = msl.metric_id
+               WHERE msl.slot_id = $1 AND msl.enabled = TRUE""",
+            slot_id,
+        )
+        names = ", ".join(r["name"] for r in names_row)
         raise HTTPException(
             409,
-            f"Время замера используется в {usage_count} метриках. Сначала отвяжите его.",
+            f"Время замера используется в метриках: {names}. Сначала отвяжите его.",
         )
+
+    # Clean up disabled metric_slots rows before deleting the slot
+    await db.execute(
+        "DELETE FROM metric_slots WHERE slot_id = $1 AND enabled = FALSE",
+        slot_id,
+    )
 
     await db.execute(
         "DELETE FROM measurement_slots WHERE id = $1 AND user_id = $2",

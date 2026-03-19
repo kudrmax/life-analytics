@@ -2700,3 +2700,71 @@ class TestExportSlotEntries:
         slot_labels_export = {r["slot_label"] for r in entries_rows}
         assert "Morning" in slot_labels_export
         assert "Evening" in slot_labels_export
+
+
+# ---------------------------------------------------------------------------
+# Import entries use enabled slots, not disabled (sort_order collision fix)
+# ---------------------------------------------------------------------------
+
+class TestImportIgnoresDisabledSlots:
+
+    async def test_import_entry_uses_enabled_slot_not_disabled(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """When disabled and enabled slots share sort_order, import must use the enabled one."""
+        # Create 3 slots
+        slot_a = await create_slot(client, user_a["token"], "Morning")
+        slot_b = await create_slot(client, user_a["token"], "Afternoon")
+        slot_c = await create_slot(client, user_a["token"], "Evening")
+
+        # Create metric with all 3 slots
+        metric = await create_metric(
+            client, user_a["token"],
+            name="M", metric_type="bool",
+            slot_configs=[
+                {"slot_id": slot_a["id"]},
+                {"slot_id": slot_b["id"]},
+                {"slot_id": slot_c["id"]},
+            ],
+        )
+        # Remove slot_b (sort_order=1) → disabled, then slot_c moves to sort_order=1
+        await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"slot_configs": [
+                {"slot_id": slot_a["id"]},
+                {"slot_id": slot_c["id"]},
+            ]},
+            headers=auth_headers(user_a["token"]),
+        )
+
+        # Verify slot_c is now at sort_order=1
+        resp_m = await client.get("/api/metrics", headers=auth_headers(user_a["token"]))
+        m = next(x for x in resp_m.json() if x["id"] == metric["id"])
+        assert len(m["slots"]) == 2
+        assert m["slots"][1]["id"] == slot_c["id"]
+
+        # Import an entry at sort_order=1 — should go to slot_c (enabled), not slot_b (disabled)
+        row = _metric_row(m["slug"], "M", slot_labels=json.dumps(["Morning", "Evening"]))
+        metrics_csv = f"{METRICS_HEADER}\n{row}\n"
+        entries_csv = (
+            f"{ENTRIES_HEADER}\n"
+            f"2026-03-01,{m['slug']},true,1,Evening\n"
+        )
+        zip_buf = build_zip(metrics_csv, entries_csv)
+
+        resp = await client.post(
+            "/api/export/import",
+            files={"file": ("data.zip", zip_buf, "application/zip")},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["entries"]["imported"] == 1
+
+        # Verify entry is on slot_c (Evening), not slot_b (Afternoon)
+        entries_resp = await client.get(
+            f"/api/entries?date=2026-03-01&metric_id={metric['id']}",
+            headers=auth_headers(user_a["token"]),
+        )
+        entries = entries_resp.json()
+        assert len(entries) == 1
+        assert entries[0]["slot_id"] == slot_c["id"]
