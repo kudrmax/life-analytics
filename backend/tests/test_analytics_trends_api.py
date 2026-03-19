@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, register_user, create_metric, create_entry
+from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_slot
 
 
 # ---------------------------------------------------------------------------
@@ -314,10 +314,12 @@ class TestTrendsMultiSlot:
     async def test_multi_slot_values_averaged(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
+        slot_m = await create_slot(client, user_a["token"], "Morning")
+        slot_e = await create_slot(client, user_a["token"], "Evening")
         metric = await create_metric(
             client, user_a["token"],
             name="Multi", metric_type="number",
-            slot_labels=["Morning", "Evening"],
+            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
         )
         mid = metric["id"]
         token = user_a["token"]

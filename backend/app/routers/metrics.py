@@ -96,9 +96,9 @@ async def reorder_metrics(
             cat_id: int | None = item.get("category_id")
 
             if slot_id:
-                # Update category_id for this specific slot
+                # Update category_id for this specific slot in junction table
                 await db.execute(
-                    "UPDATE measurement_slots SET category_id = $1 WHERE id = $2 AND metric_id = $3",
+                    "UPDATE metric_slots SET category_id = $1 WHERE slot_id = $2 AND metric_id = $3",
                     cat_id, slot_id, metric_id,
                 )
 
@@ -120,9 +120,9 @@ async def reorder_metrics(
                            WHERE id = $3 AND user_id = $4""",
                         item["sort_order"], cat_id, metric_id, current_user["id"],
                     )
-                    # Propagate category_id to all enabled slots
+                    # Propagate category_id to all enabled slots in junction table
                     await db.execute(
-                        "UPDATE measurement_slots SET category_id = $1 WHERE metric_id = $2 AND enabled = TRUE",
+                        "UPDATE metric_slots SET category_id = $1 WHERE metric_id = $2 AND enabled = TRUE",
                         cat_id, metric_id,
                     )
     return {"ok": True}
@@ -351,14 +351,22 @@ async def create_metric(
             metric_id, json.dumps(data.formula), data.result_type,
         )
 
-    # Create measurement slots if 2+ labels/configs provided (skip for computed/integration/text)
+    # Link measurement slots if 2+ slot_configs provided (skip for computed/integration/text)
     if data.type not in (MetricType.computed, MetricType.integration, MetricType.text):
         if data.slot_configs and len(data.slot_configs) >= 2:
-            # New format with per-slot category_id
             for i, cfg in enumerate(data.slot_configs):
+                slot_id = cfg.get("slot_id")
+                if slot_id is None:
+                    raise HTTPException(400, "slot_id is required in slot_configs")
+                # Validate slot ownership
+                slot_ok = await db.fetchval(
+                    "SELECT 1 FROM measurement_slots WHERE id = $1 AND user_id = $2",
+                    slot_id, current_user["id"],
+                )
+                if not slot_ok:
+                    raise HTTPException(400, f"Slot {slot_id} not found")
                 slot_cat_id = cfg.get("category_id")
                 if slot_cat_id is not None:
-                    # Validate category ownership
                     cat_ok = await db.fetchval(
                         "SELECT 1 FROM categories WHERE id = $1 AND user_id = $2",
                         slot_cat_id, current_user["id"],
@@ -366,21 +374,13 @@ async def create_metric(
                     if not cat_ok:
                         raise HTTPException(400, f"Category {slot_cat_id} not found")
                 await db.execute(
-                    "INSERT INTO measurement_slots (metric_id, sort_order, label, category_id) VALUES ($1, $2, $3, $4)",
-                    metric_id, i, cfg["label"], slot_cat_id,
+                    "INSERT INTO metric_slots (metric_id, slot_id, sort_order, category_id) VALUES ($1, $2, $3, $4)",
+                    metric_id, slot_id, i, slot_cat_id,
                 )
             # Defensive rule: clear metric category_id — category now on slots
             await db.execute(
                 "UPDATE metric_definitions SET category_id = NULL WHERE id = $1", metric_id,
             )
-        else:
-            labels = data.slot_labels or []
-            if len(labels) >= 2:
-                for i, label in enumerate(labels):
-                    await db.execute(
-                        "INSERT INTO measurement_slots (metric_id, sort_order, label) VALUES ($1, $2, $3)",
-                        metric_id, i, label,
-                    )
 
     # Condition (depends on another metric)
     if data.condition_metric_id is not None and data.condition_type is not None:
@@ -576,31 +576,32 @@ async def update_metric(
                         o["id"],
                     )
 
-    # Update measurement slots — slot_configs takes priority over slot_labels
-    slot_update_configs = None
+    # Update metric slots via junction table
     if data.slot_configs is not None:
-        # New format: [{label, category_id}, ...]
-        slot_update_configs = data.slot_configs
-    elif data.slot_labels is not None:
-        # Legacy format: convert to configs without category_id
-        slot_update_configs = [{"label": lbl} for lbl in data.slot_labels]
-
-    if slot_update_configs is not None:
-        # Get ALL existing slots (including disabled) sorted by sort_order
+        # Get ALL existing metric_slots (including disabled) sorted by sort_order
         existing_slots = await db.fetch(
-            "SELECT * FROM measurement_slots WHERE metric_id = $1 ORDER BY sort_order",
+            "SELECT * FROM metric_slots WHERE metric_id = $1 ORDER BY sort_order",
             metric_id,
         )
         has_existing_slots = len(existing_slots) > 0
 
-        if len(slot_update_configs) < 2:
+        if len(data.slot_configs) < 2:
             # Trying to go to 0-1 slots
             if has_existing_slots:
                 raise HTTPException(400, "Cannot reduce to fewer than 2 slots once configured")
-            # No existing slots and 0-1 labels = no-op
+            # No existing slots and 0-1 configs = no-op
         else:
-            # Validate category ownership for all slot configs
-            for cfg in slot_update_configs:
+            # Validate slot and category ownership
+            for cfg in data.slot_configs:
+                sid = cfg.get("slot_id")
+                if sid is None:
+                    raise HTTPException(400, "slot_id is required in slot_configs")
+                slot_ok = await db.fetchval(
+                    "SELECT 1 FROM measurement_slots WHERE id = $1 AND user_id = $2",
+                    sid, current_user["id"],
+                )
+                if not slot_ok:
+                    raise HTTPException(400, f"Slot {sid} not found")
                 slot_cat_id = cfg.get("category_id")
                 if slot_cat_id is not None:
                     cat_ok = await db.fetchval(
@@ -611,12 +612,13 @@ async def update_metric(
                         raise HTTPException(400, f"Category {slot_cat_id} not found")
 
             if not has_existing_slots:
-                # First time creating slots — create them and migrate NULL entries
+                # First time creating slots — create junction rows and migrate NULL entries
                 first_slot_id = None
-                for i, cfg in enumerate(slot_update_configs):
-                    sid = await db.fetchval(
-                        "INSERT INTO measurement_slots (metric_id, sort_order, label, category_id) VALUES ($1, $2, $3, $4) RETURNING id",
-                        metric_id, i, cfg["label"], cfg.get("category_id"),
+                for i, cfg in enumerate(data.slot_configs):
+                    sid = cfg["slot_id"]
+                    await db.execute(
+                        "INSERT INTO metric_slots (metric_id, slot_id, sort_order, category_id) VALUES ($1, $2, $3, $4)",
+                        metric_id, sid, i, cfg.get("category_id"),
                     )
                     if i == 0:
                         first_slot_id = sid
@@ -627,31 +629,29 @@ async def update_metric(
                         first_slot_id, metric_id,
                     )
             else:
-                # Update existing slots — match by id, not by sort_order
-                existing_by_id = {s["id"]: s for s in existing_slots}
-                seen_ids: set[int] = set()
+                # Update existing — match by slot_id
+                existing_by_slot_id = {s["slot_id"]: s for s in existing_slots}
+                seen_slot_ids: set[int] = set()
 
-                for i, cfg in enumerate(slot_update_configs):
-                    slot_id = cfg.get("id")
-                    if slot_id is not None:
-                        if slot_id not in existing_by_id:
-                            raise HTTPException(400, f"Slot {slot_id} does not belong to this metric")
+                for i, cfg in enumerate(data.slot_configs):
+                    sid = cfg["slot_id"]
+                    seen_slot_ids.add(sid)
+                    if sid in existing_by_slot_id:
                         await db.execute(
-                            "UPDATE measurement_slots SET label = $1, enabled = TRUE, category_id = $2, sort_order = $3 WHERE id = $4",
-                            cfg["label"], cfg.get("category_id"), i, slot_id,
+                            "UPDATE metric_slots SET enabled = TRUE, category_id = $1, sort_order = $2 WHERE metric_id = $3 AND slot_id = $4",
+                            cfg.get("category_id"), i, metric_id, sid,
                         )
-                        seen_ids.add(slot_id)
                     else:
                         await db.execute(
-                            "INSERT INTO measurement_slots (metric_id, sort_order, label, category_id) VALUES ($1, $2, $3, $4)",
-                            metric_id, i, cfg["label"], cfg.get("category_id"),
+                            "INSERT INTO metric_slots (metric_id, slot_id, sort_order, category_id) VALUES ($1, $2, $3, $4)",
+                            metric_id, sid, i, cfg.get("category_id"),
                         )
                 # Disable slots not mentioned in new list
                 for s in existing_slots:
-                    if s["id"] not in seen_ids:
+                    if s["slot_id"] not in seen_slot_ids:
                         await db.execute(
-                            "UPDATE measurement_slots SET enabled = FALSE WHERE id = $1",
-                            s["id"],
+                            "UPDATE metric_slots SET enabled = FALSE WHERE metric_id = $1 AND slot_id = $2",
+                            metric_id, s["slot_id"],
                         )
 
             # Defensive rule: clear metric category_id — category now on slots

@@ -21,6 +21,21 @@ class MeasurementSlotOut(BaseModel):
     category_id: int | None = None
 
 
+class SlotCreate(BaseModel):
+    label: str
+
+
+class SlotUpdate(BaseModel):
+    label: str | None = None
+
+
+class SlotOut(BaseModel):
+    id: int
+    label: str
+    sort_order: int
+    usage_count: int = 0
+
+
 class CategoryCreate(BaseModel):
     name: str
     parent_id: int | None = None
@@ -52,8 +67,7 @@ class MetricDefinitionCreate(BaseModel):
     scale_min: int | None = None
     scale_max: int | None = None
     scale_step: int | None = None
-    slot_labels: list[str] | None = None
-    slot_configs: list[dict] | None = None  # [{label: str, category_id: int | None}]
+    slot_configs: list[dict] | None = None  # [{slot_id: int, category_id: int | None}]
     formula: list[dict] | None = None
     result_type: str | None = None
     provider: str | None = None
@@ -79,8 +93,7 @@ class MetricDefinitionUpdate(BaseModel):
     scale_min: int | None = None
     scale_max: int | None = None
     scale_step: int | None = None
-    slot_labels: list[str] | None = None
-    slot_configs: list[dict] | None = None  # [{label: str, category_id: int | None}]
+    slot_configs: list[dict] | None = None  # [{slot_id: int, category_id: int | None}]
     formula: list[dict] | None = None
     result_type: str | None = None
     enum_options: list[dict] | None = None  # [{id?: int, label: str}]

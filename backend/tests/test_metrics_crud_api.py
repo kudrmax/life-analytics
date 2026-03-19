@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, register_user, create_metric, create_entry
+from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_slot
 
 
 # ── Create ────────────────────────────────────────────────────────────
@@ -181,15 +181,17 @@ class TestCreateWithCustomSlug:
 class TestCreateWithSlots:
     """POST /api/metrics — with measurement slots."""
 
-    async def test_create_with_slot_labels(
+    async def test_create_with_slot_configs(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
+        slot_am = await create_slot(client, user_a["token"], "AM")
+        slot_pm = await create_slot(client, user_a["token"], "PM")
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "Pressure",
                 "type": "number",
-                "slot_labels": ["AM", "PM"],
+                "slot_configs": [{"slot_id": slot_am["id"]}, {"slot_id": slot_pm["id"]}],
             },
             headers=auth_headers(user_a["token"]),
         )
@@ -947,9 +949,11 @@ class TestPatchSlotLabelsFirstTime:
             client, user_a["token"], metric["id"], entry_date, 42,
         )
 
+        slot_m = await create_slot(client, user_a["token"], "Morning")
+        slot_e = await create_slot(client, user_a["token"], "Evening")
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
-            json={"slot_labels": ["Morning", "Evening"]},
+            json={"slot_configs": [{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}]},
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 200
@@ -983,16 +987,23 @@ class TestPatchSlotLabelsUpdate:
     async def test_patch_slot_labels_update(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
+        slot_a = await create_slot(client, user_a["token"], "A")
+        slot_b = await create_slot(client, user_a["token"], "B")
         metric = await create_metric(
             client, user_a["token"],
             name="Slotted", metric_type="number",
-            slot_labels=["A", "B"],
+            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}],
         )
         assert len(metric["slots"]) == 2
 
+        slot_c = await create_slot(client, user_a["token"], "C")
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
-            json={"slot_labels": ["A_new", "B_new", "C"]},
+            json={"slot_configs": [
+                {"slot_id": slot_a["id"]},
+                {"slot_id": slot_b["id"]},
+                {"slot_id": slot_c["id"]},
+            ]},
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 200
@@ -1000,7 +1011,7 @@ class TestPatchSlotLabelsUpdate:
         enabled_slots = [s for s in data["slots"] if s.get("enabled", True)]
         assert len(enabled_slots) == 3
         labels = [s["label"] for s in enabled_slots]
-        assert labels == ["A_new", "B_new", "C"]
+        assert labels == ["A", "B", "C"]
 
 
 class TestPatchSlotLabelsReduceFails:
@@ -1009,15 +1020,17 @@ class TestPatchSlotLabelsReduceFails:
     async def test_patch_slot_labels_reduce_fails(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
+        slot_a = await create_slot(client, user_a["token"], "A")
+        slot_b = await create_slot(client, user_a["token"], "B")
         metric = await create_metric(
             client, user_a["token"],
             name="Reduce Slots", metric_type="number",
-            slot_labels=["A", "B"],
+            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}],
         )
 
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
-            json={"slot_labels": ["A"]},
+            json={"slot_configs": [{"slot_id": slot_a["id"]}]},
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 400
@@ -1029,16 +1042,19 @@ class TestPatchSlotLabelsDisableExtra:
     async def test_patch_slot_labels_disable_extra(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
+        slot_a = await create_slot(client, user_a["token"], "A")
+        slot_b = await create_slot(client, user_a["token"], "B")
+        slot_c = await create_slot(client, user_a["token"], "C")
         metric = await create_metric(
             client, user_a["token"],
             name="Disable Slot", metric_type="number",
-            slot_labels=["A", "B", "C"],
+            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}, {"slot_id": slot_c["id"]}],
         )
         assert len(metric["slots"]) == 3
 
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
-            json={"slot_labels": ["A", "B"]},
+            json={"slot_configs": [{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}]},
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 200
@@ -1130,9 +1146,12 @@ class TestSlotReorderAndAdd:
     async def test_reorder_slots_preserves_entries(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
+        slot_a = await create_slot(client, user_a["token"], "A")
+        slot_b = await create_slot(client, user_a["token"], "B")
         metric = await create_metric(
             client, user_a["token"],
-            name="Reorder", metric_type="number", slot_labels=["A", "B"],
+            name="Reorder", metric_type="number",
+            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}],
         )
         slot_a = metric["slots"][0]
         slot_b = metric["slots"][1]
@@ -1144,8 +1163,8 @@ class TestSlotReorderAndAdd:
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
             json={"slot_configs": [
-                {"id": slot_b["id"], "label": "B"},
-                {"id": slot_a["id"], "label": "A"},
+                {"slot_id": slot_b["id"]},
+                {"slot_id": slot_a["id"]},
             ]},
             headers=auth_headers(user_a["token"]),
         )
@@ -1173,9 +1192,12 @@ class TestSlotReorderAndAdd:
     async def test_add_slot_in_middle_preserves_entries(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
+        slot_a = await create_slot(client, user_a["token"], "A")
+        slot_b = await create_slot(client, user_a["token"], "B")
         metric = await create_metric(
             client, user_a["token"],
-            name="Middle", metric_type="number", slot_labels=["A", "B"],
+            name="Middle", metric_type="number",
+            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}],
         )
         slot_a = metric["slots"][0]
         slot_b = metric["slots"][1]
@@ -1184,12 +1206,13 @@ class TestSlotReorderAndAdd:
         await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 20, slot_id=slot_b["id"])
 
         # Insert new slot in the middle
+        slot_new = await create_slot(client, user_a["token"], "New")
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
             json={"slot_configs": [
-                {"id": slot_a["id"], "label": "A"},
-                {"label": "New"},
-                {"id": slot_b["id"], "label": "B"},
+                {"slot_id": slot_a["id"]},
+                {"slot_id": slot_new["id"]},
+                {"slot_id": slot_b["id"]},
             ]},
             headers=auth_headers(user_a["token"]),
         )
@@ -1217,9 +1240,12 @@ class TestSlotReorderAndAdd:
     async def test_add_slot_at_end(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
+        slot_a = await create_slot(client, user_a["token"], "A")
+        slot_b = await create_slot(client, user_a["token"], "B")
         metric = await create_metric(
             client, user_a["token"],
-            name="End", metric_type="number", slot_labels=["A", "B"],
+            name="End", metric_type="number",
+            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}],
         )
         slot_a = metric["slots"][0]
         slot_b = metric["slots"][1]
@@ -1227,12 +1253,13 @@ class TestSlotReorderAndAdd:
         await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 10, slot_id=slot_a["id"])
         await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 20, slot_id=slot_b["id"])
 
+        slot_c = await create_slot(client, user_a["token"], "C")
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
             json={"slot_configs": [
-                {"id": slot_a["id"], "label": "A"},
-                {"id": slot_b["id"], "label": "B"},
-                {"label": "C"},
+                {"slot_id": slot_a["id"]},
+                {"slot_id": slot_b["id"]},
+                {"slot_id": slot_c["id"]},
             ]},
             headers=auth_headers(user_a["token"]),
         )
@@ -1244,25 +1271,21 @@ class TestSlotReorderAndAdd:
         assert slots[1]["id"] == slot_b["id"]
         assert slots[2]["label"] == "C"
 
-    async def test_slot_id_not_belonging_to_metric_rejected(
-        self, client: AsyncClient, user_a: dict,
+    async def test_other_users_slot_rejected(
+        self, client: AsyncClient, user_a: dict, user_b: dict,
     ) -> None:
-        m1 = await create_metric(
-            client, user_a["token"],
-            name="M1", metric_type="number", slot_labels=["X", "Y"],
-        )
-        m2 = await create_metric(
-            client, user_a["token"],
-            name="M2", metric_type="number", slot_labels=["P", "Q"],
-        )
-        foreign_slot_id = m2["slots"][0]["id"]
-
-        resp = await client.patch(
-            f"/api/metrics/{m1['id']}",
-            json={"slot_configs": [
-                {"id": m1['slots'][0]['id'], "label": "X"},
-                {"id": foreign_slot_id, "label": "Stolen"},
-            ]},
+        """Using another user's slot_id should be rejected."""
+        slot_own = await create_slot(client, user_a["token"], "Own")
+        slot_other = await create_slot(client, user_b["token"], "Other")
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Test", "type": "number",
+                "slot_configs": [
+                    {"slot_id": slot_own["id"]},
+                    {"slot_id": slot_other["id"]},
+                ],
+            },
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 400

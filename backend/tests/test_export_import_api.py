@@ -8,7 +8,7 @@ from io import BytesIO, StringIO
 
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, register_user, create_metric, create_entry
+from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_slot
 
 
 # ---------------------------------------------------------------------------
@@ -532,10 +532,12 @@ class TestExportAdvanced:
     async def test_export_with_slots(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
+        slot_m = await create_slot(client, user_a["token"], "Morning")
+        slot_e = await create_slot(client, user_a["token"], "Evening")
         metric = await create_metric(
             client, user_a["token"],
             name="Mood Slots", metric_type="bool",
-            slot_labels=["Morning", "Evening"],
+            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
         )
         assert len(metric["slots"]) == 2
 
@@ -884,24 +886,17 @@ class TestRoundTripSlotsWithCategories:
         cat_morning = await _create_category(client, user_a["token"], "Morning Routine")
         cat_evening = await _create_category(client, user_a["token"], "Evening Routine")
 
-        # Create metric with slot_labels
+        # Create global slots, then metric with slot_configs
+        slot_m = await create_slot(client, user_a["token"], "Morning")
+        slot_e = await create_slot(client, user_a["token"], "Evening")
         metric = await create_metric(
             client, user_a["token"], name="Mood Slotted", metric_type="bool",
-            slug="mood_slotted", slot_labels=["Morning", "Evening"],
+            slug="mood_slotted",
+            slot_configs=[
+                {"slot_id": slot_m["id"], "category_id": cat_morning["id"]},
+                {"slot_id": slot_e["id"], "category_id": cat_evening["id"]},
+            ],
         )
-
-        # PATCH to set slot_configs with different category_ids
-        resp = await client.patch(
-            f"/api/metrics/{metric['id']}",
-            json={
-                "slot_configs": [
-                    {"label": "Morning", "category_id": cat_morning["id"]},
-                    {"label": "Evening", "category_id": cat_evening["id"]},
-                ],
-            },
-            headers=auth_headers(user_a["token"]),
-        )
-        assert resp.status_code == 200
 
         # Export user_a
         export_resp = await client.get(
@@ -1776,9 +1771,13 @@ class TestImportSlotsHelper:
         self, client: AsyncClient, user_a: dict, db_pool,
     ) -> None:
         """Existing slots (A,B,C) re-imported with (X,Y) updates first 2, disables third."""
+        slot_a = await create_slot(client, user_a["token"], "A")
+        slot_b = await create_slot(client, user_a["token"], "B")
+        slot_c = await create_slot(client, user_a["token"], "C")
         metric = await create_metric(
             client, user_a["token"], name="Slot H", metric_type="bool",
-            slug="slot_h", slot_labels=["A", "B", "C"],
+            slug="slot_h",
+            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}, {"slot_id": slot_c["id"]}],
         )
 
         # Import with 2 slots
@@ -1799,7 +1798,10 @@ class TestImportSlotsHelper:
 
         async with db_pool.acquire() as conn:
             slots = await conn.fetch(
-                "SELECT label, sort_order, enabled FROM measurement_slots WHERE metric_id = $1 ORDER BY sort_order",
+                """SELECT ms.label, msl.sort_order, msl.enabled
+                   FROM metric_slots msl
+                   JOIN measurement_slots ms ON ms.id = msl.slot_id
+                   WHERE msl.metric_id = $1 ORDER BY msl.sort_order""",
                 metric["id"],
             )
         assert len(slots) == 3
@@ -1814,14 +1816,16 @@ class TestImportSlotsHelper:
         self, client: AsyncClient, user_a: dict, db_pool,
     ) -> None:
         """Importing slots with category_path sets metric.category_id = NULL (line 848)."""
-        # Create a category and metric with that category
+        # Create a category, global slots, and metric with that category
         cat = await _create_category(client, user_a["token"], "SomeCat")
+        slot_s1 = await create_slot(client, user_a["token"], "S1")
+        slot_s2 = await create_slot(client, user_a["token"], "S2")
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "CatSlot", "type": "bool", "slug": "cat_slot",
                 "category_id": cat["id"],
-                "slot_labels": ["S1", "S2"],
+                "slot_configs": [{"slot_id": slot_s1["id"]}, {"slot_id": slot_s2["id"]}],
             },
             headers=auth_headers(user_a["token"]),
         )
@@ -2666,9 +2670,12 @@ class TestExportSlotEntries:
         self, client: AsyncClient, user_a: dict,
     ) -> None:
         """Entries for slotted metric include slot_sort_order and slot_label."""
+        slot_m = await create_slot(client, user_a["token"], "Morning")
+        slot_e = await create_slot(client, user_a["token"], "Evening")
         metric = await create_metric(
             client, user_a["token"], name="Slot Entry", metric_type="bool",
-            slug="slot_entry", slot_labels=["Morning", "Evening"],
+            slug="slot_entry",
+            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
         )
         # Create entries for each slot
         slots = metric["slots"]

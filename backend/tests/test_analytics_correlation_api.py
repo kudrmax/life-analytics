@@ -11,7 +11,7 @@ import asyncio
 
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, register_user, create_metric, create_entry
+from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_slot
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +43,7 @@ async def _wait_for_report_done(
 
     Returns the full response body {"running": ..., "report": ...}.
     """
+    data = {}
     for _ in range(max_wait):
         resp = await client.get(
             "/api/analytics/correlation-report",
@@ -52,7 +53,16 @@ async def _wait_for_report_done(
         if data.get("report") is not None and data["report"]["status"] == "done":
             return data
         if data.get("running") is None and data.get("report") is None:
-            # No running and no done — something went wrong fast
+            # No running and no done — report may have errored.
+            # Wait a bit more before giving up, background task may still be finishing.
+            await asyncio.sleep(0.3)
+            resp2 = await client.get(
+                "/api/analytics/correlation-report",
+                headers=auth_headers(token),
+            )
+            data = resp2.json()
+            if data.get("report") is not None:
+                return data
             return data
         await asyncio.sleep(0.15)
     return data
@@ -1223,10 +1233,12 @@ class TestCorrelationMultiSlot:
         """Metric with 2 slots creates aggregate + per-slot sources."""
         token = user_a["token"]
 
+        slot_m = await create_slot(client, token, "Morning")
+        slot_e = await create_slot(client, token, "Evening")
         metric = await create_metric(
             client, token, name="MultiSlotCorr", metric_type="number",
             slug="mslot_corr",
-            slot_labels=["Morning", "Evening"],
+            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
         )
         mid = metric["id"]
         slots = metric["slots"]

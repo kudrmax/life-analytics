@@ -244,6 +244,151 @@ MIGRATIONS = [
     (12, "add_quality_issue_to_correlation_pairs", """
         ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS quality_issue VARCHAR(30);
     """),
+    (13, "global_measurement_slots", """
+        -- 1. Add user_id column to measurement_slots (nullable initially)
+        ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+
+        -- 2. Populate user_id from metric_definitions
+        UPDATE measurement_slots ms
+        SET user_id = md.user_id
+        FROM metric_definitions md
+        WHERE ms.metric_id = md.id AND ms.user_id IS NULL;
+
+        -- 3. Create metric_slots junction table
+        CREATE TABLE IF NOT EXISTS metric_slots (
+            id SERIAL PRIMARY KEY,
+            metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            slot_id INTEGER NOT NULL REFERENCES measurement_slots(id) ON DELETE RESTRICT,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+            UNIQUE(metric_id, slot_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_metric_slots_metric ON metric_slots(metric_id);
+        CREATE INDEX IF NOT EXISTS idx_metric_slots_slot ON metric_slots(slot_id);
+
+        -- 4. Populate metric_slots from current measurement_slots (only if metric_id column exists)
+        DO $populate$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'measurement_slots' AND column_name = 'metric_id'
+            ) THEN
+                INSERT INTO metric_slots (metric_id, slot_id, sort_order, enabled, category_id)
+                SELECT ms.metric_id, ms.id, ms.sort_order,
+                       COALESCE(ms.enabled, TRUE),
+                       ms.category_id
+                FROM measurement_slots ms
+                WHERE ms.metric_id IS NOT NULL
+                ON CONFLICT (metric_id, slot_id) DO NOTHING;
+            END IF;
+        END $populate$;
+
+        -- 5. Merge duplicate slots per user (same label, case-insensitive)
+        DO $merge$
+        DECLARE
+            _uid INTEGER;
+            _label TEXT;
+            _canonical_id INTEGER;
+            _dup_id INTEGER;
+            _dup_metric INTEGER;
+            _dup_sort INTEGER;
+            _dup_enabled BOOLEAN;
+            _dup_cat INTEGER;
+        BEGIN
+            -- Only run if metric_id column still exists (first time migration)
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'measurement_slots' AND column_name = 'metric_id'
+            ) THEN
+                RETURN;
+            END IF;
+
+            FOR _uid, _label IN
+                SELECT ms.user_id, LOWER(TRIM(ms.label))
+                FROM measurement_slots ms
+                WHERE ms.user_id IS NOT NULL
+                GROUP BY ms.user_id, LOWER(TRIM(ms.label))
+                HAVING COUNT(*) > 1
+            LOOP
+                -- Pick canonical = lowest id
+                SELECT id INTO _canonical_id
+                FROM measurement_slots
+                WHERE user_id = _uid AND LOWER(TRIM(label)) = _label
+                ORDER BY id
+                LIMIT 1;
+
+                -- Process each duplicate (non-canonical)
+                FOR _dup_id, _dup_metric, _dup_sort, _dup_enabled, _dup_cat IN
+                    SELECT ms.id, msl.metric_id, msl.sort_order, msl.enabled, msl.category_id
+                    FROM measurement_slots ms
+                    JOIN metric_slots msl ON msl.slot_id = ms.id
+                    WHERE ms.user_id = _uid
+                      AND LOWER(TRIM(ms.label)) = _label
+                      AND ms.id != _canonical_id
+                LOOP
+                    -- Check if (metric_id, canonical) already exists in metric_slots
+                    IF EXISTS (
+                        SELECT 1 FROM metric_slots
+                        WHERE metric_id = _dup_metric AND slot_id = _canonical_id
+                    ) THEN
+                        -- Duplicate junction row — just delete the old one
+                        DELETE FROM metric_slots WHERE metric_id = _dup_metric AND slot_id = _dup_id;
+                    ELSE
+                        -- Repoint metric_slots to canonical
+                        UPDATE metric_slots
+                        SET slot_id = _canonical_id
+                        WHERE metric_id = _dup_metric AND slot_id = _dup_id;
+                    END IF;
+
+                    -- Handle entries: resolve unique conflicts before repointing
+                    -- Delete duplicate entries that would conflict
+                    DELETE FROM entries e1
+                    USING entries e2
+                    WHERE e1.slot_id = _dup_id
+                      AND e2.slot_id = _canonical_id
+                      AND e1.metric_id = e2.metric_id
+                      AND e1.user_id = e2.user_id
+                      AND e1.date = e2.date
+                      AND e1.id != e2.id;
+
+                    -- Repoint remaining entries
+                    UPDATE entries SET slot_id = _canonical_id WHERE slot_id = _dup_id;
+                END LOOP;
+
+                -- Delete orphaned non-canonical slots (no metric_slots or entries referencing them)
+                DELETE FROM measurement_slots ms
+                WHERE ms.user_id = _uid
+                  AND LOWER(TRIM(ms.label)) = _label
+                  AND ms.id != _canonical_id
+                  AND NOT EXISTS (SELECT 1 FROM metric_slots WHERE slot_id = ms.id)
+                  AND NOT EXISTS (SELECT 1 FROM entries WHERE slot_id = ms.id);
+            END LOOP;
+        END $merge$;
+
+        -- 6. Delete correlation data (will be recomputed)
+        DELETE FROM correlation_pairs;
+        DELETE FROM correlation_reports;
+
+        -- 7. Drop old columns from measurement_slots
+        ALTER TABLE measurement_slots DROP COLUMN IF EXISTS metric_id;
+        ALTER TABLE measurement_slots DROP COLUMN IF EXISTS enabled;
+        ALTER TABLE measurement_slots DROP COLUMN IF EXISTS category_id;
+
+        -- 8. Make user_id NOT NULL
+        DO $notnull$
+        BEGIN
+            -- Delete orphaned slots without user_id (shouldn't happen but safety)
+            DELETE FROM measurement_slots WHERE user_id IS NULL;
+            ALTER TABLE measurement_slots ALTER COLUMN user_id SET NOT NULL;
+        EXCEPTION WHEN others THEN NULL;
+        END $notnull$;
+
+        -- 9. Create unique index on (user_id, LOWER(label))
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_measurement_slots_user_label
+            ON measurement_slots(user_id, LOWER(label));
+    """),
 ]
 
 

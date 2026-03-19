@@ -71,13 +71,14 @@ async def get_metric_slots(
     metric_ids: list[int],
     enabled_only: bool = True,
 ) -> dict[int, list]:
-    """Return {metric_id: [{id, label, sort_order}, ...]}."""
-    condition = "AND ms.enabled = TRUE" if enabled_only else ""
+    """Return {metric_id: [{id, label, sort_order, category_id}, ...]}."""
+    condition = "AND msl.enabled = TRUE" if enabled_only else ""
     rows = await conn.fetch(
-        f"""SELECT ms.id, ms.metric_id, ms.label, ms.sort_order, ms.category_id
-            FROM measurement_slots ms
-            WHERE ms.metric_id = ANY($1) {condition}
-            ORDER BY ms.metric_id, ms.sort_order""",
+        f"""SELECT msl.metric_id, ms.id, ms.label, msl.sort_order, msl.category_id
+            FROM metric_slots msl
+            JOIN measurement_slots ms ON ms.id = msl.slot_id
+            WHERE msl.metric_id = ANY($1) {condition}
+            ORDER BY msl.metric_id, msl.sort_order""",
         metric_ids,
     )
     result: dict[int, list] = defaultdict(list)

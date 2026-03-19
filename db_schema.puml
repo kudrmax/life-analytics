@@ -75,11 +75,23 @@ entity "entries" as entries {
 entity "measurement_slots" as slots {
     * **id** : SERIAL <<PK>>
     --
-    * metric_id : INTEGER <<FK>>
-    * sort_order : INTEGER
+    * user_id : INTEGER <<FK>>
     * label : VARCHAR(100)
+    * sort_order : INTEGER
+    --
+    <<UNIQUE INDEX>> (user_id, LOWER(label))
+}
+
+entity "metric_slots" as mslots {
+    * **id** : SERIAL <<PK>>
+    --
+    * metric_id : INTEGER <<FK>>
+    * slot_id : INTEGER <<FK>>
+    * sort_order : INTEGER
     * enabled : BOOLEAN
     category_id : INTEGER <<FK>>
+    --
+    <<UNIQUE>> (metric_id, slot_id)
 }
 
 entity "values_bool" as vb {
@@ -341,10 +353,12 @@ users ||--o{ ins : "user_id"
 
 cat ||--o{ cat : "parent_id"
 cat ||--o{ md : "category_id"
-cat ||--o{ slots : "category_id"
+cat ||--o{ mslots : "category_id"
+
+users ||--o{ slots : "user_id"
 
 md ||--o{ entries : "metric_id"
-md ||--o{ slots : "metric_id"
+md ||--o{ mslots : "metric_id"
 md ||--o| sc : "metric_id"
 md ||--o| cc : "metric_id"
 md ||--o| ic : "metric_id"
@@ -359,6 +373,7 @@ md ||--o| mcond : "metric_id"
 md ||--o{ mcond : "depends_on_metric_id"
 
 slots ||--o{ entries : "slot_id"
+slots ||--o{ mslots : "slot_id"
 
 entries ||--o| vb : "entry_id"
 entries ||--o| vt : "entry_id"

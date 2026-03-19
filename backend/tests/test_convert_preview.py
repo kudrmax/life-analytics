@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, create_entry, create_metric, register_user
+from tests.conftest import auth_headers, create_entry, create_metric, create_slot, register_user
 
 
 class TestPreviewBoolMetric:
@@ -249,10 +249,12 @@ class TestPreviewEdgeCases:
     ):
         """Bool metric with slots — preview aggregates all slots."""
         token = user_a["token"]
+        slot_u = await create_slot(client, token, "Утро")
+        slot_v = await create_slot(client, token, "Вечер")
         metric = await create_metric(
             client, token,
             name="Bool Slots Prev", metric_type="bool",
-            slot_labels=["Утро", "Вечер"],
+            slot_configs=[{"slot_id": slot_u["id"]}, {"slot_id": slot_v["id"]}],
         )
         mid = metric["id"]
         slots = metric["slots"]

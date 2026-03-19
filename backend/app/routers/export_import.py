@@ -49,12 +49,14 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
             current_user["id"],
         )
 
-        # Get slots for all metrics (with category_id)
+        # Get slots for all metrics (with category_id from junction table)
         metric_ids = [m["id"] for m in metrics]
         all_slots_rows = await db.fetch(
-            """SELECT metric_id, label, sort_order, category_id FROM measurement_slots
-               WHERE metric_id = ANY($1) AND enabled = TRUE
-               ORDER BY metric_id, sort_order""",
+            """SELECT msl.metric_id, ms.label, msl.sort_order, msl.category_id
+               FROM metric_slots msl
+               JOIN measurement_slots ms ON ms.id = msl.slot_id
+               WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE
+               ORDER BY msl.metric_id, msl.sort_order""",
             metric_ids,
         ) if metric_ids else []
 
@@ -458,7 +460,7 @@ async def import_data(
                             await _import_enum_options(db, existing["id"], csv_enum_options)
                         # Import slots if provided
                         if len(csv_slot_configs) >= 2:
-                            await _import_slots(db, existing["id"], csv_slot_configs)
+                            await _import_slots(db, existing["id"], csv_slot_configs, current_user["id"])
                         metrics_updated += 1
                     else:
                         new_id = await db.fetchval(
@@ -507,9 +509,10 @@ async def import_data(
                         # Create slots if provided
                         if len(csv_slot_configs) >= 2:
                             for i, cfg in enumerate(csv_slot_configs):
+                                slot_id = await _find_or_create_slot(db, current_user["id"], cfg["label"])
                                 await db.execute(
-                                    "INSERT INTO measurement_slots (metric_id, sort_order, label, category_id) VALUES ($1, $2, $3, $4)",
-                                    new_id, i, cfg["label"], cfg.get("category_id"),
+                                    "INSERT INTO metric_slots (metric_id, slot_id, sort_order, category_id) VALUES ($1, $2, $3, $4)",
+                                    new_id, slot_id, i, cfg.get("category_id"),
                                 )
                         metrics_imported += 1
 
@@ -603,8 +606,10 @@ async def import_data(
             # Build metric_id -> {sort_order: slot_id} lookup
             all_metric_ids = list(slug_to_id.values())
             slot_rows = await db.fetch(
-                """SELECT id, metric_id, sort_order FROM measurement_slots
-                   WHERE metric_id = ANY($1)""",
+                """SELECT msl.metric_id, msl.sort_order, ms.id
+                   FROM metric_slots msl
+                   JOIN measurement_slots ms ON ms.id = msl.slot_id
+                   WHERE msl.metric_id = ANY($1)""",
                 all_metric_ids,
             ) if all_metric_ids else []
             slot_lookup: dict[int, dict[int, int]] = defaultdict(dict)
@@ -641,9 +646,10 @@ async def import_data(
                             else:
                                 # Create slot on the fly
                                 csv_slot_label = row.get('slot_label', '')
-                                new_slot_id = await db.fetchval(
-                                    "INSERT INTO measurement_slots (metric_id, sort_order, label) VALUES ($1, $2, $3) RETURNING id",
-                                    metric_id, so, csv_slot_label or '',
+                                new_slot_id = await _find_or_create_slot(db, current_user["id"], csv_slot_label or f'Slot {so}')
+                                await db.execute(
+                                    "INSERT INTO metric_slots (metric_id, slot_id, sort_order) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+                                    metric_id, new_slot_id, so,
                                 )
                                 slot_lookup[metric_id][so] = new_slot_id
                                 slot_id = new_slot_id
@@ -815,33 +821,56 @@ async def _import_enum_options(db, metric_id: int, labels: list[str]):
             )
 
 
-async def _import_slots(db, metric_id: int, configs: list[dict]):
-    """Create or update slots during import (same logic as update_metric).
+async def _find_or_create_slot(db, user_id: int, label: str) -> int:
+    """Find existing global slot by label or create a new one. Return slot id."""
+    existing = await db.fetchrow(
+        "SELECT id FROM measurement_slots WHERE user_id = $1 AND LOWER(label) = LOWER($2)",
+        user_id, label.strip(),
+    )
+    if existing:
+        return existing["id"]
+    max_order = await db.fetchval(
+        "SELECT COALESCE(MAX(sort_order), -1) FROM measurement_slots WHERE user_id = $1",
+        user_id,
+    )
+    return await db.fetchval(
+        "INSERT INTO measurement_slots (user_id, label, sort_order) VALUES ($1, $2, $3) RETURNING id",
+        user_id, label.strip(), max_order + 1,
+    )
+
+
+async def _import_slots(db, metric_id: int, configs: list[dict], user_id: int):
+    """Create or update metric slot bindings during import.
 
     configs: list of {label: str, category_id: int | None}
     """
     existing_slots = await db.fetch(
-        "SELECT * FROM measurement_slots WHERE metric_id = $1 ORDER BY sort_order",
+        "SELECT * FROM metric_slots WHERE metric_id = $1 ORDER BY sort_order",
         metric_id,
     )
+    existing_by_sort = {s["sort_order"]: s for s in existing_slots}
+
     for i, cfg in enumerate(configs):
         label = cfg["label"] if isinstance(cfg, dict) else cfg
         cat_id = cfg.get("category_id") if isinstance(cfg, dict) else None
-        matching = [s for s in existing_slots if s["sort_order"] == i]
-        if matching:
+        slot_id = await _find_or_create_slot(db, user_id, label)
+
+        if i in existing_by_sort:
+            # Update existing junction row
             await db.execute(
-                "UPDATE measurement_slots SET label = $1, enabled = TRUE, category_id = $2 WHERE id = $3",
-                label, cat_id, matching[0]["id"],
+                "UPDATE metric_slots SET slot_id = $1, enabled = TRUE, category_id = $2 WHERE id = $3",
+                slot_id, cat_id, existing_by_sort[i]["id"],
             )
         else:
             await db.execute(
-                "INSERT INTO measurement_slots (metric_id, sort_order, label, category_id) VALUES ($1, $2, $3, $4)",
-                metric_id, i, label, cat_id,
+                "INSERT INTO metric_slots (metric_id, slot_id, sort_order, category_id) VALUES ($1, $2, $3, $4) ON CONFLICT (metric_id, slot_id) DO UPDATE SET enabled = TRUE, sort_order = EXCLUDED.sort_order, category_id = EXCLUDED.category_id",
+                metric_id, slot_id, i, cat_id,
             )
+
     for s in existing_slots:
         if s["sort_order"] >= len(configs):
             await db.execute(
-                "UPDATE measurement_slots SET enabled = FALSE WHERE id = $1",
+                "UPDATE metric_slots SET enabled = FALSE WHERE id = $1",
                 s["id"],
             )
     # Defensive rule: clear metric category_id when slots have categories

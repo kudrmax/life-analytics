@@ -772,12 +772,12 @@ class TestGetMetricSlots:
 
     @pytest.mark.asyncio
     async def test_enabled_only_true(self) -> None:
-        """enabled_only=True adds AND ms.enabled = TRUE condition."""
+        """enabled_only=True adds AND msl.enabled = TRUE condition."""
         conn = AsyncMock()
         conn.fetch.return_value = []
         await get_metric_slots(conn, metric_ids=[1], enabled_only=True)
         query = conn.fetch.call_args[0][0]
-        assert "AND ms.enabled = TRUE" in query
+        assert "AND msl.enabled = TRUE" in query
 
     @pytest.mark.asyncio
     async def test_enabled_only_false(self) -> None:
@@ -786,7 +786,7 @@ class TestGetMetricSlots:
         conn.fetch.return_value = []
         await get_metric_slots(conn, metric_ids=[1], enabled_only=False)
         query = conn.fetch.call_args[0][0]
-        assert "AND ms.enabled = TRUE" not in query
+        assert "AND msl.enabled = TRUE" not in query
 
 
 # ===================================================================

@@ -57,7 +57,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 ### Structure
 
 - Tests live in `backend/tests/`
-- `conftest.py`: session-scoped DB pool, autouse cleanup, helpers (`register_user`, `create_metric`, `create_entry`, `auth_headers`)
+- `conftest.py`: session-scoped DB pool, autouse cleanup, helpers (`register_user`, `create_metric`, `create_slot`, `create_entry`, `auth_headers`)
 - Naming: `test_{module}_{type}.py` (e.g. `test_auth_api.py`, `test_auth_unit.py`, `test_aw_service_unit.py`)
 
 ### Test types
@@ -97,7 +97,7 @@ Define expected results from business logic understanding first, then write the 
 - `source_key.py` — `SourceKey` dataclass + `AutoSourceType` enum for deterministic identification of correlation data sources; format: `metric:{id}[:enum_opt:{oid}][:slot:{sid}]` or `auto:{type}[:metric:{id}]`
 - `correlation_blacklist.py` — `should_skip_pair(a: SourceKey, b: SourceKey)` rules for filtering meaningless correlation pairs
 
-**Routers** (all under `/api/`): `auth`, `metrics`, `entries`, `daily`, `analytics`, `export_import`, `integrations`, `categories`, `notes`, `insights`
+**Routers** (all under `/api/`): `auth`, `metrics`, `entries`, `daily`, `analytics`, `export_import`, `integrations`, `categories`, `slots`, `notes`, `insights`
 
 ### Database Schema (PostgreSQL)
 
@@ -107,7 +107,8 @@ Define expected results from business logic understanding first, then write the 
 - `users` — id, username (unique), password_hash, created_at, privacy_mode (BOOLEAN)
 - `categories` — id, user_id (FK), name, parent_id (FK, nullable, self-ref for 2-level hierarchy), sort_order; partial unique indexes on (user_id, name) for top-level and (user_id, name, parent_id) for children
 - `metric_definitions` — id, user_id (FK), slug, name, category_id (FK to categories, nullable), icon, type (enum), enabled, sort_order, private (BOOLEAN); UNIQUE(user_id, slug)
-- `measurement_slots` — id, metric_id (FK), sort_order, label, enabled, category_id (FK to categories, nullable) (for multi-slot metrics like Утро/День/Вечер)
+- `measurement_slots` — id, user_id (FK), label, sort_order (global per-user slot definitions, shared across metrics); UNIQUE INDEX on (user_id, LOWER(label))
+- `metric_slots` — id, metric_id (FK), slot_id (FK to measurement_slots, ON DELETE RESTRICT), sort_order, enabled, category_id (FK to categories, nullable); UNIQUE(metric_id, slot_id) (junction table linking metrics to slots)
 - `entries` — id, metric_id (FK), user_id (FK), date, recorded_at, slot_id (FK, nullable)
 - `values_bool` — entry_id (PK/FK), value BOOLEAN
 - `values_time` — entry_id (PK/FK), value TIMESTAMPTZ
@@ -143,7 +144,7 @@ Define expected results from business logic understanding first, then write the 
 
 **Scale context pattern:** `scale_config` stores the current min/max/step for rendering buttons. `values_scale` stores the min/max/step that were active when each entry was created. When displaying a filled entry, use context from `values_scale` (not current config) so old entries render correctly even after config changes. Analytics normalizes scale values to percentages using the per-entry context.
 
-**Multi-slot pattern:** A metric can have 2+ measurement slots (e.g. Утро, День, Вечер). `measurement_slots` stores slot definitions per metric. `entries.slot_id` links an entry to a specific slot. Daily endpoint aggregates multi-slot data, showing each slot's value separately. Slots can have their own `category_id` — for multi-slot metrics, category lives on slots (not on metric_definitions).
+**Multi-slot pattern:** Slots are global per-user entities (like categories). `measurement_slots` stores slot definitions (e.g. "Утро", "День", "Вечер") per user. `metric_slots` is a junction table linking metrics to slots with per-metric sort_order, enabled flag, and category_id. `entries.slot_id` links an entry to a specific slot. Daily endpoint aggregates multi-slot data, showing each slot's value separately. Slots can have their own `category_id` in the junction table — for multi-slot metrics, category lives on metric_slots (not on metric_definitions). Slots cannot be deleted while linked to any metric (ON DELETE RESTRICT). UI: "Время замера" management page in settings.
 
 **Enum pattern:** Enum metrics have a set of named options (`enum_options`). User selects one or multiple options (controlled by `multi_select` in `enum_config`). Values stored as `INTEGER[]` of option IDs in `values_enum`. Options support soft-delete via `enabled` flag. In correlations, each enum option becomes a separate boolean source (1.0 if selected, 0.0 if not).
 
@@ -165,7 +166,7 @@ Define expected results from business logic understanding first, then write the 
 - `js/app.js` — all page logic: routing, rendering, event handling
 - `css/style.css` — dark/light theme via CSS custom properties
 
-**Navigation:** Сегодня, Статистика, Анализ, Выводы, История, Настройки.
+**Navigation:** Сегодня, Статистика, Анализ, Выводы, История, Настройки. Sub-pages: Категории, Время замера (from Настройки).
 
 **Routing:** `navigateTo(page, params = {})` — поддерживает параметры (e.g. `{ metricId }`, `{ openAddModal: true }`).
 

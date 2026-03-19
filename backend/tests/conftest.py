@@ -52,24 +52,11 @@ async def db_pool() -> AsyncGenerator[asyncpg.Pool, None]:
         min_size=2, max_size=10,
     )
 
-    # Initialise schema (creates full current DDL) and mark all migrations
-    # as applied — init_db_schema already produces the final schema, so
-    # evolutionary migrations must not re-run on a clean DB.
+    # Initialise schema + run all migrations — same code path as production.
     async with pool.acquire() as conn:
         await _init_db_schema(conn)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS schema_migrations (
-                version INTEGER PRIMARY KEY,
-                description TEXT NOT NULL,
-                applied_at TIMESTAMPTZ DEFAULT now()
-            )
-        """)
-        from app.migrations import MIGRATIONS
-        for version, description, _ in MIGRATIONS:
-            await conn.execute(
-                "INSERT INTO schema_migrations (version, description) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-                version, description,
-            )
+    from app.migrations import run_migrations
+    await run_migrations(pool)
 
     yield pool
 
@@ -129,6 +116,7 @@ _CLEANUP_TABLES = [
     "integration_filter_config", "integration_query_config",
     "integration_app_config", "integration_category_config",
     "integration_config",
+    "metric_slots",
     "measurement_slots",
     "metric_definitions",
     "categories",
@@ -157,6 +145,8 @@ async def cleanup(db_pool: asyncpg.Pool):
         except Exception:
             break
         await asyncio.sleep(0.1)
+    # Extra delay to let background tasks finish any post-status-update work
+    await asyncio.sleep(0.05)
     for attempt in range(3):
         try:
             async with db_pool.acquire() as conn:
@@ -200,7 +190,7 @@ async def create_metric(
     scale_min: int | None = None,
     scale_max: int | None = None,
     scale_step: int | None = None,
-    slot_labels: list[str] | None = None,
+    slot_configs: list[dict] | None = None,
 ) -> dict:
     """Create a metric via API, return full response dict."""
     payload: dict = {"name": name, "type": metric_type}
@@ -212,9 +202,20 @@ async def create_metric(
         payload["scale_max"] = scale_max
     if scale_step is not None:
         payload["scale_step"] = scale_step
-    if slot_labels is not None:
-        payload["slot_labels"] = slot_labels
+    if slot_configs is not None:
+        payload["slot_configs"] = slot_configs
     resp = await client.post("/api/metrics", json=payload, headers=auth_headers(token))
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def create_slot(
+    client: AsyncClient,
+    token: str,
+    label: str,
+) -> dict:
+    """Create a global slot via API, return full response dict."""
+    resp = await client.post("/api/slots", json={"label": label}, headers=auth_headers(token))
     assert resp.status_code == 201, resp.text
     return resp.json()
 

@@ -329,6 +329,31 @@ const api = {
         return result;
     },
 
+    // Slots (Время замера)
+    getSlots() {
+        return this.cachedGet('/api/slots');
+    },
+    async createSlot(data) {
+        const result = await this.request('POST', '/api/slots', data);
+        invalidateCache('/api/slots');
+        return result;
+    },
+    async updateSlot(id, data) {
+        const result = await this.request('PATCH', `/api/slots/${id}`, data);
+        invalidateCache('/api/slots');
+        return result;
+    },
+    async deleteSlot(id) {
+        const result = await this.request('DELETE', `/api/slots/${id}`);
+        invalidateCache('/api/slots', '/api/metrics', '/api/daily/');
+        return result;
+    },
+    async reorderSlots(items) {
+        const result = await this.request('POST', '/api/slots/reorder', items);
+        invalidateCache('/api/slots');
+        return result;
+    },
+
     // Categories
     getCategories() {
         return this.cachedGet('/api/categories');

@@ -95,12 +95,17 @@ async def _init_db_schema(conn):
     """)
 
     # Metric definitions
+    # NOTE: category and fill_time columns exist here for migration 3 compatibility.
+    # On fresh DB, init_db creates them; migration 3 drops them after data migration.
+    # On existing DB, CREATE TABLE IF NOT EXISTS is a no-op.
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS metric_definitions (
             id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             slug VARCHAR(100) NOT NULL,
             name VARCHAR(200) NOT NULL,
+            category VARCHAR(100) NOT NULL DEFAULT '',
+            fill_time VARCHAR(100) NOT NULL DEFAULT '',
             category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
             type metric_type NOT NULL,
             enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -167,22 +172,56 @@ async def _init_db_schema(conn):
         )
     """)
 
-    # Measurement slots (multi-slot per metric per day)
+    # Measurement slots — legacy DDL for existing DBs (migration 13 converts to new schema)
+    # For fresh installs, migration 13 is a no-op since init_db + migration marks cover it.
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS measurement_slots (
             id SERIAL PRIMARY KEY,
-            metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            metric_id INTEGER REFERENCES metric_definitions(id) ON DELETE CASCADE,
             sort_order INTEGER NOT NULL DEFAULT 0,
             label VARCHAR(100) NOT NULL DEFAULT '',
             enabled BOOLEAN NOT NULL DEFAULT TRUE,
             category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL
         )
     """)
-
-    # Add category_id column to measurement_slots (for existing DBs)
+    # After migration 13, measurement_slots has (id, user_id, label, sort_order).
+    # Add user_id column for pre-migration DBs so metric_slots FK works:
     await conn.execute("""
         ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS
-            category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
+    """)
+
+    # Create unique index only if user_id column is NOT NULL (post-migration 13)
+    await conn.execute("""
+        DO $$ BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'measurement_slots' AND column_name = 'user_id'
+                  AND is_nullable = 'NO'
+            ) THEN
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_measurement_slots_user_label
+                    ON measurement_slots(user_id, LOWER(label));
+            END IF;
+        END $$
+    """)
+
+    # Junction table: metric <-> slot (per-metric slot config)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS metric_slots (
+            id SERIAL PRIMARY KEY,
+            metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            slot_id INTEGER NOT NULL REFERENCES measurement_slots(id) ON DELETE RESTRICT,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+            UNIQUE(metric_id, slot_id)
+        )
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_metric_slots_metric ON metric_slots(metric_id)
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_metric_slots_slot ON metric_slots(slot_id)
     """)
 
     # Add slot_id column to entries (nullable)

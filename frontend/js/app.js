@@ -131,7 +131,7 @@ function navigateTo(page, params = {}) {
         nav.style.display = (page === 'login' || page === 'register') ? 'none' : '';
     }
 
-    const activePage = page === 'metric-detail' ? 'charts' : page === 'categories' ? 'settings' : page === 'insights' ? 'insights' : page;
+    const activePage = page === 'metric-detail' ? 'charts' : page === 'categories' ? 'settings' : page === 'slots' ? 'settings' : page === 'insights' ? 'insights' : page;
     document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === activePage));
     const main = document.getElementById('main');
 
@@ -146,6 +146,7 @@ function navigateTo(page, params = {}) {
         case 'metric-detail': renderMetricDetail(main, params.metricId); break;
         case 'settings': renderSettings(main, params); break;
         case 'categories': renderCategoryManager(main); break;
+        case 'slots': renderSlotManager(main); break;
     }
 }
 
@@ -3202,6 +3203,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     html += '<div class="settings-actions">';
     html += '<button class="btn-primary" id="add-metric"><i data-lucide="plus"></i> Новая метрика</button>';
     html += '<button class="btn-small" id="manage-categories-btn"><i data-lucide="folders"></i> Категории</button>';
+    html += '<button class="btn-small" id="manage-slots-btn"><i data-lucide="clock"></i> Время замера</button>';
     html += '<button class="btn-small" id="export-btn"><i data-lucide="download"></i> Экспорт</button>';
     html += '<button class="btn-small" id="import-btn"><i data-lucide="upload"></i> Импорт</button>';
     html += '<button class="btn-small" id="copy-metrics-btn"><i data-lucide="copy"></i> Копировать</button>';
@@ -3415,6 +3417,11 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     // Manage categories button
     document.getElementById('manage-categories-btn')?.addEventListener('click', () => {
         navigateTo('categories');
+    });
+
+    // Manage slots button
+    document.getElementById('manage-slots-btn')?.addEventListener('click', () => {
+        navigateTo('slots');
     });
 
     if (openAddModal) showAddMetricModal();
@@ -4124,6 +4131,185 @@ function setupCategoryDragDrop(container) {
         dragItem = null;
         isDragging = false;
         nestingLevel = 0;
+    });
+}
+
+async function renderSlotManager(container) {
+    let slots = [];
+    try { slots = await api.getSlots(); } catch(e) {}
+
+    let html = '<div class="cat-manager-header">';
+    html += '<button class="btn-icon" id="slot-back-btn"><i data-lucide="arrow-left"></i></button>';
+    html += '<h2>Время замера</h2>';
+    html += '<button class="btn-small btn-primary" id="slot-add-btn"><i data-lucide="plus"></i> Добавить</button>';
+    html += '</div>';
+
+    html += '<div id="slot-list">';
+    if (slots.length === 0) {
+        html += '<div class="empty-state"><div class="empty-state-text">Нет настроенных замеров</div></div>';
+    } else {
+        for (const slot of slots) {
+            const used = slot.usage_count > 0;
+            const delDisabled = used ? 'disabled' : '';
+            const delClass = used ? 'btn-icon slot-del-disabled' : 'btn-icon btn-icon-danger slot-del';
+            const delTitle = used ? `title="Используется в ${slot.usage_count} метриках"` : '';
+            html += `<div class="cat-item" data-slot-id="${slot.id}">
+                <span class="drag-handle">⠿</span>
+                <span class="cat-item-name">${slot.label}</span>
+                <div class="cat-item-actions">
+                    <button class="btn-icon slot-edit" data-slot-id="${slot.id}"><i data-lucide="pencil"></i></button>
+                    <button class="${delClass}" data-slot-id="${slot.id}" ${delDisabled} ${delTitle}><i data-lucide="trash-2"></i></button>
+                </div>
+            </div>`;
+        }
+    }
+    html += '</div>';
+    container.innerHTML = html;
+    if (window.lucide) lucide.createIcons();
+
+    document.getElementById('slot-back-btn').addEventListener('click', () => navigateTo('settings'));
+
+    document.getElementById('slot-add-btn').addEventListener('click', async () => {
+        const label = prompt('Название замера:');
+        if (!label || !label.trim()) return;
+        try {
+            await api.createSlot({ label: label.trim() });
+            await renderSlotManager(container);
+        } catch (e) { alert('Ошибка: ' + e.message); }
+    });
+
+    container.querySelectorAll('.slot-edit').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const slotId = parseInt(btn.dataset.slotId);
+            const nameEl = btn.closest('.cat-item').querySelector('.cat-item-name');
+            const currentLabel = nameEl?.textContent?.trim() || '';
+            const newLabel = prompt('Новое название:', currentLabel);
+            if (!newLabel || !newLabel.trim() || newLabel.trim() === currentLabel) return;
+            try {
+                await api.updateSlot(slotId, { label: newLabel.trim() });
+                await renderSlotManager(container);
+            } catch (e) { alert('Ошибка: ' + e.message); }
+        });
+    });
+
+    container.querySelectorAll('.slot-del').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const slotId = parseInt(btn.dataset.slotId);
+            if (!confirm('Удалить время замера?')) return;
+            try {
+                await api.deleteSlot(slotId);
+                await renderSlotManager(container);
+            } catch (e) { alert('Ошибка: ' + e.message); }
+        });
+    });
+
+    setupSlotDragDrop(container);
+}
+
+function setupSlotDragDrop(container) {
+    let dragItem = null;
+    let clone = null;
+    let startX = 0, startY = 0;
+    let offsetX = 0, offsetY = 0;
+    let isDragging = false;
+    const DRAG_THRESHOLD = 5;
+
+    function getDropTarget(y) {
+        const items = container.querySelectorAll('.cat-item:not(.dragging)');
+        let closest = null;
+        let closestDist = Infinity;
+        let insertBefore = true;
+        for (const item of items) {
+            const rect = item.getBoundingClientRect();
+            const mid = rect.top + rect.height / 2;
+            const dist = Math.abs(y - mid);
+            if (dist < closestDist) {
+                closestDist = dist;
+                closest = item;
+                insertBefore = y < mid;
+            }
+        }
+        return { target: closest, before: insertBefore };
+    }
+
+    function clearIndicators() {
+        container.querySelectorAll('.drag-over-before, .drag-over-after').forEach(el => {
+            el.classList.remove('drag-over-before', 'drag-over-after');
+        });
+    }
+
+    container.addEventListener('pointerdown', (e) => {
+        const handle = e.target.closest('.drag-handle');
+        if (!handle) return;
+        const item = handle.closest('.cat-item');
+        if (!item) return;
+        e.preventDefault();
+        dragItem = item;
+        startX = e.clientX;
+        startY = e.clientY;
+        isDragging = false;
+        handle.setPointerCapture(e.pointerId);
+    });
+
+    container.addEventListener('pointermove', (e) => {
+        if (!dragItem) return;
+        if (!isDragging) {
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+            isDragging = true;
+            const rect = dragItem.getBoundingClientRect();
+            offsetX = startX - rect.left;
+            offsetY = startY - rect.top;
+            clone = dragItem.cloneNode(true);
+            clone.className = 'setting-row drag-clone';
+            clone.style.width = rect.width + 'px';
+            clone.style.left = rect.left + 'px';
+            clone.style.top = rect.top + 'px';
+            document.body.appendChild(clone);
+            dragItem.classList.add('dragging');
+        }
+        if (clone) {
+            clone.style.left = (e.clientX - offsetX) + 'px';
+            clone.style.top = (e.clientY - offsetY) + 'px';
+        }
+        clearIndicators();
+        const { target, before } = getDropTarget(e.clientY);
+        if (target) target.classList.add(before ? 'drag-over-before' : 'drag-over-after');
+    });
+
+    container.addEventListener('pointerup', async (e) => {
+        if (!dragItem) return;
+        clearIndicators();
+        if (isDragging) {
+            const { target, before } = getDropTarget(e.clientY);
+            if (target && target !== dragItem) {
+                const parent = target.parentElement;
+                if (before) {
+                    parent.insertBefore(dragItem, target);
+                } else {
+                    parent.insertBefore(dragItem, target.nextSibling);
+                }
+            }
+            if (clone) { clone.remove(); clone = null; }
+            dragItem.classList.remove('dragging');
+            // Save new order
+            const items = [];
+            container.querySelectorAll('.cat-item[data-slot-id]').forEach((el, idx) => {
+                items.push({ id: parseInt(el.dataset.slotId), sort_order: idx * 10 });
+            });
+            try { await api.reorderSlots(items); } catch (err) { console.error('Slot reorder failed:', err); }
+        }
+        dragItem = null;
+        isDragging = false;
+    });
+
+    container.addEventListener('pointercancel', () => {
+        if (clone) { clone.remove(); clone = null; }
+        if (dragItem) dragItem.classList.remove('dragging');
+        clearIndicators();
+        dragItem = null;
+        isDragging = false;
     });
 }
 
@@ -4919,8 +5105,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     </div>
                     <div class="slots-config" id="nm-slots-config" style="display:${existingMetric?.slots?.length ? 'flex' : 'none'}">
                         <div class="slot-labels-list" id="nm-slot-labels"></div>
-                        <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить замер</button>
-                        <span class="label-hint">Названия замеров можно переименовать</span>
+                        <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить время замера</button>
+                        <select class="slot-add-dropdown" id="nm-slot-dropdown" style="display:none">
+                            <option value="">Выберите...</option>
+                        </select>
                     </div>
                 </div>
                 ` : ''}
@@ -5080,8 +5268,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     </div>
                     <div class="slots-config" id="nm-slots-config" style="display:none">
                         <div class="slot-labels-list" id="nm-slot-labels"></div>
-                        <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить замер</button>
-                        <span class="label-hint">Названия замеров можно переименовать</span>
+                        <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить время замера</button>
+                        <select class="slot-add-dropdown" id="nm-slot-dropdown" style="display:none">
+                            <option value="">Выберите...</option>
+                        </select>
                     </div>
                 </div>
                 `}
@@ -5474,7 +5664,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     // ─── Slot management (declared early — updatePreview references slotList) ───
     const slotList = document.getElementById('nm-slot-labels');
     const addSlotBtn = document.getElementById('nm-add-slot');
+    const slotDropdown = document.getElementById('nm-slot-dropdown');
     const slotsConfig = document.getElementById('nm-slots-config');
+    // Track selected slots: [{id, label, category_id}]
+    let _selectedSlots = [];
 
     // ─── Enum option management ───
     const enumOptionsList = document.getElementById('nm-enum-options');
@@ -5602,8 +5795,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             icon = document.getElementById('nm-icon').value;
         }
         const name = (icon ? '<span class="metric-icon">' + icon + '</span>' : '') + rawName;
-        const slotInputs = slotList ? slotList.querySelectorAll('.slot-label-input') : [];
-        const labels = Array.from(slotInputs).map(i => i.value.trim()).filter(v => v !== '');
+        const labels = getSlotLabels();
 
         let cardHtml;
         if (labels.length >= 2) {
@@ -5647,14 +5839,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
             if (radio.value === 'multiple') {
                 if (slotsConfig) slotsConfig.style.display = 'flex';
-                // Auto-add 3 default slots if empty
-                if (slotList && slotList.querySelectorAll('.slot-label-row').length === 0) {
-                    ['Утро', 'День', 'Вечер'].forEach(l => addSlotField(l));
-                }
+                _renderSelectedSlots();
             } else {
                 if (slotsConfig) slotsConfig.style.display = 'none';
-                // Clear slots
-                if (slotList) slotList.innerHTML = '';
+                _selectedSlots = [];
             }
             updatePreview();
         });
@@ -5671,71 +5859,125 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         return html;
     }
 
-    function addSlotField(label = '', categoryId = null, slotId = null) {
-        const row = document.createElement('div');
-        row.className = 'slot-label-row';
-        row.draggable = true;
-        row.dataset.slotId = slotId || '';
-        row.innerHTML = `<span class="drag-handle">⠿</span>
-            <input type="text" class="form-input slot-label-input" placeholder="Например: Утро" value="${label}">
-            <select class="form-select slot-category-select" data-category-id="${categoryId || ''}">${_buildCategoryOptions(categoryId)}</select>
-            <button type="button" class="btn-remove-slot">&times;</button>`;
-        slotList.appendChild(row);
-        row.querySelector('.btn-remove-slot').onclick = () => { row.remove(); updatePreview(); };
-        row.querySelector('.slot-label-input').addEventListener('input', updatePreview);
-        // Drag & drop (same pattern as addEnumOptionField)
-        row.addEventListener('dragstart', (e) => {
-            e.dataTransfer.effectAllowed = 'move';
-            row.classList.add('dragging');
-        });
-        row.addEventListener('dragend', () => {
-            row.classList.remove('dragging');
-            updatePreview();
-        });
-        row.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            const dragging = slotList.querySelector('.dragging');
-            if (dragging && dragging !== row) {
-                const rect = row.getBoundingClientRect();
-                const mid = rect.top + rect.height / 2;
-                if (e.clientY < mid) {
-                    slotList.insertBefore(dragging, row);
-                } else {
-                    slotList.insertBefore(dragging, row.nextSibling);
-                }
-            }
-        });
+    // Global slots for "+" dropdown
+    let _globalSlots = [];
+    async function _loadGlobalSlots() {
+        try { _globalSlots = await api.getSlots(); } catch(e) { _globalSlots = []; }
     }
 
-    if (addSlotBtn) {
-        addSlotBtn.onclick = () => { addSlotField(''); updatePreview(); };
-        // Pre-fill slots in edit mode
-        if (isEdit && existingMetric?.slots) {
-            for (const s of existingMetric.slots) {
-                addSlotField(s.label, s.category_id, s.id);
-            }
-            updatePreview();
+    function _addSelectedSlot(slotId, label, categoryId) {
+        if (_selectedSlots.some(s => s.id === slotId)) return;
+        _selectedSlots.push({ id: slotId, label, category_id: categoryId || null });
+        _renderSelectedSlots();
+        updatePreview();
+    }
+
+    function _removeSelectedSlot(slotId) {
+        _selectedSlots = _selectedSlots.filter(s => s.id !== slotId);
+        _renderSelectedSlots();
+        updatePreview();
+    }
+
+    function _renderSelectedSlots() {
+        if (!slotList) return;
+        slotList.innerHTML = '';
+        for (const slot of _selectedSlots) {
+            const row = document.createElement('div');
+            row.className = 'slot-label-row';
+            row.dataset.slotId = slot.id;
+            row.innerHTML = `<span class="slot-selected-label">${slot.label}</span>
+                <select class="form-select slot-category-select" data-category-id="${slot.category_id || ''}">${_buildCategoryOptions(slot.category_id)}</select>
+                <button type="button" class="btn-remove-slot">&times;</button>`;
+            slotList.appendChild(row);
+            row.querySelector('.btn-remove-slot').onclick = () => _removeSelectedSlot(slot.id);
         }
+        if (_selectedSlots.length === 0) {
+            slotList.innerHTML = '<span class="label-hint">Нажмите кнопку ниже, чтобы добавить время замера</span>';
+        }
+        // Hide dropdown when re-rendering
+        if (slotDropdown) slotDropdown.style.display = 'none';
+        if (addSlotBtn) addSlotBtn.style.display = '';
+    }
+
+    function _populateSlotDropdown() {
+        if (!slotDropdown) return;
+        const selectedIds = new Set(_selectedSlots.map(s => s.id));
+        let html = '<option value="">Выберите...</option>';
+        let hasOptions = false;
+        for (const slot of _globalSlots) {
+            if (!selectedIds.has(slot.id)) {
+                html += `<option value="${slot.id}">${slot.label}</option>`;
+                hasOptions = true;
+            }
+        }
+        html += '<option value="__create__">Создать новое...</option>';
+        slotDropdown.innerHTML = html;
+        // Show dropdown, hide "+" button
+        slotDropdown.style.display = '';
+        if (addSlotBtn) addSlotBtn.style.display = 'none';
+        slotDropdown.focus();
+    }
+
+    // Load global slots and pre-fill selected from existing metric
+    _loadGlobalSlots().then(() => {
+        if (isEdit && existingMetric?.slots?.length) {
+            for (const s of existingMetric.slots) {
+                _selectedSlots.push({ id: s.id, label: s.label, category_id: s.category_id || null });
+            }
+        }
+        _renderSelectedSlots();
+        if (isEdit && existingMetric?.slots?.length) updatePreview();
+    });
+
+    if (addSlotBtn) {
+        addSlotBtn.onclick = () => _populateSlotDropdown();
+    }
+
+    if (slotDropdown) {
+        slotDropdown.addEventListener('change', async () => {
+            const val = slotDropdown.value;
+            if (!val) return;
+            if (val === '__create__') {
+                const label = prompt('Название нового времени замера:');
+                if (!label || !label.trim()) {
+                    slotDropdown.style.display = 'none';
+                    if (addSlotBtn) addSlotBtn.style.display = '';
+                    return;
+                }
+                try {
+                    const newSlot = await api.createSlot({ label: label.trim() });
+                    await _loadGlobalSlots();
+                    _addSelectedSlot(newSlot.id, newSlot.label, null);
+                } catch (e) { alert('Ошибка: ' + e.message); }
+            } else {
+                const slotId = parseInt(val);
+                const slot = _globalSlots.find(s => s.id === slotId);
+                if (slot) _addSelectedSlot(slot.id, slot.label, null);
+            }
+            slotDropdown.style.display = 'none';
+            if (addSlotBtn) addSlotBtn.style.display = '';
+        });
+        slotDropdown.addEventListener('blur', () => {
+            setTimeout(() => {
+                if (slotDropdown.style.display !== 'none') {
+                    slotDropdown.style.display = 'none';
+                    if (addSlotBtn) addSlotBtn.style.display = '';
+                }
+            }, 150);
+        });
     }
 
     function getSlotLabels() {
-        const inputs = slotList ? slotList.querySelectorAll('.slot-label-input') : [];
-        return Array.from(inputs).map(i => i.value.trim()).filter(v => v !== '');
+        return _selectedSlots.map(s => s.label);
     }
 
     function getSlotConfigs() {
-        if (!slotList) return [];
-        const rows = slotList.querySelectorAll('.slot-label-row');
         const configs = [];
-        for (const row of rows) {
-            const label = row.querySelector('.slot-label-input').value.trim();
-            if (!label) continue;
-            const catSelect = row.querySelector('.slot-category-select');
-            const catId = catSelect && catSelect.value ? parseInt(catSelect.value) : null;
-            const id = row.dataset.slotId ? parseInt(row.dataset.slotId) : undefined;
-            const entry = { label, category_id: catId };
-            if (id) entry.id = id;
-            configs.push(entry);
+        for (const slot of _selectedSlots) {
+            const row = slotList?.querySelector(`.slot-label-row[data-slot-id="${slot.id}"]`);
+            const catSelect = row?.querySelector('.slot-category-select');
+            const catId = catSelect && catSelect.value ? parseInt(catSelect.value) : slot.category_id;
+            configs.push({ slot_id: slot.id, category_id: catId || null });
         }
         return configs;
     }
@@ -5780,7 +6022,6 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         }
 
         try {
-            const slotLabels = getSlotLabels();
             const slotConfigs = getSlotConfigs();
 
             if (isEdit) {
@@ -5833,9 +6074,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 if (existingMetric.type !== 'computed' && existingMetric.type !== 'integration') {
                     if (slotConfigs.length >= 2) {
                         updateData.slot_configs = slotConfigs;
-                    } else if (slotLabels.length === 0 && (!existingMetric.slots || existingMetric.slots.length === 0)) {
+                    } else if (slotConfigs.length === 0 && (!existingMetric.slots || existingMetric.slots.length === 0)) {
                         // No slots before, no slots now — don't send
-                    } else if (slotLabels.length < 2 && existingMetric.slots && existingMetric.slots.length > 0) {
+                    } else if (slotConfigs.length < 2 && existingMetric.slots && existingMetric.slots.length > 0) {
                         alert('Нельзя уменьшить количество замеров меньше 2. Удалите все поля, чтобы не менять настройку.');
                         return;
                     }

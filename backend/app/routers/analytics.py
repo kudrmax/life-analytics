@@ -921,9 +921,11 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             # Load enabled slots for all metrics
             metric_ids = [m["id"] for m in metrics_rows]
             slots_rows = await conn.fetch(
-                """SELECT id, metric_id, label FROM measurement_slots
-                   WHERE metric_id = ANY($1) AND enabled = TRUE
-                   ORDER BY metric_id, sort_order""",
+                """SELECT ms.id, msl.metric_id, ms.label
+                   FROM metric_slots msl
+                   JOIN measurement_slots ms ON ms.id = msl.slot_id
+                   WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE
+                   ORDER BY msl.metric_id, msl.sort_order""",
                 metric_ids,
             ) if metric_ids else []
 

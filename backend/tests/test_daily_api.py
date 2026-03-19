@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, register_user, create_metric, create_entry
+from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_slot
 
 DATE = "2026-01-10"
 
@@ -339,9 +339,11 @@ class TestMultiSlot:
     async def test_slots_with_entries(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
+        slot_am = await create_slot(client, user_a["token"], "AM")
+        slot_pm = await create_slot(client, user_a["token"], "PM")
         metric = await create_metric(
             client, user_a["token"], name="SlotBool", metric_type="bool",
-            slot_labels=["AM", "PM"],
+            slot_configs=[{"slot_id": slot_am["id"]}, {"slot_id": slot_pm["id"]}],
         )
         slots = metric["slots"]
         assert len(slots) == 2
@@ -376,9 +378,11 @@ class TestMultiSlot:
         self, client: AsyncClient, user_a: dict,
     ) -> None:
         """Multi-slot metric returns slots array, main entry is null."""
+        slot_m = await create_slot(client, user_a["token"], "Morning")
+        slot_e = await create_slot(client, user_a["token"], "Evening")
         metric = await create_metric(
             client, user_a["token"], name="SlotNum", metric_type="number",
-            slot_labels=["Morning", "Evening"],
+            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
         )
         daily = await _get_daily(client, user_a["token"])
         item = await _find_metric(daily, metric["id"])
@@ -819,15 +823,17 @@ class TestSlotCategorySplit:
         assert resp2.status_code == 201, resp2.text
         cat2_id = resp2.json()["id"]
 
-        # Create metric with slot_configs pointing to different categories
+        # Create global slots, then metric with slot_configs
+        slot_m = await create_slot(client, user_a["token"], "Morning")
+        slot_e = await create_slot(client, user_a["token"], "Evening")
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "SplitSlots",
                 "type": "bool",
                 "slot_configs": [
-                    {"label": "Morning", "category_id": cat1_id},
-                    {"label": "Evening", "category_id": cat2_id},
+                    {"slot_id": slot_m["id"], "category_id": cat1_id},
+                    {"slot_id": slot_e["id"], "category_id": cat2_id},
                 ],
             },
             headers=auth_headers(user_a["token"]),
@@ -863,9 +869,11 @@ class TestSlotDepValueExtraction:
         self, client: AsyncClient, user_a: dict,
     ) -> None:
         """Multi-slot dep with one slot filled -> condition 'filled' is met."""
+        slot_m = await create_slot(client, user_a["token"], "Morning")
+        slot_e = await create_slot(client, user_a["token"], "Evening")
         dep = await create_metric(
             client, user_a["token"], name="SlotDep", metric_type="bool",
-            slot_labels=["Morning", "Evening"],
+            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
         )
         slots = dep["slots"]
         assert len(slots) == 2
@@ -893,9 +901,11 @@ class TestSlotDepValueExtraction:
         self, client: AsyncClient, user_a: dict,
     ) -> None:
         """Multi-slot dep with no slots filled -> condition 'filled' not met."""
+        slot_m = await create_slot(client, user_a["token"], "Morning")
+        slot_e = await create_slot(client, user_a["token"], "Evening")
         dep = await create_metric(
             client, user_a["token"], name="SlotDep2", metric_type="bool",
-            slot_labels=["Morning", "Evening"],
+            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
         )
         metric_b = await _create_metric_with_condition(
             client, user_a["token"],

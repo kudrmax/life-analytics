@@ -8,6 +8,7 @@ from tests.conftest import (
     auth_headers,
     create_entry,
     create_metric,
+    create_slot,
 )
 
 
@@ -516,11 +517,13 @@ class TestScaleToScaleEdgeCases:
     ):
         """Scale metric with measurement slots — slot_id preserved after convert."""
         token = user_a["token"]
+        slot_u = await create_slot(client, token, "Утро")
+        slot_v = await create_slot(client, token, "Вечер")
         metric = await create_metric(
             client, token,
             name="Scale Slots", metric_type="scale",
             scale_min=1, scale_max=5, scale_step=1,
-            slot_labels=["Утро", "Вечер"],
+            slot_configs=[{"slot_id": slot_u["id"]}, {"slot_id": slot_v["id"]}],
         )
         mid = metric["id"]
         slots = metric["slots"]

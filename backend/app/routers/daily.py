@@ -103,10 +103,11 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
 
     # Get enabled slots for all metrics
     enabled_slots_rows = await db.fetch(
-        """SELECT ms.id, ms.metric_id, ms.label, ms.sort_order, ms.category_id
-           FROM measurement_slots ms
-           WHERE ms.metric_id = ANY($1) AND ms.enabled = TRUE
-           ORDER BY ms.metric_id, ms.sort_order""",
+        """SELECT ms.id, msl.metric_id, ms.label, msl.sort_order, msl.category_id
+           FROM metric_slots msl
+           JOIN measurement_slots ms ON ms.id = msl.slot_id
+           WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE
+           ORDER BY msl.metric_id, msl.sort_order""",
         metric_ids,
     ) if metric_ids else []
 
@@ -119,11 +120,12 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
     disabled_slot_ids_with_entries = []
     if metric_ids:
         disabled_slot_ids_with_entries = await db.fetch(
-            """SELECT DISTINCT ms.id, ms.metric_id, ms.label, ms.sort_order, ms.category_id
-               FROM measurement_slots ms
+            """SELECT DISTINCT ms.id, msl.metric_id, ms.label, msl.sort_order, msl.category_id
+               FROM metric_slots msl
+               JOIN measurement_slots ms ON ms.id = msl.slot_id
                JOIN entries e ON e.slot_id = ms.id AND e.date = $1 AND e.user_id = $2
-               WHERE ms.metric_id = ANY($3) AND ms.enabled = FALSE
-               ORDER BY ms.metric_id, ms.sort_order""",
+               WHERE msl.metric_id = ANY($3) AND msl.enabled = FALSE
+               ORDER BY msl.metric_id, msl.sort_order""",
             d, current_user["id"], metric_ids,
         )
 
