@@ -1119,3 +1119,150 @@ class TestCreateEnumMetricDuplicateLabels:
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 400
+
+
+# ── Slot reorder / add (id-based matching) ───────────────────────────
+
+
+class TestSlotReorderAndAdd:
+    """PATCH /api/metrics — slot reorder and insert must preserve entries."""
+
+    async def test_reorder_slots_preserves_entries(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        metric = await create_metric(
+            client, user_a["token"],
+            name="Reorder", metric_type="number", slot_labels=["A", "B"],
+        )
+        slot_a = metric["slots"][0]
+        slot_b = metric["slots"][1]
+
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 10, slot_id=slot_a["id"])
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 20, slot_id=slot_b["id"])
+
+        # Swap order: B first, A second
+        resp = await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"slot_configs": [
+                {"id": slot_b["id"], "label": "B"},
+                {"id": slot_a["id"], "label": "A"},
+            ]},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        slots = sorted(data["slots"], key=lambda s: s["sort_order"])
+        assert slots[0]["id"] == slot_b["id"]
+        assert slots[0]["label"] == "B"
+        assert slots[0]["sort_order"] == 0
+        assert slots[1]["id"] == slot_a["id"]
+        assert slots[1]["label"] == "A"
+        assert slots[1]["sort_order"] == 1
+
+        # Verify entries still attached to original slot ids
+        daily_resp = await client.get(
+            "/api/daily/2026-03-10",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert daily_resp.status_code == 200
+        m_data = next(m for m in daily_resp.json()["metrics"] if m["metric_id"] == metric["id"])
+        slot_values = {s["slot_id"]: s["entry"]["value"] for s in m_data["slots"] if s["entry"]}
+        assert slot_values[slot_a["id"]] == 10
+        assert slot_values[slot_b["id"]] == 20
+
+    async def test_add_slot_in_middle_preserves_entries(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        metric = await create_metric(
+            client, user_a["token"],
+            name="Middle", metric_type="number", slot_labels=["A", "B"],
+        )
+        slot_a = metric["slots"][0]
+        slot_b = metric["slots"][1]
+
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 10, slot_id=slot_a["id"])
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 20, slot_id=slot_b["id"])
+
+        # Insert new slot in the middle
+        resp = await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"slot_configs": [
+                {"id": slot_a["id"], "label": "A"},
+                {"label": "New"},
+                {"id": slot_b["id"], "label": "B"},
+            ]},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["slots"]) == 3
+        slots = sorted(data["slots"], key=lambda s: s["sort_order"])
+        assert slots[0]["id"] == slot_a["id"]
+        assert slots[1]["label"] == "New"
+        assert slots[2]["id"] == slot_b["id"]
+
+        # Entries still on original slots
+        daily_resp = await client.get(
+            "/api/daily/2026-03-10",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert daily_resp.status_code == 200
+        m_data = next(m for m in daily_resp.json()["metrics"] if m["metric_id"] == metric["id"])
+        slot_values = {s["slot_id"]: s["entry"]["value"] for s in m_data["slots"] if s["entry"]}
+        assert slot_values[slot_a["id"]] == 10
+        assert slot_values[slot_b["id"]] == 20
+        new_slot = next(s for s in m_data["slots"] if s["label"] == "New")
+        assert new_slot["entry"] is None
+
+    async def test_add_slot_at_end(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        metric = await create_metric(
+            client, user_a["token"],
+            name="End", metric_type="number", slot_labels=["A", "B"],
+        )
+        slot_a = metric["slots"][0]
+        slot_b = metric["slots"][1]
+
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 10, slot_id=slot_a["id"])
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 20, slot_id=slot_b["id"])
+
+        resp = await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"slot_configs": [
+                {"id": slot_a["id"], "label": "A"},
+                {"id": slot_b["id"], "label": "B"},
+                {"label": "C"},
+            ]},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["slots"]) == 3
+        slots = sorted(data["slots"], key=lambda s: s["sort_order"])
+        assert slots[0]["id"] == slot_a["id"]
+        assert slots[1]["id"] == slot_b["id"]
+        assert slots[2]["label"] == "C"
+
+    async def test_slot_id_not_belonging_to_metric_rejected(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        m1 = await create_metric(
+            client, user_a["token"],
+            name="M1", metric_type="number", slot_labels=["X", "Y"],
+        )
+        m2 = await create_metric(
+            client, user_a["token"],
+            name="M2", metric_type="number", slot_labels=["P", "Q"],
+        )
+        foreign_slot_id = m2["slots"][0]["id"]
+
+        resp = await client.patch(
+            f"/api/metrics/{m1['id']}",
+            json={"slot_configs": [
+                {"id": m1['slots'][0]['id'], "label": "X"},
+                {"id": foreign_slot_id, "label": "Stolen"},
+            ]},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 400

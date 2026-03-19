@@ -627,22 +627,28 @@ async def update_metric(
                         first_slot_id, metric_id,
                     )
             else:
-                # Update existing slots
+                # Update existing slots — match by id, not by sort_order
+                existing_by_id = {s["id"]: s for s in existing_slots}
+                seen_ids: set[int] = set()
+
                 for i, cfg in enumerate(slot_update_configs):
-                    matching = [s for s in existing_slots if s["sort_order"] == i]
-                    if matching:
+                    slot_id = cfg.get("id")
+                    if slot_id is not None:
+                        if slot_id not in existing_by_id:
+                            raise HTTPException(400, f"Slot {slot_id} does not belong to this metric")
                         await db.execute(
-                            "UPDATE measurement_slots SET label = $1, enabled = TRUE, category_id = $2 WHERE id = $3",
-                            cfg["label"], cfg.get("category_id"), matching[0]["id"],
+                            "UPDATE measurement_slots SET label = $1, enabled = TRUE, category_id = $2, sort_order = $3 WHERE id = $4",
+                            cfg["label"], cfg.get("category_id"), i, slot_id,
                         )
+                        seen_ids.add(slot_id)
                     else:
                         await db.execute(
                             "INSERT INTO measurement_slots (metric_id, sort_order, label, category_id) VALUES ($1, $2, $3, $4)",
                             metric_id, i, cfg["label"], cfg.get("category_id"),
                         )
-                # Disable slots beyond new count
+                # Disable slots not mentioned in new list
                 for s in existing_slots:
-                    if s["sort_order"] >= len(slot_update_configs):
+                    if s["id"] not in seen_ids:
                         await db.execute(
                             "UPDATE measurement_slots SET enabled = FALSE WHERE id = $1",
                             s["id"],

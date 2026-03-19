@@ -5559,10 +5559,11 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         return html;
     }
 
-    function addSlotField(label = '', categoryId = null) {
+    function addSlotField(label = '', categoryId = null, slotId = null) {
         const row = document.createElement('div');
         row.className = 'slot-label-row';
         row.draggable = true;
+        row.dataset.slotId = slotId || '';
         row.innerHTML = `<span class="drag-handle">⠿</span>
             <input type="text" class="form-input slot-label-input" placeholder="Например: Утро" value="${label}">
             <select class="form-select slot-category-select" data-category-id="${categoryId || ''}">${_buildCategoryOptions(categoryId)}</select>
@@ -5599,7 +5600,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         // Pre-fill slots in edit mode
         if (isEdit && existingMetric?.slots) {
             for (const s of existingMetric.slots) {
-                addSlotField(s.label, s.category_id);
+                addSlotField(s.label, s.category_id, s.id);
             }
             updatePreview();
         }
@@ -5619,7 +5620,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             if (!label) continue;
             const catSelect = row.querySelector('.slot-category-select');
             const catId = catSelect && catSelect.value ? parseInt(catSelect.value) : null;
-            configs.push({ label, category_id: catId });
+            const id = row.dataset.slotId ? parseInt(row.dataset.slotId) : undefined;
+            const entry = { label, category_id: catId };
+            if (id) entry.id = id;
+            configs.push(entry);
         }
         return configs;
     }
