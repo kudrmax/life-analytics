@@ -910,10 +910,10 @@ async function handleNumberChange(e) {
             if (slotEl) slotEl.dataset.entryId = '';
             else card.dataset.entryId = '';
             api.deleteEntry(parseInt(entryId)).then(() => {
-                renderTodayForm();
+                renderTodayForm(true);
             }).catch(err => {
                 alert('Ошибка: ' + err.message);
-                renderTodayForm();
+                renderTodayForm(true);
             });
         }
         return;
@@ -934,7 +934,7 @@ async function handleNumberChange(e) {
         updateProgress();
     }).catch(err => {
         alert('Ошибка: ' + err.message);
-        renderTodayForm();
+        renderTodayForm(true);
     });
 }
 
@@ -1035,7 +1035,7 @@ async function handleFormClick(e) {
             }
             const { windowEvents, afkEvents, webEvents } = await awClient.fetchDayEvents(currentDate);
             await api.awSync(currentDate, windowEvents, afkEvents, webEvents);
-            await renderTodayForm();
+            await renderTodayForm(true);
         } catch (error) {
             alert('Ошибка синхронизации ActivityWatch: ' + error.message);
             btn.disabled = false;
@@ -1054,7 +1054,7 @@ async function handleFormClick(e) {
         btn.disabled = true;
         try {
             await api.createNote({ metric_id: parseInt(card.dataset.metricId), date: currentDate, text });
-            await renderTodayForm();
+            await renderTodayForm(true);
         } catch (error) {
             alert('Ошибка: ' + error.message);
             btn.disabled = false;
@@ -1067,7 +1067,7 @@ async function handleFormClick(e) {
         const noteId = parseInt(btn.dataset.noteId);
         try {
             await api.deleteNote(noteId);
-            await renderTodayForm();
+            await renderTodayForm(true);
         } catch (error) {
             alert('Ошибка: ' + error.message);
         }
@@ -1099,7 +1099,7 @@ async function handleFormClick(e) {
         btn.disabled = true;
         try {
             await api.updateNote(parseInt(btn.dataset.noteId), { text });
-            await renderTodayForm();
+            await renderTodayForm(true);
         } catch (error) {
             alert('Ошибка: ' + error.message);
             btn.disabled = false;
@@ -1109,7 +1109,7 @@ async function handleFormClick(e) {
 
     // Cancel edit note
     if (btn.dataset.action === 'cancel-edit-note') {
-        await renderTodayForm();
+        await renderTodayForm(true);
         return;
     }
 
@@ -1148,10 +1148,10 @@ async function handleFormClick(e) {
         if (slotEl) slotEl.dataset.entryId = '';
         else card.dataset.entryId = '';
         api.deleteEntry(clearEntryId).then(() => {
-            renderTodayForm();
+            renderTodayForm(true);
         }).catch(err => {
             alert('Ошибка при удалении: ' + err.message);
-            renderTodayForm();
+            renderTodayForm(true);
         });
         return;
     }
@@ -1173,7 +1173,7 @@ async function handleFormClick(e) {
             updateProgress();
         }).catch(err => {
             alert('Ошибка: ' + err.message);
-            renderTodayForm();
+            renderTodayForm(true);
         });
         return;
     }
@@ -1192,7 +1192,7 @@ async function handleFormClick(e) {
             updateProgress();
         }).catch(err => {
             alert('Ошибка: ' + err.message);
-            renderTodayForm();
+            renderTodayForm(true);
         });
         return;
     }
@@ -1243,7 +1243,7 @@ async function handleFormClick(e) {
             updateProgress();
         }).catch(err => {
             alert('Ошибка: ' + err.message);
-            renderTodayForm();
+            renderTodayForm(true);
         });
         return;
     }
@@ -1263,7 +1263,7 @@ async function handleFormClick(e) {
             updateProgress();
         }).catch(err => {
             alert('Ошибка: ' + err.message);
-            renderTodayForm();
+            renderTodayForm(true);
         });
         return;
     }
@@ -1287,7 +1287,7 @@ async function handleFormClick(e) {
             updateProgress();
         }).catch(err => {
             alert('Ошибка: ' + err.message);
-            renderTodayForm();
+            renderTodayForm(true);
         });
         return;
     }
@@ -1300,7 +1300,7 @@ async function handleFormClick(e) {
         showClockPicker(currentVal, async (newVal) => {
             try {
                 await saveDaily(metricId, entryId, newVal, slotId);
-                await renderTodayForm();
+                await renderTodayForm(true);
             } catch (error) {
                 alert('Ошибка: ' + error.message);
             }
@@ -1329,7 +1329,7 @@ async function handleFormClick(e) {
                 const parts = hhmmVal.split(':').map(Number);
                 const minutes = parts[0] * 60 + parts[1];
                 await saveDaily(metricId, entryId, minutes, slotId);
-                await renderTodayForm();
+                await renderTodayForm(true);
             } catch (error) {
                 alert('Ошибка: ' + error.message);
             }
@@ -3204,6 +3204,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     html += '<button class="btn-small" id="manage-categories-btn"><i data-lucide="folders"></i> Категории</button>';
     html += '<button class="btn-small" id="export-btn"><i data-lucide="download"></i> Экспорт</button>';
     html += '<button class="btn-small" id="import-btn"><i data-lucide="upload"></i> Импорт</button>';
+    html += '<button class="btn-small" id="copy-metrics-btn"><i data-lucide="copy"></i> Копировать</button>';
     html += '</div>';
     html += '<input type="file" id="import-file" accept=".zip" style="display:none">';
 
