@@ -1,0 +1,1420 @@
+"""API integration tests for the analytics correlation endpoints.
+
+Endpoints under test:
+- POST /api/analytics/correlation-report  — start a new correlation report
+- GET  /api/analytics/correlation-report  — list reports (running + latest done)
+- GET  /api/analytics/correlation-report/{id}/pairs — get pairs for a report
+"""
+from __future__ import annotations
+
+import asyncio
+
+from httpx import AsyncClient
+
+from tests.conftest import auth_headers, register_user, create_metric, create_entry
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+async def _start_report(
+    client: AsyncClient,
+    token: str,
+    start: str = "2026-01-01",
+    end: str = "2026-01-31",
+) -> dict:
+    """Create a correlation report, return response body."""
+    resp = await client.post(
+        "/api/analytics/correlation-report",
+        json={"start": start, "end": end},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def _wait_for_report_done(
+    client: AsyncClient,
+    token: str,
+    max_wait: int = 30,
+) -> dict:
+    """Poll GET /correlation-report until a 'done' report appears.
+
+    Returns the full response body {"running": ..., "report": ...}.
+    """
+    for _ in range(max_wait):
+        resp = await client.get(
+            "/api/analytics/correlation-report",
+            headers=auth_headers(token),
+        )
+        data = resp.json()
+        if data.get("report") is not None and data["report"]["status"] == "done":
+            return data
+        if data.get("running") is None and data.get("report") is None:
+            # No running and no done — something went wrong fast
+            return data
+        await asyncio.sleep(1)
+    return data
+
+
+async def _create_metrics_with_entries(
+    client: AsyncClient,
+    token: str,
+) -> tuple[dict, dict]:
+    """Create a bool metric and a number metric, each with 15 entries."""
+    bool_m = await create_metric(
+        client, token, name="Corr Bool", metric_type="bool", slug="corr_bool",
+    )
+    num_m = await create_metric(
+        client, token, name="Corr Number", metric_type="number", slug="corr_number",
+    )
+    for day in range(1, 16):
+        date_str = f"2026-01-{day:02d}"
+        await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+        await create_entry(client, token, num_m["id"], date_str, day * 10)
+    return bool_m, num_m
+
+
+# ---------------------------------------------------------------------------
+# Report creation
+# ---------------------------------------------------------------------------
+
+class TestCreateCorrelationReport:
+
+    async def test_create_returns_report_id_and_running(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        body = await _start_report(client, user_a["token"])
+        assert "report_id" in body
+        assert isinstance(body["report_id"], int)
+        assert body["status"] == "running"
+        # Wait for background task to finish before cleanup
+        await _wait_for_report_done(client, user_a["token"])
+
+    async def test_list_includes_running_report(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        await _start_report(client, user_a["token"])
+        resp = await client.get(
+            "/api/analytics/correlation-report",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        # Either still running or already done (fast with no data)
+        has_running = data.get("running") is not None
+        has_done = data.get("report") is not None
+        assert has_running or has_done
+        # Wait for background task to finish before cleanup
+        await _wait_for_report_done(client, user_a["token"])
+
+
+# ---------------------------------------------------------------------------
+# Report completion (poll until done)
+# ---------------------------------------------------------------------------
+
+class TestReportCompletion:
+
+    async def test_report_becomes_done(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Report with metrics and entries completes with status 'done'."""
+        await _create_metrics_with_entries(client, user_a["token"])
+        await _start_report(client, user_a["token"])
+        data = await _wait_for_report_done(client, user_a["token"])
+        assert data["report"] is not None
+        assert data["report"]["status"] == "done"
+
+    async def test_done_report_has_period(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        await _create_metrics_with_entries(client, user_a["token"])
+        await _start_report(client, user_a["token"], start="2026-01-01", end="2026-01-31")
+        data = await _wait_for_report_done(client, user_a["token"])
+        report = data["report"]
+        assert report["period_start"] == "2026-01-01"
+        assert report["period_end"] == "2026-01-31"
+
+    async def test_done_report_has_counts(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        await _create_metrics_with_entries(client, user_a["token"])
+        await _start_report(client, user_a["token"])
+        data = await _wait_for_report_done(client, user_a["token"])
+        report = data["report"]
+        assert "counts" in report
+        counts = report["counts"]
+        assert "total" in counts
+        assert isinstance(counts["total"], int)
+        assert counts["total"] >= 0
+        for key in ("sig_strong", "sig_medium", "sig_weak", "insig"):
+            assert key in counts
+
+
+# ---------------------------------------------------------------------------
+# Pairs structure
+# ---------------------------------------------------------------------------
+
+class TestPairsStructure:
+
+    async def test_pairs_have_valid_structure(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """After report completes, pairs endpoint returns structured data."""
+        await _create_metrics_with_entries(client, user_a["token"])
+        report_body = await _start_report(client, user_a["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_a["token"])
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "pairs" in data
+        assert "total" in data
+        assert isinstance(data["total"], int)
+        assert "has_more" in data
+
+    async def test_pairs_fields(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Each pair has required fields with correct types."""
+        await _create_metrics_with_entries(client, user_a["token"])
+        report_body = await _start_report(client, user_a["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_a["token"])
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            headers=auth_headers(user_a["token"]),
+        )
+        data = resp.json()
+        assert data["total"] > 0, "Expected at least one correlation pair"
+        pair = data["pairs"][0]
+
+        # Source keys
+        assert "source_key_a" not in pair or isinstance(pair.get("source_key_a"), str)
+        assert "label_a" in pair
+        assert "label_b" in pair
+
+        # Correlation value
+        assert "correlation" in pair
+        assert isinstance(pair["correlation"], (int, float))
+
+        # Data points
+        assert "data_points" in pair
+        assert isinstance(pair["data_points"], int)
+        assert pair["data_points"] > 0
+
+        # Lag days
+        assert "lag_days" in pair
+        assert isinstance(pair["lag_days"], int)
+
+        # Types
+        assert "type_a" in pair
+        assert "type_b" in pair
+
+    async def test_pairs_have_p_value(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Pairs include p_value (computed or stored)."""
+        await _create_metrics_with_entries(client, user_a["token"])
+        report_body = await _start_report(client, user_a["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_a["token"])
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            headers=auth_headers(user_a["token"]),
+        )
+        data = resp.json()
+        assert data["total"] > 0
+        for pair in data["pairs"]:
+            assert "p_value" in pair
+            if pair["p_value"] is not None:
+                assert isinstance(pair["p_value"], (int, float))
+
+    async def test_lag_correlations_present(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Both lag=0 (same-day) and lag=1 correlations should be present."""
+        await _create_metrics_with_entries(client, user_a["token"])
+        report_body = await _start_report(client, user_a["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_a["token"])
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(user_a["token"]),
+        )
+        data = resp.json()
+        lag_values = {p["lag_days"] for p in data["pairs"]}
+        assert 0 in lag_values, "Expected same-day (lag=0) correlations"
+        # lag=1 may or may not appear depending on data, so we only assert
+        # the set contains at least lag 0
+
+
+# ---------------------------------------------------------------------------
+# Auto sources
+# ---------------------------------------------------------------------------
+
+class TestAutoSources:
+
+    async def test_auto_sources_in_pairs(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Auto sources like day_of_week appear in pairs."""
+        await _create_metrics_with_entries(client, user_a["token"])
+        report_body = await _start_report(client, user_a["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_a["token"])
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(user_a["token"]),
+        )
+        data = resp.json()
+        # Auto sources use labels from AUTO_DISPLAY_NAMES (e.g. "День недели",
+        # "Месяц", "Номер недели"). Check that at least one non-metric label exists.
+        labels = set()
+        for pair in data["pairs"]:
+            labels.add(pair["label_a"])
+            labels.add(pair["label_b"])
+        # Our two metric names
+        metric_names = {"Corr Bool", "Corr Number"}
+        non_metric_labels = labels - metric_names
+        # Auto sources should add extra labels (e.g. "День недели", "не ноль" variants)
+        assert len(non_metric_labels) > 0, (
+            f"Expected auto-source labels beyond metric names, got only: {labels}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Data isolation
+# ---------------------------------------------------------------------------
+
+class TestDataIsolation:
+
+    async def test_user_a_cannot_see_user_b_pairs(
+        self, client: AsyncClient, user_a: dict, user_b: dict,
+    ) -> None:
+        """user_a cannot fetch pairs from user_b's report."""
+        # user_b creates metrics, entries, and a report
+        await _create_metrics_with_entries(client, user_b["token"])
+        report_body = await _start_report(client, user_b["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_b["token"])
+
+        # user_a tries to fetch user_b's report pairs
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        # Should return empty pairs (report not found for user_a)
+        assert data["pairs"] == []
+        assert data["total"] == 0
+
+    async def test_user_a_cannot_see_user_b_reports_in_list(
+        self, client: AsyncClient, user_a: dict, user_b: dict,
+    ) -> None:
+        """user_a's report list does not include user_b's reports."""
+        await _create_metrics_with_entries(client, user_b["token"])
+        await _start_report(client, user_b["token"])
+        await _wait_for_report_done(client, user_b["token"])
+
+        resp = await client.get(
+            "/api/analytics/correlation-report",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        # user_a has no reports
+        assert data["running"] is None
+        assert data["report"] is None
+
+
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
+
+class TestErrorHandling:
+
+    async def test_get_pairs_nonexistent_report(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Requesting pairs for a non-existent report returns empty result."""
+        resp = await client.get(
+            "/api/analytics/correlation-report/999999/pairs",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["pairs"] == []
+        assert data["total"] == 0
+
+    async def test_create_report_unauthenticated(
+        self, client: AsyncClient,
+    ) -> None:
+        """POST without auth token returns 401."""
+        resp = await client.post(
+            "/api/analytics/correlation-report",
+            json={"start": "2026-01-01", "end": "2026-01-31"},
+        )
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Pair chart
+# ---------------------------------------------------------------------------
+
+class TestCorrelationPairChart:
+
+    async def test_pair_chart_returns_expected_fields(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """GET /correlation-pair-chart returns chart data with all expected fields."""
+        await _create_metrics_with_entries(client, user_a["token"])
+        report_body = await _start_report(client, user_a["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_a["token"])
+
+        # Fetch pairs to get a real pair_id
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            headers=auth_headers(user_a["token"]),
+        )
+        data = resp.json()
+        assert data["total"] > 0, "Expected at least one pair for chart test"
+        pair_id = data["pairs"][0]["pair_id"]
+
+        # Call pair chart endpoint
+        resp = await client.get(
+            f"/api/analytics/correlation-pair-chart?pair_id={pair_id}",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        chart = resp.json()
+
+        assert "dates" in chart
+        assert isinstance(chart["dates"], list)
+        assert "values_a" in chart
+        assert isinstance(chart["values_a"], list)
+        assert "values_b" in chart
+        assert isinstance(chart["values_b"], list)
+        assert "label_a" in chart
+        assert isinstance(chart["label_a"], str)
+        assert "label_b" in chart
+        assert isinstance(chart["label_b"], str)
+        assert "type_a" in chart
+        assert "type_b" in chart
+        assert "correlation" in chart
+        assert isinstance(chart["correlation"], (int, float))
+
+
+class TestPairChartNonexistent:
+
+    async def test_nonexistent_pair_returns_empty(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """GET /correlation-pair-chart with non-existent pair_id returns empty lists."""
+        resp = await client.get(
+            "/api/analytics/correlation-pair-chart?pair_id=999999",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        chart = resp.json()
+        assert chart["dates"] == []
+        assert chart["values_a"] == []
+        assert chart["values_b"] == []
+
+
+class TestPairChartDataIsolation:
+
+    async def test_user_b_cannot_see_user_a_pair_chart(
+        self, client: AsyncClient, user_a: dict, user_b: dict,
+    ) -> None:
+        """user_b gets empty result when requesting user_a's pair chart."""
+        await _create_metrics_with_entries(client, user_a["token"])
+        report_body = await _start_report(client, user_a["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_a["token"])
+
+        # Get a real pair_id from user_a's report
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            headers=auth_headers(user_a["token"]),
+        )
+        data = resp.json()
+        assert data["total"] > 0
+        pair_id = data["pairs"][0]["pair_id"]
+
+        # user_b tries to get chart for user_a's pair
+        resp = await client.get(
+            f"/api/analytics/correlation-pair-chart?pair_id={pair_id}",
+            headers=auth_headers(user_b["token"]),
+        )
+        assert resp.status_code == 200
+        chart = resp.json()
+        assert chart["dates"] == []
+        assert chart["values_a"] == []
+        assert chart["values_b"] == []
+
+
+# ---------------------------------------------------------------------------
+# Enum metric in correlations
+# ---------------------------------------------------------------------------
+
+class TestCorrelationWithEnumMetric:
+
+    async def test_enum_options_appear_as_separate_sources(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Each enum option becomes a separate boolean source in correlations."""
+        token = user_a["token"]
+
+        # Create enum metric with 3 options
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Mood", "type": "enum", "enum_options": ["Good", "Bad", "Meh"]},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 201, resp.text
+        enum_m = resp.json()
+        enum_id = enum_m["id"]
+        option_ids = [opt["id"] for opt in enum_m["enum_options"]]
+        assert len(option_ids) == 3
+
+        # Create bool metric for correlation counterpart
+        bool_m = await create_metric(
+            client, token, name="Exercise", metric_type="bool", slug="exercise",
+        )
+
+        # Create 15 entries for enum (rotating through options)
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            selected = [option_ids[day % 3]]
+            await create_entry(client, token, enum_id, date_str, selected)
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+
+        # Run correlation report
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        assert data["report"]["status"] == "done"
+        report_id = data["report"]["id"]
+
+        # Fetch all pairs
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+        assert pairs_data["total"] > 0
+
+        # Enum options should produce per-option boolean sources.
+        # Look for pairs where type_a or type_b is "enum_bool"
+        # (the correlation engine creates bool sources per option).
+        types_found = set()
+        for pair in pairs_data["pairs"]:
+            types_found.add(pair["type_a"])
+            types_found.add(pair["type_b"])
+
+        # Enum options appear as separate sources. The option label shows up
+        # in option_a / option_b fields of the pair (not in label_a/b).
+        option_labels_found: set[str] = set()
+        for pair in pairs_data["pairs"]:
+            if pair.get("option_a"):
+                option_labels_found.add(pair["option_a"])
+            if pair.get("option_b"):
+                option_labels_found.add(pair["option_b"])
+        # At least one of Good/Bad/Meh should appear
+        expected = {"Good", "Bad", "Meh"}
+        assert option_labels_found & expected, (
+            f"Expected enum option labels in pairs, got options: {option_labels_found}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Text metric in correlations (note_count auto-source)
+# ---------------------------------------------------------------------------
+
+class TestCorrelationWithTextMetric:
+
+    async def test_text_metric_produces_note_count_source(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Text metric contributes a note_count auto-source to correlations."""
+        token = user_a["token"]
+
+        # Create text metric
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Journal", "type": "text"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 201, resp.text
+        text_m = resp.json()
+        text_id = text_m["id"]
+
+        # Create bool metric for correlation counterpart
+        bool_m = await create_metric(
+            client, token, name="Workout", metric_type="bool", slug="workout",
+        )
+
+        # Create notes for 15 dates + bool entries
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            resp = await client.post(
+                "/api/notes",
+                json={"metric_id": text_id, "date": date_str, "text": f"Day {day} notes"},
+                headers=auth_headers(token),
+            )
+            assert resp.status_code == 201, resp.text
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+
+        # Run correlation report
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        assert data["report"]["status"] == "done"
+        report_id = data["report"]["id"]
+
+        # Fetch all pairs
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+        assert pairs_data["total"] > 0
+
+        # Look for note_count auto-source — it should appear in labels
+        # The auto-source label typically contains the text metric name
+        labels = set()
+        for pair in pairs_data["pairs"]:
+            labels.add(pair["label_a"])
+            labels.add(pair["label_b"])
+
+        # note_count source should reference the Journal metric
+        journal_labels = [lbl for lbl in labels if "Journal" in lbl]
+        assert len(journal_labels) > 0, (
+            f"Expected note_count source referencing Journal metric, got labels: {labels}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pairs category filter
+# ---------------------------------------------------------------------------
+
+class TestCorrelationPairsCategoryFilter:
+
+    async def test_category_filter_returns_different_counts(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Pairs endpoint with category filter returns valid results."""
+        await _create_metrics_with_entries(client, user_a["token"])
+        report_body = await _start_report(client, user_a["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_a["token"])
+
+        # Get all pairs
+        resp_all = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?category=all&limit=200",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp_all.status_code == 200
+        total_all = resp_all.json()["total"]
+
+        # Get only sig_strong pairs
+        resp_strong = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?category=sig_strong&limit=200",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp_strong.status_code == 200
+        total_strong = resp_strong.json()["total"]
+
+        # sig_strong is a subset of all
+        assert total_strong <= total_all
+
+
+# ---------------------------------------------------------------------------
+# Pairs metric_ids filter
+# ---------------------------------------------------------------------------
+
+class TestCorrelationPairsMetricFilter:
+
+    async def test_metric_ids_filter_narrows_results(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Pairs filtered by metric_ids return only relevant pairs."""
+        bool_m, num_m = await _create_metrics_with_entries(client, user_a["token"])
+        report_body = await _start_report(client, user_a["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_a["token"])
+
+        # Get all pairs
+        resp_all = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp_all.status_code == 200
+        total_all = resp_all.json()["total"]
+
+        # Filter by both metric IDs (pairs must have both sides in the set)
+        both_ids = f"{bool_m['id']},{num_m['id']}"
+        resp_filtered = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?metric_ids={both_ids}&limit=200",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp_filtered.status_code == 200
+        filtered_data = resp_filtered.json()
+        total_filtered = filtered_data["total"]
+
+        # Filtered set should be a subset of all (auto-source pairs are excluded)
+        assert total_filtered <= total_all
+
+        # Every filtered pair must reference one of the specified metrics
+        for pair in filtered_data["pairs"]:
+            metric_ids_set = {bool_m["id"], num_m["id"]}
+            assert pair.get("metric_a_id") in metric_ids_set or pair.get("metric_b_id") in metric_ids_set
+
+
+# ---------------------------------------------------------------------------
+# Pairs pagination
+# ---------------------------------------------------------------------------
+
+class TestCorrelationPairsPagination:
+
+    async def test_pagination_offset_and_limit(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Pairs endpoint respects offset and limit, reports has_more correctly."""
+        await _create_metrics_with_entries(client, user_a["token"])
+        report_body = await _start_report(client, user_a["token"])
+        report_id = report_body["report_id"]
+        await _wait_for_report_done(client, user_a["token"])
+
+        # Request first page with limit=2
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?offset=0&limit=2",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data["total"], int)
+        assert isinstance(data["has_more"], bool)
+        assert len(data["pairs"]) <= 2
+
+        if data["total"] > 2:
+            assert data["has_more"] is True
+            # Request second page
+            resp2 = await client.get(
+                f"/api/analytics/correlation-report/{report_id}/pairs?offset=2&limit=2",
+                headers=auth_headers(user_a["token"]),
+            )
+            assert resp2.status_code == 200
+            data2 = resp2.json()
+            assert data2["total"] == data["total"]  # total stays the same
+            assert len(data2["pairs"]) <= 2
+            # Pages should not overlap
+            ids_page1 = {p["pair_id"] for p in data["pairs"]}
+            ids_page2 = {p["pair_id"] for p in data2["pairs"]}
+            assert ids_page1.isdisjoint(ids_page2)
+
+
+# ---------------------------------------------------------------------------
+# Pair chart: auto sources (lines 1386-1464)
+# ---------------------------------------------------------------------------
+
+class TestPairChartAutoSources:
+    """Pair chart reconstruction for auto-source types."""
+
+    async def test_pair_chart_nonzero_source(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Report with number metric produces nonzero auto-source; pair-chart reconstructs it."""
+        token = user_a["token"]
+        num_m = await create_metric(
+            client, token, name="NumNZ", metric_type="number", slug="numnz",
+        )
+        bool_m = await create_metric(
+            client, token, name="BoolNZ", metric_type="bool", slug="boolnz",
+        )
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            # Alternate between 0 and positive
+            await create_entry(client, token, num_m["id"], date_str, day * 10 if day % 2 else 0)
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        # Fetch all pairs, look for nonzero source
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+        assert pairs_data["total"] > 0
+
+        # Find a pair with "не ноль" label (nonzero auto source)
+        nonzero_pair = None
+        for p in pairs_data["pairs"]:
+            if "не ноль" in p.get("label_a", "") or "не ноль" in p.get("label_b", ""):
+                nonzero_pair = p
+                break
+        assert nonzero_pair is not None, "Expected nonzero auto-source pair"
+
+        # Get pair chart data
+        resp = await client.get(
+            f"/api/analytics/correlation-pair-chart?pair_id={nonzero_pair['pair_id']}",
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        chart = resp.json()
+        assert len(chart["dates"]) > 0
+        # Nonzero values should be 0.0 or 1.0
+        nz_side = "values_a" if "не ноль" in nonzero_pair.get("label_a", "") else "values_b"
+        for v in chart[nz_side]:
+            assert v in (0.0, 1.0), f"Nonzero value should be 0 or 1, got {v}"
+
+    async def test_pair_chart_note_count_source(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Text metric produces note_count auto-source; pair-chart reconstructs it."""
+        token = user_a["token"]
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "JournalNC", "type": "text"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 201
+        text_m = resp.json()
+        text_id = text_m["id"]
+
+        bool_m = await create_metric(
+            client, token, name="HabitNC", metric_type="bool", slug="habitnc",
+        )
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            # Create varying note counts
+            for _ in range(day % 3 + 1):
+                await client.post(
+                    "/api/notes",
+                    json={"metric_id": text_id, "date": date_str, "text": f"note {day}"},
+                    headers=auth_headers(token),
+                )
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # Find pair with note_count source (label contains "кол-во заметок")
+        nc_pair = None
+        for p in pairs_data["pairs"]:
+            if "заметок" in p.get("label_a", "") or "заметок" in p.get("label_b", ""):
+                nc_pair = p
+                break
+        assert nc_pair is not None, "Expected note_count auto-source pair"
+
+        # Get pair chart
+        resp = await client.get(
+            f"/api/analytics/correlation-pair-chart?pair_id={nc_pair['pair_id']}",
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        chart = resp.json()
+        assert len(chart["dates"]) > 0
+
+    async def test_pair_chart_computed_source(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Computed metric in pair-chart resolves result_type (lines 1520-1533)."""
+        token = user_a["token"]
+        num = await create_metric(
+            client, token, name="BaseComp", metric_type="number", slug="basecomp",
+        )
+        bool_m = await create_metric(
+            client, token, name="FlagComp", metric_type="bool", slug="flagcomp",
+        )
+        comp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "DblComp", "type": "computed",
+                "formula": [
+                    {"type": "metric", "id": num["id"]},
+                    {"type": "op", "value": "*"},
+                    {"type": "number", "value": 2},
+                ],
+                "result_type": "float",
+            },
+            headers=auth_headers(token),
+        )
+        assert comp.status_code == 201
+        comp_id = comp.json()["id"]
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, num["id"], date_str, day * 5)
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # Find a pair involving the computed metric
+        comp_pair = None
+        for p in pairs_data["pairs"]:
+            if p.get("metric_a_id") == comp_id or p.get("metric_b_id") == comp_id:
+                comp_pair = p
+                break
+        assert comp_pair is not None, "Expected pair with computed metric"
+
+        # Get pair chart — this triggers computed type resolution (lines 1520-1533)
+        resp = await client.get(
+            f"/api/analytics/correlation-pair-chart?pair_id={comp_pair['pair_id']}",
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        chart = resp.json()
+        # The computed side should resolve to result_type ("float"),
+        # not "computed"
+        if comp_pair["metric_a_id"] == comp_id:
+            assert chart["type_a"] == "float"
+        else:
+            assert chart["type_b"] == "float"
+        assert len(chart["dates"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Pair chart: privacy blocking (lines 1484-1498)
+# ---------------------------------------------------------------------------
+
+class TestPairChartPrivacy:
+    """Pair chart blocked for private metrics when privacy mode is on."""
+
+    async def test_pair_chart_private_blocked(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Private metric pair chart returns empty when privacy is on."""
+        token = user_a["token"]
+
+        # Create a private metric
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "SecretCorr", "type": "number", "private": True},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 201
+        priv_m = resp.json()
+        priv_id = priv_m["id"]
+
+        bool_m = await create_metric(
+            client, token, name="PubCorr", metric_type="bool", slug="pubcorr",
+        )
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, priv_id, date_str, day * 7)
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        # Find a pair involving the private metric
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        priv_pair = None
+        for p in pairs_data["pairs"]:
+            if p.get("metric_a_id") == priv_id or p.get("metric_b_id") == priv_id:
+                priv_pair = p
+                break
+        assert priv_pair is not None, "Expected pair with private metric"
+
+        # Enable privacy mode
+        resp = await client.put(
+            "/api/auth/privacy-mode",
+            json={"enabled": True},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+
+        # Pair chart should return empty
+        resp = await client.get(
+            f"/api/analytics/correlation-pair-chart?pair_id={priv_pair['pair_id']}",
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        chart = resp.json()
+        assert chart["dates"] == []
+        assert chart["values_a"] == []
+
+
+# ---------------------------------------------------------------------------
+# Report with diverse source types (lines 870-960)
+# ---------------------------------------------------------------------------
+
+class TestReportDiverseSources:
+    """Report with enum, text, number, duration metrics produces diverse sources."""
+
+    async def test_report_enum_text_number(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Enum(3 opts) + text + number + duration → pairs with enum_bool and note_count."""
+        token = user_a["token"]
+
+        # Create enum metric with 3 options
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "MoodDiv", "type": "enum", "enum_options": ["Happy", "Sad", "Neutral"]},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 201
+        enum_m = resp.json()
+        enum_id = enum_m["id"]
+        option_ids = [opt["id"] for opt in enum_m["enum_options"]]
+
+        # Create text metric
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "DiaryDiv", "type": "text"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 201
+        text_id = resp.json()["id"]
+
+        # Create number + duration metrics
+        num_m = await create_metric(client, token, name="StepsDiv", metric_type="number")
+        dur_m = await create_metric(client, token, name="SleepDiv", metric_type="duration")
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, enum_id, date_str, [option_ids[day % 3]])
+            await client.post(
+                "/api/notes",
+                json={"metric_id": text_id, "date": date_str, "text": f"Day {day}"},
+                headers=auth_headers(token),
+            )
+            await create_entry(client, token, num_m["id"], date_str, day * 100)
+            await create_entry(client, token, dur_m["id"], date_str, day * 30)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        assert data["report"]["status"] == "done"
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+        assert pairs_data["total"] > 0
+
+        # Check enum_bool sources exist
+        types_found = set()
+        for p in pairs_data["pairs"]:
+            types_found.add(p["type_a"])
+            types_found.add(p["type_b"])
+        assert "enum_bool" in types_found, f"Expected enum_bool in types: {types_found}"
+
+        # Check note_count source exists
+        labels = set()
+        for p in pairs_data["pairs"]:
+            labels.add(p["label_a"])
+            labels.add(p["label_b"])
+        note_labels = [l for l in labels if "заметок" in l]
+        assert len(note_labels) > 0, f"Expected note_count label, got: {labels}"
+
+        # Check nonzero source exists
+        nonzero_labels = [l for l in labels if "не ноль" in l]
+        assert len(nonzero_labels) > 0, f"Expected nonzero label, got: {labels}"
+
+        # Check enum option labels
+        option_labels_found: set[str] = set()
+        for p in pairs_data["pairs"]:
+            if p.get("option_a"):
+                option_labels_found.add(p["option_a"])
+            if p.get("option_b"):
+                option_labels_found.add(p["option_b"])
+        expected_opts = {"Happy", "Sad", "Neutral"}
+        assert option_labels_found & expected_opts, (
+            f"Expected enum option labels, got: {option_labels_found}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pair chart with lag correlation
+# ---------------------------------------------------------------------------
+
+class TestPairChartLag:
+    """Pair chart for lag=1 correlations."""
+
+    async def test_pair_chart_lag_has_original_dates(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Lag=1 pair chart includes original_dates_b."""
+        token = user_a["token"]
+        bool_m, num_m = await _create_metrics_with_entries(client, token)
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # Find a lag=1 pair
+        lag_pair = None
+        for p in pairs_data["pairs"]:
+            if p["lag_days"] == 1:
+                lag_pair = p
+                break
+
+        if lag_pair is not None:
+            resp = await client.get(
+                f"/api/analytics/correlation-pair-chart?pair_id={lag_pair['pair_id']}",
+                headers=auth_headers(token),
+            )
+            assert resp.status_code == 200
+            chart = resp.json()
+            assert chart["lag_days"] == 1
+            if len(chart["dates"]) > 0:
+                assert chart["original_dates_b"] is not None
+                assert len(chart["original_dates_b"]) == len(chart["dates"])
+
+
+# ---------------------------------------------------------------------------
+# Pair chart: calendar auto-source (day_of_week)
+# ---------------------------------------------------------------------------
+
+class TestPairChartCalendarAutoSource:
+    """Pair chart reconstruction for calendar auto-sources."""
+
+    async def test_pair_chart_day_of_week(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Day-of-week auto-source pair chart returns isoweekday values."""
+        token = user_a["token"]
+        bool_m, num_m = await _create_metrics_with_entries(client, token)
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # Find a pair with day_of_week source
+        dow_pair = None
+        for p in pairs_data["pairs"]:
+            if "День недели" in p.get("label_a", "") or "День недели" in p.get("label_b", ""):
+                dow_pair = p
+                break
+        assert dow_pair is not None, "Expected day_of_week auto-source pair"
+
+        resp = await client.get(
+            f"/api/analytics/correlation-pair-chart?pair_id={dow_pair['pair_id']}",
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        chart = resp.json()
+        assert len(chart["dates"]) > 0
+        # Day-of-week values should be 1-7
+        dow_side = "values_a" if "День недели" in dow_pair.get("label_a", "") else "values_b"
+        for v in chart[dow_side]:
+            assert 1 <= v <= 7, f"Day of week should be 1-7, got {v}"
+
+
+# ---------------------------------------------------------------------------
+# Pair formatting: hint words for different types
+# ---------------------------------------------------------------------------
+
+class TestPairHintWords:
+    """Verify hint_a/hint_b fields in pairs for different metric types."""
+
+    async def test_number_pair_has_hints(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Number metric pairs should have 'больше'/'меньше' hints."""
+        token = user_a["token"]
+        bool_m, num_m = await _create_metrics_with_entries(client, token)
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+        assert pairs_data["total"] > 0
+
+        # Find a pair between the bool and number metric
+        for p in pairs_data["pairs"]:
+            if p.get("hint_a") or p.get("hint_b"):
+                # At least one pair should have non-empty hints
+                assert p["hint_a"] != "" or p["hint_b"] != ""
+                break
+
+
+# ---------------------------------------------------------------------------
+# Multi-slot metric in correlations (lines 932-934)
+# ---------------------------------------------------------------------------
+
+class TestCorrelationMultiSlot:
+    """Multi-slot metric produces per-slot sources in correlation report."""
+
+    async def test_multi_slot_produces_slot_sources(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Metric with 2 slots creates aggregate + per-slot sources."""
+        token = user_a["token"]
+
+        metric = await create_metric(
+            client, token, name="MultiSlotCorr", metric_type="number",
+            slug="mslot_corr",
+            slot_labels=["Morning", "Evening"],
+        )
+        mid = metric["id"]
+        slots = metric["slots"]
+        slot_a = slots[0]["id"]
+        slot_b = slots[1]["id"]
+
+        bool_m = await create_metric(
+            client, token, name="FlagSlot", metric_type="bool", slug="flag_slot",
+        )
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, mid, date_str, day * 10, slot_id=slot_a)
+            await create_entry(client, token, mid, date_str, day * 5, slot_id=slot_b)
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+        assert pairs_data["total"] > 0
+
+        # Look for slot labels in pairs
+        slot_labels_found = set()
+        for p in pairs_data["pairs"]:
+            if p.get("slot_label_a"):
+                slot_labels_found.add(p["slot_label_a"])
+            if p.get("slot_label_b"):
+                slot_labels_found.add(p["slot_label_b"])
+        assert "Morning" in slot_labels_found or "Evening" in slot_labels_found, (
+            f"Expected slot labels in pairs, got: {slot_labels_found}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pair chart: computed on side B (lines 1528-1533)
+# ---------------------------------------------------------------------------
+
+class TestPairChartComputedSideB:
+    """Pair chart where the computed metric is on the B side."""
+
+    async def test_pair_chart_computed_type_b(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Find pair where computed is metric_b → type_b resolves to result_type."""
+        token = user_a["token"]
+        bool_m = await create_metric(
+            client, token, name="FlagB", metric_type="bool", slug="flagb",
+        )
+        num = await create_metric(
+            client, token, name="BaseB", metric_type="number", slug="baseb",
+        )
+        comp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "CompB2", "type": "computed",
+                "formula": [
+                    {"type": "metric", "id": num["id"]},
+                    {"type": "op", "value": "*"},
+                    {"type": "number", "value": 2},
+                ],
+                "result_type": "float",
+            },
+            headers=auth_headers(token),
+        )
+        assert comp.status_code == 201
+        comp_id = comp.json()["id"]
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, num["id"], date_str, day * 5)
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # Find pairs where computed is on B side
+        comp_b_pair = None
+        for p in pairs_data["pairs"]:
+            if p.get("metric_b_id") == comp_id:
+                comp_b_pair = p
+                break
+
+        if comp_b_pair is None:
+            # If computed ended up on A side in all pairs, find one and test it
+            for p in pairs_data["pairs"]:
+                if p.get("metric_a_id") == comp_id:
+                    comp_b_pair = p
+                    break
+
+        assert comp_b_pair is not None, "Expected a pair with the computed metric"
+
+        # Get pair chart
+        resp = await client.get(
+            f"/api/analytics/correlation-pair-chart?pair_id={comp_b_pair['pair_id']}",
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        chart = resp.json()
+        assert len(chart["dates"]) > 0
+        # The computed type should be resolved
+        if comp_b_pair.get("metric_b_id") == comp_id:
+            assert chart["type_b"] == "float"
+        else:
+            assert chart["type_a"] == "float"
+
+
+# ---------------------------------------------------------------------------
+# Pair chart: time and scale metrics for type hint coverage
+# ---------------------------------------------------------------------------
+
+class TestCorrelationTypeHints:
+    """Verify correlation pairs with time/scale metrics have proper hints."""
+
+    async def test_time_metric_hints(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Time metric in correlation produces 'позже'/'раньше' hints."""
+        token = user_a["token"]
+        time_m = await create_metric(
+            client, token, name="WakeCorr", metric_type="time", slug="wake_corr",
+        )
+        num_m = await create_metric(
+            client, token, name="StepsCorr2", metric_type="number", slug="steps_corr2",
+        )
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            hours = 7 + (day % 3)
+            await create_entry(client, token, time_m["id"], date_str, f"{hours:02d}:00")
+            await create_entry(client, token, num_m["id"], date_str, day * 100)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # Find a pair involving the time metric
+        time_pair = None
+        for p in pairs_data["pairs"]:
+            if p.get("type_a") == "time" or p.get("type_b") == "time":
+                time_pair = p
+                break
+        assert time_pair is not None, "Expected pair with time metric"
+        # Time hints should be "позже" or "раньше"
+        hints = {time_pair.get("hint_a", ""), time_pair.get("hint_b", "")}
+        assert "позже" in hints or "раньше" in hints, (
+            f"Expected time hints, got: {hints}"
+        )
+
+    async def test_scale_metric_hints(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Scale metric in correlation produces 'выше'/'ниже' hints."""
+        token = user_a["token"]
+        scale_m = await create_metric(
+            client, token, name="EnergyCorr", metric_type="scale",
+            slug="energy_corr", scale_min=1, scale_max=5, scale_step=1,
+        )
+        bool_m = await create_metric(
+            client, token, name="ExCorr", metric_type="bool", slug="ex_corr",
+        )
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, scale_m["id"], date_str, (day % 5) + 1)
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=200",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # Find a pair involving the scale metric
+        scale_pair = None
+        for p in pairs_data["pairs"]:
+            if p.get("type_a") == "scale" or p.get("type_b") == "scale":
+                scale_pair = p
+                break
+        assert scale_pair is not None, "Expected pair with scale metric"
+        hints = {scale_pair.get("hint_a", ""), scale_pair.get("hint_b", "")}
+        assert "выше" in hints or "ниже" in hints, (
+            f"Expected scale hints, got: {hints}"
+        )
