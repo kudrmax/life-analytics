@@ -52,11 +52,11 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         # Get slots for all metrics (with category_id from junction table)
         metric_ids = [m["id"] for m in metrics]
         all_slots_rows = await db.fetch(
-            """SELECT msl.metric_id, ms.label, msl.sort_order, msl.category_id
+            """SELECT msl.metric_id, ms.label, ms.sort_order, msl.category_id
                FROM metric_slots msl
                JOIN measurement_slots ms ON ms.id = msl.slot_id
                WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE
-               ORDER BY msl.metric_id, msl.sort_order""",
+               ORDER BY msl.metric_id, ms.sort_order""",
             metric_ids,
         ) if metric_ids else []
 
@@ -606,7 +606,7 @@ async def import_data(
             # Build metric_id -> {sort_order: slot_id} lookup
             all_metric_ids = list(slug_to_id.values())
             slot_rows = await db.fetch(
-                """SELECT msl.metric_id, msl.sort_order, ms.id
+                """SELECT msl.metric_id, ms.sort_order, ms.id
                    FROM metric_slots msl
                    JOIN measurement_slots ms ON ms.id = msl.slot_id
                    WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE""",

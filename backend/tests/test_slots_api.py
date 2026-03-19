@@ -436,3 +436,58 @@ class TestMergeSlots:
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestSlotGlobalSortOrder:
+    """Slots attached to a metric must be returned in global sort_order
+    (measurement_slots.sort_order), not in metric_slots.sort_order."""
+
+    async def test_metric_slots_follow_global_order(self, client, user_a):
+        # Create global slots: A(sort_order=0), B(1), C(2)
+        slot_a = await create_slot(client, user_a["token"], "A")
+        slot_b = await create_slot(client, user_a["token"], "B")
+        slot_c = await create_slot(client, user_a["token"], "C")
+
+        # Attach in reverse order: C, A (metric_slots.sort_order = 0 for C, 1 for A)
+        metric = await create_metric(
+            client, user_a["token"],
+            name="Test", metric_type="bool",
+            slot_configs=[
+                {"slot_id": slot_c["id"]},
+                {"slot_id": slot_a["id"]},
+            ],
+        )
+
+        # GET /api/metrics/{id} should return slots in global order: A, C
+        resp = await client.get(
+            f"/api/metrics/{metric['id']}",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        slots = resp.json()["slots"]
+        assert [s["label"] for s in slots] == ["A", "C"]
+
+    async def test_daily_slots_follow_global_order(self, client, user_a):
+        slot_a = await create_slot(client, user_a["token"], "Morning")
+        slot_b = await create_slot(client, user_a["token"], "Evening")
+
+        # Attach Evening first, then Morning
+        metric = await create_metric(
+            client, user_a["token"],
+            name="Mood", metric_type="bool",
+            slot_configs=[
+                {"slot_id": slot_b["id"]},
+                {"slot_id": slot_a["id"]},
+            ],
+        )
+
+        resp = await client.get(
+            "/api/daily/2026-03-20",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        metrics = resp.json()["metrics"]
+        mood = next(m for m in metrics if m["metric_id"] == metric["id"])
+        slot_labels = [s["label"] for s in mood["slots"]]
+        assert slot_labels == ["Morning", "Evening"]

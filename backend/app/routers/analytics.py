@@ -925,7 +925,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                    FROM metric_slots msl
                    JOIN measurement_slots ms ON ms.id = msl.slot_id
                    WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE
-                   ORDER BY msl.metric_id, msl.sort_order""",
+                   ORDER BY msl.metric_id, ms.sort_order""",
                 metric_ids,
             ) if metric_ids else []
 

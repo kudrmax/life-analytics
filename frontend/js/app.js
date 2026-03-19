@@ -5888,7 +5888,19 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
     function _addSelectedSlot(slotId, label, categoryId) {
         if (_selectedSlots.some(s => s.id === slotId)) return;
-        _selectedSlots.push({ id: slotId, label, category_id: categoryId || null });
+        const newSlotEntry = { id: slotId, label, category_id: categoryId || null };
+        // Insert at correct position based on global sort_order
+        const globalIndex = _globalSlots.findIndex(g => g.id === slotId);
+        if (globalIndex === -1) {
+            _selectedSlots.push(newSlotEntry);
+        } else {
+            let insertAt = _selectedSlots.length;
+            for (let i = 0; i < _selectedSlots.length; i++) {
+                const gi = _globalSlots.findIndex(g => g.id === _selectedSlots[i].id);
+                if (gi > globalIndex) { insertAt = i; break; }
+            }
+            _selectedSlots.splice(insertAt, 0, newSlotEntry);
+        }
         _renderSelectedSlots();
         updatePreview();
     }

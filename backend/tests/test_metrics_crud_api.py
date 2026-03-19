@@ -1159,7 +1159,8 @@ class TestSlotReorderAndAdd:
         await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 10, slot_id=slot_a["id"])
         await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 20, slot_id=slot_b["id"])
 
-        # Swap order: B first, A second
+        # Swap order: B first, A second (in slot_configs)
+        # But API returns slots sorted by global sort_order (A=0, B=1)
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
             json={"slot_configs": [
@@ -1170,13 +1171,11 @@ class TestSlotReorderAndAdd:
         )
         assert resp.status_code == 200
         data = resp.json()
-        slots = sorted(data["slots"], key=lambda s: s["sort_order"])
-        assert slots[0]["id"] == slot_b["id"]
-        assert slots[0]["label"] == "B"
-        assert slots[0]["sort_order"] == 0
-        assert slots[1]["id"] == slot_a["id"]
-        assert slots[1]["label"] == "A"
-        assert slots[1]["sort_order"] == 1
+        slots = data["slots"]
+        assert slots[0]["id"] == slot_a["id"]
+        assert slots[0]["label"] == "A"
+        assert slots[1]["id"] == slot_b["id"]
+        assert slots[1]["label"] == "B"
 
         # Verify entries still attached to original slot ids
         daily_resp = await client.get(
@@ -1219,10 +1218,11 @@ class TestSlotReorderAndAdd:
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["slots"]) == 3
-        slots = sorted(data["slots"], key=lambda s: s["sort_order"])
+        # Slots returned in global sort_order: A(0), B(1), New(2)
+        slots = data["slots"]
         assert slots[0]["id"] == slot_a["id"]
-        assert slots[1]["label"] == "New"
-        assert slots[2]["id"] == slot_b["id"]
+        assert slots[1]["id"] == slot_b["id"]
+        assert slots[2]["label"] == "New"
 
         # Entries still on original slots
         daily_resp = await client.get(
