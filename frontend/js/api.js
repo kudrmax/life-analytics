@@ -66,7 +66,9 @@ const api = {
         if (res.status === 204) return null;
         if (!res.ok) {
             const err = await res.json().catch(() => ({ detail: res.statusText }));
-            throw new Error(err.detail || JSON.stringify(err));
+            const error = new Error(err.detail || JSON.stringify(err));
+            error.status = res.status;
+            throw error;
         }
         return res.json();
     },
@@ -345,6 +347,11 @@ const api = {
     },
     async deleteSlot(id) {
         const result = await this.request('DELETE', `/api/slots/${id}`);
+        invalidateCache('/api/slots', '/api/metrics', '/api/daily/');
+        return result;
+    },
+    async mergeSlot(sourceId, targetId) {
+        const result = await this.request('POST', `/api/slots/${sourceId}/merge/${targetId}`);
         invalidateCache('/api/slots', '/api/metrics', '/api/daily/');
         return result;
     },

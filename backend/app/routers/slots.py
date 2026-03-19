@@ -14,10 +14,16 @@ async def list_slots(
 ):
     rows = await db.fetch(
         """SELECT ms.id, ms.label, ms.sort_order,
-                  COALESCE(cnt.c, 0) AS usage_count
+                  COALESCE(cnt.c, 0) AS usage_count,
+                  COALESCE(cnt.names, ARRAY[]::text[]) AS usage_metric_names
            FROM measurement_slots ms
-           LEFT JOIN (SELECT slot_id, COUNT(*) c FROM metric_slots GROUP BY slot_id) cnt
-             ON cnt.slot_id = ms.id
+           LEFT JOIN (
+               SELECT msl.slot_id, COUNT(*) c,
+                      array_agg(DISTINCT md.name ORDER BY md.name) AS names
+               FROM metric_slots msl
+               JOIN metric_definitions md ON md.id = msl.metric_id
+               GROUP BY msl.slot_id
+           ) cnt ON cnt.slot_id = ms.id
            WHERE ms.user_id = $1
            ORDER BY ms.sort_order, ms.id""",
         current_user["id"],
@@ -110,6 +116,88 @@ async def delete_slot(
         "DELETE FROM measurement_slots WHERE id = $1 AND user_id = $2",
         slot_id, current_user["id"],
     )
+
+
+@router.post("/{source_id}/merge/{target_id}")
+async def merge_slots(
+    source_id: int,
+    target_id: int,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    if source_id == target_id:
+        raise HTTPException(400, "Нельзя объединить слот сам с собой")
+
+    uid = current_user["id"]
+    source = await db.fetchrow(
+        "SELECT id FROM measurement_slots WHERE id = $1 AND user_id = $2",
+        source_id, uid,
+    )
+    if not source:
+        raise HTTPException(404, "Исходный слот не найден")
+
+    target = await db.fetchrow(
+        "SELECT id FROM measurement_slots WHERE id = $1 AND user_id = $2",
+        target_id, uid,
+    )
+    if not target:
+        raise HTTPException(404, "Целевой слот не найден")
+
+    async with db.transaction():
+        # 1. Move metric_slots: if (metric_id, target) already exists, delete source row
+        conflicting_ms = await db.fetch(
+            """SELECT ms_src.id
+               FROM metric_slots ms_src
+               JOIN metric_slots ms_tgt ON ms_tgt.metric_id = ms_src.metric_id
+                    AND ms_tgt.slot_id = $2
+               WHERE ms_src.slot_id = $1""",
+            source_id, target_id,
+        )
+        conflicting_ms_ids = [r["id"] for r in conflicting_ms]
+        if conflicting_ms_ids:
+            await db.execute(
+                "DELETE FROM metric_slots WHERE id = ANY($1::int[])",
+                conflicting_ms_ids,
+            )
+
+        metrics_moved = await db.execute(
+            "UPDATE metric_slots SET slot_id = $1 WHERE slot_id = $2",
+            target_id, source_id,
+        )
+        metrics_affected = int(metrics_moved.split()[-1])
+
+        # 2. Move entries: delete conflicting (same metric_id, user_id, date), move rest
+        entries_deleted_result = await db.execute(
+            """DELETE FROM entries e_src
+               USING entries e_tgt
+               WHERE e_src.slot_id = $1
+                 AND e_src.user_id = $2
+                 AND e_tgt.slot_id = $3
+                 AND e_tgt.user_id = $2
+                 AND e_tgt.metric_id = e_src.metric_id
+                 AND e_tgt.date = e_src.date""",
+            source_id, uid, target_id,
+        )
+        entries_deleted = int(entries_deleted_result.split()[-1])
+
+        entries_moved_result = await db.execute(
+            "UPDATE entries SET slot_id = $1 WHERE slot_id = $2 AND user_id = $3",
+            target_id, source_id, uid,
+        )
+        entries_moved = int(entries_moved_result.split()[-1])
+
+        # 3. Delete source slot
+        await db.execute(
+            "DELETE FROM measurement_slots WHERE id = $1 AND user_id = $2",
+            source_id, uid,
+        )
+
+    return {
+        "ok": True,
+        "metrics_affected": metrics_affected + len(conflicting_ms_ids),
+        "entries_moved": entries_moved,
+        "entries_deleted": entries_deleted,
+    }
 
 
 @router.post("/reorder")

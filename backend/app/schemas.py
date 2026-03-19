@@ -34,6 +34,7 @@ class SlotOut(BaseModel):
     label: str
     sort_order: int
     usage_count: int = 0
+    usage_metric_names: list[str] = []
 
 
 class CategoryCreate(BaseModel):

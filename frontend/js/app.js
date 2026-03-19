@@ -4150,7 +4150,6 @@ async function renderSlotManager(container) {
     } else {
         for (const slot of slots) {
             const used = slot.usage_count > 0;
-            const delDisabled = used ? 'disabled' : '';
             const delClass = used ? 'btn-icon slot-del-disabled' : 'btn-icon btn-icon-danger slot-del';
             const delTitle = used ? `title="Используется в ${slot.usage_count} метриках"` : '';
             html += `<div class="cat-item" data-slot-id="${slot.id}">
@@ -4158,7 +4157,7 @@ async function renderSlotManager(container) {
                 <span class="cat-item-name">${slot.label}</span>
                 <div class="cat-item-actions">
                     <button class="btn-icon slot-edit" data-slot-id="${slot.id}"><i data-lucide="pencil"></i></button>
-                    <button class="${delClass}" data-slot-id="${slot.id}" ${delDisabled} ${delTitle}><i data-lucide="trash-2"></i></button>
+                    <button class="${delClass}" data-slot-id="${slot.id}" ${delTitle}><i data-lucide="trash-2"></i></button>
                 </div>
             </div>`;
         }
@@ -4188,7 +4187,29 @@ async function renderSlotManager(container) {
             try {
                 await api.updateSlot(slotId, { label: newLabel.trim() });
                 await renderSlotManager(container);
-            } catch (e) { alert('Ошибка: ' + e.message); }
+            } catch (e) {
+                if (e.status === 409) {
+                    const target = slots.find(s => s.label.toLowerCase() === newLabel.trim().toLowerCase());
+                    if (target && confirm(`«${newLabel.trim()}» уже существует. Объединить слоты?`)) {
+                        try {
+                            await api.mergeSlot(slotId, target.id);
+                            await renderSlotManager(container);
+                        } catch (mergeErr) { alert('Ошибка объединения: ' + mergeErr.message); }
+                        return;
+                    }
+                }
+                alert('Ошибка: ' + e.message);
+            }
+        });
+    });
+
+    container.querySelectorAll('.slot-del-disabled').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const slotId = parseInt(btn.dataset.slotId);
+            const slot = slots.find(s => s.id === slotId);
+            if (slot && slot.usage_metric_names && slot.usage_metric_names.length > 0) {
+                alert(`Слот используется в метриках:\n${slot.usage_metric_names.join(', ')}\n\nСначала уберите слот из этих метрик.`);
+            }
         });
     });
 
