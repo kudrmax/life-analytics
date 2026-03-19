@@ -34,3 +34,4 @@ backups/
 
 # Environment
 .env
+backend/.coverage
