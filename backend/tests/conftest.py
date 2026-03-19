@@ -49,7 +49,7 @@ async def db_pool() -> AsyncGenerator[asyncpg.Pool, None]:
     pool = await asyncpg.create_pool(
         user=_PG_USER, password=_PG_PASSWORD,
         host=_PG_HOST, port=_PG_PORT, database=_PG_TEST_DB,
-        min_size=1, max_size=4,
+        min_size=2, max_size=10,
     )
 
     # Initialise schema (creates full current DDL) and mark all migrations
@@ -117,11 +117,55 @@ async def client(app) -> AsyncGenerator[AsyncClient, None]:
 # Auto-cleanup after each test
 # ---------------------------------------------------------------------------
 
+_CLEANUP_TABLES = [
+    "correlation_pairs", "correlation_reports",
+    "insight_metrics", "insights",
+    "notes",
+    "values_bool", "values_time", "values_number",
+    "values_scale", "values_duration", "values_enum",
+    "entries",
+    "metric_condition",
+    "computed_config", "scale_config", "enum_options", "enum_config",
+    "integration_filter_config", "integration_query_config",
+    "integration_app_config", "integration_category_config",
+    "integration_config",
+    "measurement_slots",
+    "metric_definitions",
+    "categories",
+    "user_integrations",
+    "activitywatch_app_category_map", "activitywatch_categories",
+    "activitywatch_app_usage", "activitywatch_daily_summary",
+    "activitywatch_settings",
+    "users",
+]
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def cleanup(db_pool: asyncpg.Pool):
     yield
-    async with db_pool.acquire() as conn:
-        await conn.execute("TRUNCATE users CASCADE")
+    import asyncio
+    # Wait for background correlation tasks to complete before cleanup.
+    for _ in range(60):
+        try:
+            async with db_pool.acquire() as conn:
+                cnt = await conn.fetchval(
+                    "SELECT count(*) FROM correlation_reports"
+                    " WHERE status = 'running'"
+                )
+            if not cnt:
+                break
+        except Exception:
+            break
+        await asyncio.sleep(0.5)
+    for attempt in range(3):
+        try:
+            async with db_pool.acquire() as conn:
+                for tbl in _CLEANUP_TABLES:
+                    await conn.execute(f"DELETE FROM {tbl}")  # noqa: S608
+            break
+        except Exception:
+            if attempt < 2:
+                await asyncio.sleep(0.3)
 
 
 # ---------------------------------------------------------------------------

@@ -64,7 +64,8 @@
       "WebFetch(domain:firstbyte.ru)",
       "WebFetch(domain:timeweb.com)",
       "Bash(make build-up:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(wc:*)"
     ]
   }
 }
