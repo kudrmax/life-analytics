@@ -3175,8 +3175,9 @@ function renderDetailStats(stats, metricType) {
 }
 
 // ─── Settings Page ───
-async function renderSettings(container, { archiveOpen = false, openAddModal = false } = {}) {
+async function renderSettings(container, { archiveOpen = false, openAddModal = false, preserveScroll = false } = {}) {
     const _t0 = performance.now();
+    const savedScrollY = preserveScroll ? window.scrollY : 0;
     container.innerHTML = '<div class="loading-spinner"></div>';
     const allMetrics = await api.cachedGet('/api/metrics');
     let html = '<div class="settings-header">';
@@ -3368,6 +3369,14 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     html += '</div>';
 
     container.innerHTML = html;
+
+    if (preserveScroll) {
+        requestAnimationFrame(() => {
+            const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+            window.scrollTo(0, Math.min(savedScrollY, Math.max(0, maxScroll)));
+        });
+    }
+
     if (window.lucide) lucide.createIcons();
 
     // Theme toggle
@@ -3386,7 +3395,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 console.error('Failed to set privacy mode:', e);
                 privacySwitch.checked = !privacySwitch.checked;
             }
-            renderSettings(container, { archiveOpen });
+            renderSettings(container, { archiveOpen, preserveScroll: true });
         });
     }
 
@@ -3513,7 +3522,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             if (!confirm('Архивировать метрику?')) return;
             try {
                 await api.updateMetric(metricId, { enabled: false });
-                await renderSettings(container);
+                await renderSettings(container, { preserveScroll: true });
             } catch (error) {
                 alert('Ошибка: ' + error.message);
             }
@@ -3526,7 +3535,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             const metricId = btn.dataset.metric;
             try {
                 await api.updateMetric(metricId, { enabled: true });
-                await renderSettings(container, { archiveOpen: true });
+                await renderSettings(container, { archiveOpen: true, preserveScroll: true });
             } catch (error) {
                 alert('Ошибка: ' + error.message);
             }
@@ -3556,7 +3565,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             if (confirm('Удалить метрику?')) {
                 try {
                     await api.deleteMetric(metricId);
-                    await renderSettings(container);
+                    await renderSettings(container, { preserveScroll: true });
                 } catch (error) {
                     alert('Ошибка: ' + error.message);
                 }
@@ -4542,7 +4551,7 @@ async function showConvertModal(metric) {
             overlay.remove();
             await loadMetrics();
             const container = document.getElementById('page-content');
-            if (container) renderSettings(container);
+            if (container) renderSettings(container, { preserveScroll: true });
         } catch (err) {
             alert('Ошибка конвертации: ' + err.message);
             submitBtn.disabled = false;
@@ -5870,7 +5879,12 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
             overlay.remove();
             await loadMetrics();
-            navigateTo('settings');
+            const settingsContainer = document.getElementById('page-content');
+            if (settingsContainer) {
+                await renderSettings(settingsContainer, { preserveScroll: isEdit });
+            } else {
+                navigateTo('settings');
+            }
         } catch (error) {
             alert(`Ошибка ${isEdit ? 'обновления' : 'создания'} метрики: ` + error.message);
         }
