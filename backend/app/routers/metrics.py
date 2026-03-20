@@ -46,7 +46,7 @@ async def list_metrics(
     current_user: dict = Depends(get_current_user),
     privacy_mode: bool = Depends(get_privacy_mode),
 ):
-    query = """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
+    query = """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step, sc.labels AS scale_labels,
                       cc.formula, cc.result_type,
                       ic.provider, ic.metric_key, ic.value_type,
                       ifc.filter_name, iqc.filter_query,
@@ -136,7 +136,7 @@ async def get_metric(
     privacy_mode: bool = Depends(get_privacy_mode),
 ):
     row = await db.fetchrow(
-        """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
+        """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step, sc.labels AS scale_labels,
                   cc.formula, cc.result_type,
                   ic.provider, ic.metric_key, ic.value_type,
                   ifc.filter_name, iqc.filter_query,
@@ -307,9 +307,10 @@ async def create_metric(
             )
 
     if data.type == MetricType.scale:
+        labels_json = json.dumps(data.scale_labels) if data.scale_labels else None
         await db.execute(
-            "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
-            metric_id, s_min, s_max, s_step,
+            "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step, labels) VALUES ($1, $2, $3, $4, $5::jsonb)",
+            metric_id, s_min, s_max, s_step, labels_json,
         )
 
     if data.type == MetricType.enum:
@@ -457,10 +458,10 @@ async def update_metric(
 
     # Update scale_config if this is a scale metric
     if row["type"] == "scale" and any(
-        getattr(data, f) is not None for f in ("scale_min", "scale_max", "scale_step")
+        getattr(data, f) is not None for f in ("scale_min", "scale_max", "scale_step", "scale_labels")
     ):
         cfg = await db.fetchrow(
-            "SELECT scale_min, scale_max, scale_step FROM scale_config WHERE metric_id = $1",
+            "SELECT scale_min, scale_max, scale_step, labels FROM scale_config WHERE metric_id = $1",
             metric_id,
         )
         s_min = data.scale_min if data.scale_min is not None else (cfg["scale_min"] if cfg else 1)
@@ -470,15 +471,20 @@ async def update_metric(
             raise HTTPException(400, "scale_min must be less than scale_max")
         if s_step < 1 or s_step > (s_max - s_min):
             raise HTTPException(400, "scale_step must be >= 1 and <= (max - min)")
+        # scale_labels: explicit None in schema means "not sent", empty dict {} means "clear labels"
+        if data.scale_labels is not None:
+            labels_json = json.dumps(data.scale_labels) if data.scale_labels else None
+        else:
+            labels_json = cfg["labels"] if cfg else None
         if cfg:
             await db.execute(
-                "UPDATE scale_config SET scale_min = $1, scale_max = $2, scale_step = $3 WHERE metric_id = $4",
-                s_min, s_max, s_step, metric_id,
+                "UPDATE scale_config SET scale_min = $1, scale_max = $2, scale_step = $3, labels = $4::jsonb WHERE metric_id = $5",
+                s_min, s_max, s_step, labels_json, metric_id,
             )
         else:
             await db.execute(
-                "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
-                metric_id, s_min, s_max, s_step,
+                "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step, labels) VALUES ($1, $2, $3, $4, $5::jsonb)",
+                metric_id, s_min, s_max, s_step, labels_json,
             )
 
     # Update computed_config if this is a computed metric
@@ -897,9 +903,9 @@ async def _convert_scale_to_scale(
         )
         converted = cnt
 
-    # Update scale_config
+    # Update scale_config (clear labels on conversion — old labels don't match new range)
     await db.execute(
-        "UPDATE scale_config SET scale_min = $1, scale_max = $2, scale_step = $3 WHERE metric_id = $4",
+        "UPDATE scale_config SET scale_min = $1, scale_max = $2, scale_step = $3, labels = NULL WHERE metric_id = $4",
         data.scale_min, data.scale_max, data.scale_step, metric_id,
     )
 

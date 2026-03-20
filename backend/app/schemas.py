@@ -68,6 +68,7 @@ class MetricDefinitionCreate(BaseModel):
     scale_min: int | None = None
     scale_max: int | None = None
     scale_step: int | None = None
+    scale_labels: dict[str, str] | None = None
     slot_configs: list[dict] | None = None  # [{slot_id: int, category_id: int | None}]
     formula: list[dict] | None = None
     result_type: str | None = None
@@ -94,6 +95,7 @@ class MetricDefinitionUpdate(BaseModel):
     scale_min: int | None = None
     scale_max: int | None = None
     scale_step: int | None = None
+    scale_labels: dict[str, str] | None = None
     slot_configs: list[dict] | None = None  # [{slot_id: int, category_id: int | None}]
     formula: list[dict] | None = None
     result_type: str | None = None
@@ -118,6 +120,7 @@ class MetricDefinitionOut(BaseModel):
     scale_min: int | None = None
     scale_max: int | None = None
     scale_step: int | None = None
+    scale_labels: dict[str, str] | None = None
     slots: list[MeasurementSlotOut] = []
     formula: list[dict] | None = None
     result_type: str | None = None

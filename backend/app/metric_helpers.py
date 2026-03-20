@@ -47,6 +47,7 @@ async def build_metric_out(
         scale_min=row.get("scale_min"),
         scale_max=row.get("scale_max"),
         scale_step=row.get("scale_step"),
+        scale_labels=json.loads(row["scale_labels"]) if row.get("scale_labels") is not None else None,
         slots=[MeasurementSlotOut(**s) for s in slots] if slots else [],
         formula=formula_raw,
         result_type=row.get("result_type"),
@@ -273,6 +274,7 @@ def format_display_value(
     metric_type: str,
     result_type: str | None = None,
     enum_options: list[dict] | None = None,
+    scale_labels: dict[str, str] | None = None,
 ) -> str:
     """Format a raw metric value into a human-readable display string."""
     if value is None:
@@ -311,6 +313,8 @@ def format_display_value(
         return str(value) if value else "—"
 
     if metric_type in ("number", "scale"):
+        if metric_type == "scale" and scale_labels and str(value) in scale_labels:
+            return scale_labels[str(value)]
         return str(value) if value is not None else "—"
 
     # bool

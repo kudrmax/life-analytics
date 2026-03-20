@@ -28,14 +28,14 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
         metrics_writer = csv.writer(metrics_csv)
         metrics_writer.writerow([
             'id', 'slug', 'name', 'category_path', 'icon', 'type',
-            'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step',
+            'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step', 'scale_labels',
             'slot_labels', 'formula', 'result_type', 'provider', 'metric_key', 'value_type',
             'filter_name', 'filter_query', 'enum_options', 'multi_select', 'private',
             'condition_metric_slug', 'condition_type', 'condition_value',
         ])
 
         metrics = await db.fetch(
-            """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
+            """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step, sc.labels AS scale_labels,
                       ic.provider, ic.metric_key, ic.value_type,
                       ifc.filter_name, iqc.filter_query,
                       ec.multi_select
@@ -151,6 +151,7 @@ async def export_data(db=Depends(get_db), current_user: dict = Depends(get_curre
                 m["scale_min"] if m["scale_min"] is not None else '',
                 m["scale_max"] if m["scale_max"] is not None else '',
                 m["scale_step"] if m["scale_step"] is not None else '',
+                m["scale_labels"] if m.get("scale_labels") else '',
                 json.dumps(slot_labels) if slot_labels else '',
                 formula_export, result_type_export,
                 m.get("provider") or '', m.get("metric_key") or '', m.get("value_type") or '',
@@ -374,6 +375,14 @@ async def import_data(
                     csv_scale_min = row.get('scale_min', '')
                     csv_scale_max = row.get('scale_max', '')
                     csv_scale_step = row.get('scale_step', '')
+                    csv_scale_labels_raw = row.get('scale_labels', '')
+                    csv_scale_labels: str | None = None
+                    if csv_scale_labels_raw:
+                        try:
+                            json.loads(csv_scale_labels_raw)  # validate
+                            csv_scale_labels = csv_scale_labels_raw
+                        except (json.JSONDecodeError, TypeError):
+                            pass
 
                     # Parse slot_labels from CSV (supports legacy [str] and new [{label, category_path}])
                     csv_slot_labels_raw = row.get('slot_labels', '')
@@ -418,13 +427,13 @@ async def import_data(
                             )
                             if existing_cfg:
                                 await db.execute(
-                                    "UPDATE scale_config SET scale_min = $1, scale_max = $2, scale_step = $3 WHERE metric_id = $4",
-                                    s_min, s_max, s_step, existing["id"],
+                                    "UPDATE scale_config SET scale_min = $1, scale_max = $2, scale_step = $3, labels = $4::jsonb WHERE metric_id = $5",
+                                    s_min, s_max, s_step, csv_scale_labels, existing["id"],
                                 )
                             else:
                                 await db.execute(
-                                    "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
-                                    existing["id"], s_min, s_max, s_step,
+                                    "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step, labels) VALUES ($1, $2, $3, $4, $5::jsonb)",
+                                    existing["id"], s_min, s_max, s_step, csv_scale_labels,
                                 )
                         # Upsert integration_config if needed
                         if metric_type == 'integration' and csv_provider and csv_metric_key:
@@ -476,8 +485,8 @@ async def import_data(
                             s_max = int(csv_scale_max) if csv_scale_max else 5
                             s_step = int(csv_scale_step) if csv_scale_step else 1
                             await db.execute(
-                                "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step) VALUES ($1, $2, $3, $4)",
-                                new_id, s_min, s_max, s_step,
+                                "INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step, labels) VALUES ($1, $2, $3, $4, $5::jsonb)",
+                                new_id, s_min, s_max, s_step, csv_scale_labels,
                             )
                         # Create integration_config for new integration metrics
                         if metric_type == 'integration' and csv_provider and csv_metric_key:

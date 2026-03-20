@@ -409,7 +409,7 @@ h3 {
 
 .scale-btn {
     flex: 1;
-    padding: 8px 0;
+    padding: 8px 2px;
     background: var(--surface2);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -418,6 +418,27 @@ h3 {
     font-size: 15px;
     font-weight: 500;
     transition: all 0.15s;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.scale-label-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+.scale-label-value {
+    min-width: 28px;
+    text-align: center;
+    font-weight: 500;
+    font-size: 14px;
+    color: var(--text-dim);
+}
+.scale-label-input {
+    flex: 1;
 }
 
 .scale-btn:hover { border-color: var(--accent); }

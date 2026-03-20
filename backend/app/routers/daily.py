@@ -68,7 +68,7 @@ router = APIRouter(prefix="/api/daily", tags=["daily"])
 async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depends(get_current_user), privacy_mode: bool = Depends(get_privacy_mode)):
     qt = QueryTimer(f"daily/{date}")
     metrics = await db.fetch(
-        """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step,
+        """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step, sc.labels AS scale_labels,
                   cc.formula, cc.result_type,
                   ic.provider, ic.metric_key, ic.value_type,
                   ifc.filter_name, iqc.filter_query,
@@ -269,6 +269,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "scale_min": m["scale_min"],
             "scale_max": m["scale_max"],
             "scale_step": m["scale_step"],
+            "scale_labels": json.loads(m["scale_labels"]) if m.get("scale_labels") is not None else None,
             "private": m_private,
             "entry": None,
             "slots": None,
@@ -326,6 +327,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                         "display_value": format_display_value(
                             value, m["type"], m.get("result_type"),
                             enum_options_by_metric.get(mid),
+                            scale_labels=item.get("scale_labels"),
                         ),
                     }
                     # Scale context from stored values
@@ -355,6 +357,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
                     "display_value": format_display_value(
                         value, m["type"], m.get("result_type"),
                         enum_options_by_metric.get(mid),
+                        scale_labels=item.get("scale_labels"),
                     ),
                 }
                 # For filled scale entries, use stored context instead of current config

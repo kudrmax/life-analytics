@@ -2768,3 +2768,65 @@ class TestImportIgnoresDisabledSlots:
         entries = entries_resp.json()
         assert len(entries) == 1
         assert entries[0]["slot_id"] == slot_c["id"]
+
+
+# ---------------------------------------------------------------------------
+# Scale Labels round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestExportImportScaleLabels:
+    """Export/import preserves scale_labels."""
+
+    async def test_scale_labels_round_trip(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        # Create scale metric with labels
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Labeled",
+                "type": "scale",
+                "scale_min": 0,
+                "scale_max": 2,
+                "scale_step": 1,
+                "scale_labels": {"0": "нет", "1": "мало", "2": "достаточно"},
+            },
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+
+        # Export
+        export_resp = await client.get(
+            "/api/export/csv",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert export_resp.status_code == 200
+        files = parse_export_zip(export_resp.content)
+        metrics_rows = parse_csv_rows(files["metrics.csv"])
+
+        labeled = next(r for r in metrics_rows if r["name"] == "Labeled")
+        assert labeled["scale_labels"] != ""
+        import json
+        parsed_labels = json.loads(labeled["scale_labels"])
+        assert parsed_labels == {"0": "нет", "1": "мало", "2": "достаточно"}
+
+    async def test_scale_without_labels_exports_empty(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        await create_metric(
+            client, user_a["token"],
+            name="NoLabel", metric_type="scale",
+            scale_min=1, scale_max=5, scale_step=1,
+        )
+
+        export_resp = await client.get(
+            "/api/export/csv",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert export_resp.status_code == 200
+        files = parse_export_zip(export_resp.content)
+        metrics_rows = parse_csv_rows(files["metrics.csv"])
+
+        no_label = next(r for r in metrics_rows if r["name"] == "NoLabel")
+        assert no_label["scale_labels"] == ""

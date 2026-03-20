@@ -1289,3 +1289,117 @@ class TestSlotReorderAndAdd:
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 400
+
+
+# ── Scale Labels ──────────────────────────────────────────────────────
+
+
+class TestCreateScaleMetricWithLabels:
+    """POST /api/metrics — scale type with labels."""
+
+    async def test_create_scale_with_labels(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Charge",
+                "type": "scale",
+                "scale_min": 0,
+                "scale_max": 2,
+                "scale_step": 1,
+                "scale_labels": {"0": "нет", "1": "мало", "2": "достаточно"},
+            },
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["scale_labels"] == {"0": "нет", "1": "мало", "2": "достаточно"}
+
+    async def test_create_scale_without_labels(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Plain Scale",
+                "type": "scale",
+                "scale_min": 1,
+                "scale_max": 5,
+                "scale_step": 1,
+            },
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["scale_labels"] is None
+
+
+class TestUpdateScaleLabels:
+    """PATCH /api/metrics — update scale labels."""
+
+    async def test_add_labels_to_existing_scale(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        metric = await create_metric(
+            client, user_a["token"],
+            name="Rating", metric_type="scale",
+            scale_min=0, scale_max=2, scale_step=1,
+        )
+        assert metric["scale_labels"] is None
+
+        resp = await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"scale_labels": {"0": "bad", "2": "good"}},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["scale_labels"] == {"0": "bad", "2": "good"}
+
+    async def test_clear_labels_with_empty_dict(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Clearable",
+                "type": "scale",
+                "scale_min": 0,
+                "scale_max": 2,
+                "scale_step": 1,
+                "scale_labels": {"0": "a", "1": "b", "2": "c"},
+            },
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        metric = resp.json()
+        assert metric["scale_labels"] is not None
+
+        # Clear labels by sending empty dict
+        resp = await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"scale_labels": {}},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["scale_labels"] is None
+
+    async def test_update_labels_preserves_scale_range(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        metric = await create_metric(
+            client, user_a["token"],
+            name="Preserve Range", metric_type="scale",
+            scale_min=1, scale_max=3, scale_step=1,
+        )
+        resp = await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"scale_labels": {"1": "low", "3": "high"}},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["scale_min"] == 1
+        assert data["scale_max"] == 3
+        assert data["scale_labels"] == {"1": "low", "3": "high"}

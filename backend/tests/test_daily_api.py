@@ -919,3 +919,74 @@ class TestSlotDepValueExtraction:
 
         assert item_b is not None
         assert item_b["condition_met"] is False
+
+
+# ---------------------------------------------------------------------------
+# Scale Labels in Daily
+# ---------------------------------------------------------------------------
+
+
+class TestDailyScaleLabels:
+    """GET /api/daily — scale_labels field and display_value with labels."""
+
+    async def test_scale_labels_returned_in_daily(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Labeled Scale",
+                "type": "scale",
+                "scale_min": 0,
+                "scale_max": 2,
+                "scale_step": 1,
+                "scale_labels": {"0": "нет", "1": "мало", "2": "достаточно"},
+            },
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        metric = resp.json()
+
+        daily = await _get_daily(client, user_a["token"])
+        item = await _find_metric(daily, metric["id"])
+        assert item is not None
+        assert item["scale_labels"] == {"0": "нет", "1": "мало", "2": "достаточно"}
+
+    async def test_scale_display_value_uses_label(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Display Label",
+                "type": "scale",
+                "scale_min": 0,
+                "scale_max": 2,
+                "scale_step": 1,
+                "scale_labels": {"0": "нет", "1": "мало", "2": "достаточно"},
+            },
+            headers=auth_headers(user_a["token"]),
+        )
+        metric = resp.json()
+
+        await create_entry(client, user_a["token"], metric["id"], DATE, 0)
+
+        daily = await _get_daily(client, user_a["token"])
+        item = await _find_metric(daily, metric["id"])
+        assert item["entry"] is not None
+        assert item["entry"]["display_value"] == "нет"
+
+    async def test_scale_display_value_without_labels(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        metric = await create_metric(
+            client, user_a["token"],
+            name="No Labels", metric_type="scale",
+            scale_min=1, scale_max=5, scale_step=1,
+        )
+        await create_entry(client, user_a["token"], metric["id"], DATE, 3)
+
+        daily = await _get_daily(client, user_a["token"])
+        item = await _find_metric(daily, metric["id"])
+        assert item["entry"]["display_value"] == "3"
+        assert item["scale_labels"] is None

@@ -127,6 +127,7 @@ entity "scale_config" as sc {
     * scale_min : INTEGER
     * scale_max : INTEGER
     * scale_step : INTEGER
+    labels : JSONB
 }
 
 entity "computed_config" as cc {

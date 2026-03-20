@@ -731,7 +731,7 @@ function renderMetricInput(m, metricNameById) {
             const sMin = (entry && entry.scale_min != null) ? entry.scale_min : m.scale_min;
             const sMax = (entry && entry.scale_max != null) ? entry.scale_max : m.scale_max;
             const sStep = (entry && entry.scale_step != null) ? entry.scale_step : m.scale_step;
-            input = renderScale(val, sMin, sMax, sStep);
+            input = renderScale(val, sMin, sMax, sStep, m.scale_labels);
         }
         else input = renderBoolean(val);
 
@@ -773,7 +773,7 @@ function renderMetricInput(m, metricNameById) {
                 const sMin = (entry && entry.scale_min != null) ? entry.scale_min : m.scale_min;
                 const sMax = (entry && entry.scale_max != null) ? entry.scale_max : m.scale_max;
                 const sStep = (entry && entry.scale_step != null) ? entry.scale_step : m.scale_step;
-                input = renderScale(val, sMin, sMax, sStep);
+                input = renderScale(val, sMin, sMax, sStep, m.scale_labels);
             }
             else input = renderBoolean(val);
 
@@ -812,7 +812,7 @@ function renderMetricInput(m, metricNameById) {
     else if (m.type === 'time') input = renderTime(val);
     else if (m.type === 'duration') input = renderDuration(val);
     else if (m.type === 'number') input = renderNumber(val);
-    else if (m.type === 'scale') input = renderScale(val, m.scale_min, m.scale_max, m.scale_step);
+    else if (m.type === 'scale') input = renderScale(val, m.scale_min, m.scale_max, m.scale_step, m.scale_labels);
     else input = renderBoolean(val);
 
     const clearBtn = entry
@@ -870,10 +870,12 @@ function renderTime(val) {
     return `<button type="button" class="time-picker-btn" data-action="pick-time">Указать время</button>`;
 }
 
-function renderScale(val, min, max, step) {
+function renderScale(val, min, max, step, labels) {
     let buttons = '';
     for (let v = min; v <= max; v += step) {
-        buttons += `<button class="scale-btn ${val === v ? 'active' : ''}" data-value="${v}">${v}</button>`;
+        const text = (labels && labels[String(v)]) ? labels[String(v)] : v;
+        const title = (labels && labels[String(v)]) ? ` title="${v}"` : '';
+        buttons += `<button class="scale-btn ${val === v ? 'active' : ''}" data-value="${v}"${title}>${text}</button>`;
     }
     return `<div class="scale-buttons">${buttons}</div>`;
 }
@@ -4920,6 +4922,38 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         };
     }
 
+    function getScaleLabels() {
+        const container = document.getElementById('nm-scale-labels-list');
+        if (!container) return null;
+        const inputs = container.querySelectorAll('.scale-label-input');
+        const labels = {};
+        let hasAny = false;
+        inputs.forEach(inp => {
+            const val = inp.value.trim();
+            if (val) {
+                labels[inp.dataset.scaleValue] = val;
+                hasAny = true;
+            }
+        });
+        return hasAny ? labels : null;
+    }
+
+    function updateScaleLabelsUI() {
+        const container = document.getElementById('nm-scale-labels-list');
+        if (!container) return;
+        const sp = getScaleParams();
+        const currentLabels = existingMetric?.scale_labels || {};
+        let html = '';
+        for (let v = sp.min; v <= sp.max; v += sp.step) {
+            const existing = currentLabels[String(v)] || '';
+            html += `<div class="scale-label-row">
+                <span class="scale-label-value">${v}</span>
+                <input type="text" class="scale-label-input form-input" data-scale-value="${v}" value="${existing}" placeholder="—" maxlength="30">
+            </div>`;
+        }
+        container.innerHTML = html;
+    }
+
     function previewInputHtml(type) {
         if (type === 'time') {
             return `<button type="button" class="time-picker-btn">Указать время</button>`;
@@ -4934,9 +4968,12 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         }
         if (type === 'scale') {
             const sp = getScaleParams();
+            const labels = getScaleLabels();
             let buttons = '';
             for (let v = sp.min; v <= sp.max; v += sp.step) {
-                buttons += `<button class="scale-btn" data-value="${v}">${v}</button>`;
+                const text = (labels && labels[String(v)]) ? labels[String(v)] : v;
+                const title = (labels && labels[String(v)]) ? ` title="${v}"` : '';
+                buttons += `<button class="scale-btn" data-value="${v}"${title}>${text}</button>`;
             }
             return `<div class="scale-buttons">${buttons}</div>`;
         }
@@ -5057,6 +5094,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                         </label>
                     </div>
                     <span class="label-hint">От 1 до 5, шаг 1 → [1] [2] [3] [4] [5]<br>От 1 до 5, шаг 2 → [1] [3] [5]</span>
+                </div>
+                <div class="form-section" id="nm-scale-labels-config" style="display: flex">
+                    <span class="label-text">Подписи значений <span class="label-optional">(необязательно)</span></span>
+                    <div id="nm-scale-labels-list"></div>
                 </div>
                 ` : ''}
                 ${currentType === 'enum' ? `
@@ -5222,6 +5263,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     </div>
                     <span class="label-hint">От 1 до 5, шаг 1 → [1] [2] [3] [4] [5]<br>От 1 до 5, шаг 2 → [1] [3] [5]<br>От 1 до 4, шаг 2 → [1] [3]</span>
                 </div>
+                <div class="form-section" id="nm-scale-labels-config" style="display: ${currentType === 'scale' ? 'flex' : 'none'}">
+                    <span class="label-text">Подписи значений <span class="label-optional">(необязательно)</span></span>
+                    <div id="nm-scale-labels-list"></div>
+                </div>
                 <div class="form-section" id="nm-enum-config" style="display: ${currentType === 'enum' ? 'flex' : 'none'}">
                     <span class="label-text">Варианты</span>
                     <div class="enum-options-list" id="nm-enum-options"></div>
@@ -5351,6 +5396,13 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     `;
     document.body.appendChild(overlay);
     if (window.lucide) lucide.createIcons();
+
+    // ─── Scale labels UI: init + listen for min/max/step changes ───
+    updateScaleLabelsUI();
+    ['nm-scale-min', 'nm-scale-max', 'nm-scale-step'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', () => { updateScaleLabelsUI(); });
+    });
 
     // ─── Populate category select ───
     let modalCategories = [];
@@ -5564,7 +5616,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 const awConfig = document.getElementById('nm-aw-config');
                 const slotsSection = document.getElementById('nm-slots-section');
                 const emojiWrapper = overlay.querySelector('.emoji-picker-wrapper');
+                const scaleLabelsConfig = document.getElementById('nm-scale-labels-config');
                 if (scaleConfig) scaleConfig.style.display = selectedType === 'scale' ? 'flex' : 'none';
+                if (scaleLabelsConfig) scaleLabelsConfig.style.display = selectedType === 'scale' ? 'flex' : 'none';
+                if (selectedType === 'scale') updateScaleLabelsUI();
                 if (enumConfig) enumConfig.style.display = selectedType === 'enum' ? 'flex' : 'none';
                 if (computedConfig) computedConfig.style.display = selectedType === 'computed' ? 'block' : 'none';
                 if (integrationConfig) integrationConfig.style.display = (selectedType === 'integration' && selectedProvider === 'todoist') ? 'block' : 'none';
@@ -6083,6 +6138,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     updateData.scale_min = sp.min;
                     updateData.scale_max = sp.max;
                     updateData.scale_step = sp.step;
+                    updateData.scale_labels = getScaleLabels();
                 }
                 if (existingMetric.type === 'enum') {
                     const multiSelectCb = document.getElementById('nm-multi-select');
@@ -6145,6 +6201,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     createData.scale_min = sp.min;
                     createData.scale_max = sp.max;
                     createData.scale_step = sp.step;
+                    createData.scale_labels = getScaleLabels();
                 }
 
                 if (selectedType === 'enum') {

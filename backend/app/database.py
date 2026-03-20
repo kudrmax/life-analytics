@@ -161,6 +161,11 @@ async def _init_db_schema(conn):
         )
     """)
 
+    # Add labels column to scale_config
+    await conn.execute("""
+        ALTER TABLE scale_config ADD COLUMN IF NOT EXISTS labels JSONB
+    """)
+
     # Value table for scale metrics
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS values_scale (

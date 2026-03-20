@@ -389,6 +389,9 @@ MIGRATIONS = [
         CREATE UNIQUE INDEX IF NOT EXISTS idx_measurement_slots_user_label
             ON measurement_slots(user_id, LOWER(label));
     """),
+    (14, "add_labels_to_scale_config", """
+        ALTER TABLE scale_config ADD COLUMN IF NOT EXISTS labels JSONB;
+    """),
 ]
 
 

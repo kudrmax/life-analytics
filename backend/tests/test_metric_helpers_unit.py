@@ -203,6 +203,33 @@ class TestFormatDisplayValueEdgeCases(unittest.TestCase):
         """Scale with zero value should return '0'."""
         assert format_display_value(0, "scale") == "0"
 
+    def test_scale_with_label(self) -> None:
+        """Scale with labels returns label text."""
+        labels = {"0": "нет", "1": "мало", "2": "достаточно"}
+        assert format_display_value(0, "scale", scale_labels=labels) == "нет"
+        assert format_display_value(1, "scale", scale_labels=labels) == "мало"
+        assert format_display_value(2, "scale", scale_labels=labels) == "достаточно"
+
+    def test_scale_with_partial_labels(self) -> None:
+        """Scale with partial labels: labeled values get text, others get number."""
+        labels = {"0": "нет", "2": "норм"}
+        assert format_display_value(0, "scale", scale_labels=labels) == "нет"
+        assert format_display_value(1, "scale", scale_labels=labels) == "1"
+        assert format_display_value(2, "scale", scale_labels=labels) == "норм"
+
+    def test_scale_with_empty_labels(self) -> None:
+        """Scale with empty labels dict behaves like no labels."""
+        assert format_display_value(3, "scale", scale_labels={}) == "3"
+
+    def test_scale_with_none_labels(self) -> None:
+        """Scale with None labels behaves normally."""
+        assert format_display_value(3, "scale", scale_labels=None) == "3"
+
+    def test_number_type_ignores_scale_labels(self) -> None:
+        """Number type should not use scale_labels."""
+        labels = {"42": "answer"}
+        assert format_display_value(42, "number", scale_labels=labels) == "42"
+
     def test_integration_type(self) -> None:
         """Integration type should return str(value)."""
         assert format_display_value(42, "integration") == "42"
@@ -295,7 +322,8 @@ class TestBuildMetricOut:
             "id": 1, "slug": "test", "name": "Test", "type": "bool",
             "enabled": True, "sort_order": 0, "icon": "X",
             "category_id": None, "scale_min": None, "scale_max": None,
-            "scale_step": None, "formula": None, "result_type": None,
+            "scale_step": None, "scale_labels": None,
+            "formula": None, "result_type": None,
             "provider": None, "metric_key": None, "value_type": None,
             "filter_name": None, "filter_query": None,
             "activitywatch_category_id": None, "config_app_name": None,
@@ -377,7 +405,8 @@ class TestBuildMetricOut:
             "id": 5, "slug": "slotted", "name": "Slotted", "type": "bool",
             "enabled": True, "sort_order": 0, "icon": "",
             "category_id": None, "scale_min": None, "scale_max": None,
-            "scale_step": None, "formula": None, "result_type": None,
+            "scale_step": None, "scale_labels": None,
+            "formula": None, "result_type": None,
             "provider": None, "metric_key": None, "value_type": None,
             "filter_name": None, "filter_query": None,
             "activitywatch_category_id": None, "config_app_name": None,
@@ -413,6 +442,44 @@ class TestBuildMetricOut:
         assert result.condition_value is True
         assert result.condition_type == "equals"
         assert result.condition_metric_id == 10
+
+    @pytest.mark.asyncio
+    async def test_with_scale_labels(self) -> None:
+        """Scale labels from JSONB string should be deserialized."""
+        row = _make_record({
+            "id": 8, "slug": "rated", "name": "Rating", "type": "scale",
+            "enabled": True, "sort_order": 0, "icon": "",
+            "category_id": None, "scale_min": 0, "scale_max": 2,
+            "scale_step": 1, "scale_labels": json.dumps({"0": "нет", "1": "мало", "2": "много"}),
+            "formula": None, "result_type": None,
+            "provider": None, "metric_key": None, "value_type": None,
+            "filter_name": None, "filter_query": None,
+            "activitywatch_category_id": None, "config_app_name": None,
+            "multi_select": None, "private": False,
+            "condition_metric_id": None, "condition_type": None,
+            "condition_value": None,
+        })
+        result = await build_metric_out(row)
+        assert result.scale_labels == {"0": "нет", "1": "мало", "2": "много"}
+
+    @pytest.mark.asyncio
+    async def test_with_scale_labels_none(self) -> None:
+        """Null scale_labels should remain None."""
+        row = _make_record({
+            "id": 9, "slug": "rated2", "name": "Rating2", "type": "scale",
+            "enabled": True, "sort_order": 0, "icon": "",
+            "category_id": None, "scale_min": 1, "scale_max": 5,
+            "scale_step": 1, "scale_labels": None,
+            "formula": None, "result_type": None,
+            "provider": None, "metric_key": None, "value_type": None,
+            "filter_name": None, "filter_query": None,
+            "activitywatch_category_id": None, "config_app_name": None,
+            "multi_select": None, "private": False,
+            "condition_metric_id": None, "condition_type": None,
+            "condition_value": None,
+        })
+        result = await build_metric_out(row)
+        assert result.scale_labels is None
 
     @pytest.mark.asyncio
     async def test_with_enum_options(self) -> None:
