@@ -4940,7 +4940,7 @@ async function showConvertModal(metric) {
             alert(`Готово! Изменено: ${result.converted}, удалено: ${result.deleted}`);
             overlay.remove();
             await loadMetrics();
-            const container = document.getElementById('page-content');
+            const container = document.getElementById('main');
             if (container) renderSettings(container, { preserveScroll: true });
         } catch (err) {
             alert('Ошибка конвертации: ' + err.message);
@@ -6398,7 +6398,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
             overlay.remove();
             await loadMetrics();
-            const settingsContainer = document.getElementById('page-content');
+            const settingsContainer = document.getElementById('main');
             if (settingsContainer) {
                 await renderSettings(settingsContainer, { preserveScroll: isEdit });
             } else {
