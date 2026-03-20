@@ -403,8 +403,6 @@ async function renderToday(container) {
         if (Math.abs(dx) > 15) {
             const newPeekDir = dx < 0 ? -1 : 1;
             if (newPeekDir !== _peekDirection) _showPeekCard(dx);
-        } else if (_peekCard) {
-            _hidePeekCard();
         }
 
         const screenW = window.innerWidth || 400;
@@ -645,14 +643,21 @@ function _springBackCard(card) {
 }
 
 function _showPeekCard(dx) {
-    _hidePeekCard();
+    const oldPeek = _peekCard;
     const peekIndex = dx < 0 ? _cardIndex + 1 : _cardIndex - 1;
-    if (peekIndex < 0 || peekIndex >= _cardList.length) return;
+    if (peekIndex < 0 || peekIndex >= _cardList.length) {
+        _hidePeekCard();
+        return;
+    }
     _peekCard = _cardList[peekIndex];
     _peekCard.classList.add('card-mode-peek');
     const activeCard = _cardList[_cardIndex];
     _peekCard.style.top = activeCard.offsetTop + 'px';
     _peekDirection = dx < 0 ? -1 : 1;
+    if (oldPeek && oldPeek !== _peekCard) {
+        oldPeek.classList.remove('card-mode-peek');
+        oldPeek.style.cssText = '';
+    }
 }
 
 function _hidePeekCard() {
