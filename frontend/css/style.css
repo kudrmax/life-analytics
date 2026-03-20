@@ -2863,6 +2863,11 @@ emoji-picker {
     margin-top: 0.5rem;
 }
 
+.today-section-divider {
+    border-top: 1px solid var(--border);
+    margin: 20px 0 12px;
+}
+
 /* ─── Category Manager ─── */
 .cat-manager-header {
     display: flex;

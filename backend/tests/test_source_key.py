@@ -36,8 +36,14 @@ class TestAutoSourceType(unittest.TestCase):
     def test_is_workday_value(self) -> None:
         self.assertEqual(AutoSourceType.IS_WORKDAY.value, "is_workday")
 
+    def test_slot_max_value(self) -> None:
+        self.assertEqual(AutoSourceType.SLOT_MAX.value, "slot_max")
+
+    def test_slot_min_value(self) -> None:
+        self.assertEqual(AutoSourceType.SLOT_MIN.value, "slot_min")
+
     def test_total_member_count(self) -> None:
-        self.assertEqual(len(AutoSourceType), 7)
+        self.assertEqual(len(AutoSourceType), 9)
 
     def test_is_str_subclass(self) -> None:
         self.assertIsInstance(AutoSourceType.NONZERO, str)
@@ -200,6 +206,18 @@ class TestSourceKeyToStr(unittest.TestCase):
         sk = SourceKey(auto_type=AutoSourceType.IS_WORKDAY, auto_option_id=1)
         self.assertEqual(sk.to_str(), "auto:is_workday:opt:1")
 
+    def test_auto_slot_max_with_parent(self) -> None:
+        sk = SourceKey(
+            auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=42
+        )
+        self.assertEqual(sk.to_str(), "auto:slot_max:metric:42")
+
+    def test_auto_slot_min_with_parent(self) -> None:
+        sk = SourceKey(
+            auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=42
+        )
+        self.assertEqual(sk.to_str(), "auto:slot_min:metric:42")
+
 
 class TestSourceKeyParse(unittest.TestCase):
     """Tests for SourceKey.parse() deserialization."""
@@ -262,6 +280,18 @@ class TestSourceKeyParse(unittest.TestCase):
         self.assertEqual(sk.auto_type, AutoSourceType.IS_WORKDAY)
         self.assertEqual(sk.auto_option_id, 1)
 
+    def test_parse_auto_slot_max(self) -> None:
+        sk = SourceKey.parse("auto:slot_max:metric:42")
+        self.assertEqual(sk.auto_type, AutoSourceType.SLOT_MAX)
+        self.assertEqual(sk.auto_parent_metric_id, 42)
+        self.assertIsNone(sk.auto_option_id)
+
+    def test_parse_auto_slot_min(self) -> None:
+        sk = SourceKey.parse("auto:slot_min:metric:42")
+        self.assertEqual(sk.auto_type, AutoSourceType.SLOT_MIN)
+        self.assertEqual(sk.auto_parent_metric_id, 42)
+        self.assertIsNone(sk.auto_option_id)
+
     def test_parse_old_week_number_backward_compat(self) -> None:
         sk = SourceKey.parse("auto:week_number")
         self.assertEqual(sk.auto_type, AutoSourceType.WEEK_NUMBER)
@@ -309,6 +339,16 @@ class TestSourceKeyRoundTrip(unittest.TestCase):
     def test_round_trip_auto_is_workday_with_option_id(self) -> None:
         self._assert_round_trip(
             SourceKey(auto_type=AutoSourceType.IS_WORKDAY, auto_option_id=2)
+        )
+
+    def test_round_trip_auto_slot_max(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=10)
+        )
+
+    def test_round_trip_auto_slot_min(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=10)
         )
 
 

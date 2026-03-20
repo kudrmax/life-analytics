@@ -1559,3 +1559,244 @@ class TestQualityIssueIntegration:
             assert pair["quality_issue"] is None, (
                 f"sig_strong should have no quality_issue, got: {pair['quality_issue']}"
             )
+
+
+# ---------------------------------------------------------------------------
+# SLOT_MAX / SLOT_MIN auto-sources
+# ---------------------------------------------------------------------------
+
+class TestSlotMaxMinAutoSources:
+
+    async def test_number_metric_with_slots_produces_slot_max_min(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Number metric with slots produces slot_max and slot_min auto-sources."""
+        token = user_a["token"]
+
+        # Create two slots
+        slot_a = await create_slot(client, token, "Утро")
+        slot_b = await create_slot(client, token, "Вечер")
+
+        # Create number metric linked to both slots
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Кофе", "type": "number",
+                "slot_configs": [
+                    {"slot_id": slot_a["id"]},
+                    {"slot_id": slot_b["id"]},
+                ],
+            },
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 201, resp.text
+        num_m = resp.json()
+
+        # Create bool metric as correlation counterpart
+        bool_m = await create_metric(
+            client, token, name="CorrBool", metric_type="bool", slug="corrbool_slotmm",
+        )
+
+        # Create entries (15 days)
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, num_m["id"], date_str, day, slot_id=slot_a["id"])
+            await create_entry(client, token, num_m["id"], date_str, day * 2, slot_id=slot_b["id"])
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+
+        # Run correlation report
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        assert data["report"]["status"] == "done"
+        report_id = data["report"]["id"]
+
+        # Fetch all pairs
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+        assert pairs_data["total"] > 0
+
+        # Collect all labels
+        labels = set()
+        for p in pairs_data["pairs"]:
+            labels.add(p["label_a"])
+            labels.add(p["label_b"])
+
+        # slot_max and slot_min should appear
+        max_labels = [l for l in labels if "максимум" in l]
+        min_labels = [l for l in labels if "минимум" in l]
+        assert len(max_labels) > 0, f"Expected slot_max label with 'максимум', got labels: {labels}"
+        assert len(min_labels) > 0, f"Expected slot_min label with 'минимум', got labels: {labels}"
+
+    async def test_slot_max_min_chart_reconstruction(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Pair chart reconstruction works for slot_max/slot_min sources."""
+        token = user_a["token"]
+
+        slot_a = await create_slot(client, token, "AM")
+        slot_b = await create_slot(client, token, "PM")
+
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Mood", "type": "scale",
+                "scale_min": 1, "scale_max": 10, "scale_step": 1,
+                "slot_configs": [
+                    {"slot_id": slot_a["id"]},
+                    {"slot_id": slot_b["id"]},
+                ],
+            },
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 201, resp.text
+        scale_m = resp.json()
+
+        bool_m = await create_metric(
+            client, token, name="Exercise", metric_type="bool", slug="exercise_slotmm",
+        )
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, scale_m["id"], date_str, day % 10 + 1, slot_id=slot_a["id"])
+            await create_entry(client, token, scale_m["id"], date_str, (day * 3) % 10 + 1, slot_id=slot_b["id"])
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # Find a slot_max pair
+        max_pair = None
+        for p in pairs_data["pairs"]:
+            if "максимум" in p.get("label_a", "") or "максимум" in p.get("label_b", ""):
+                max_pair = p
+                break
+        assert max_pair is not None, "Expected slot_max pair"
+
+        # Get pair chart
+        resp = await client.get(
+            f"/api/analytics/correlation-pair-chart?pair_id={max_pair['pair_id']}",
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        chart = resp.json()
+        assert len(chart["dates"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Bool aggregate annotation "(хоть раз)"
+# ---------------------------------------------------------------------------
+
+class TestBoolAggregateAnnotation:
+
+    async def test_bool_with_slots_aggregate_label_has_annotation(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Bool metric with slots: aggregate source label contains '(хоть раз)'."""
+        token = user_a["token"]
+
+        slot_a = await create_slot(client, token, "Morning")
+        slot_b = await create_slot(client, token, "Evening")
+
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Зарядка", "type": "bool",
+                "slot_configs": [
+                    {"slot_id": slot_a["id"]},
+                    {"slot_id": slot_b["id"]},
+                ],
+            },
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 201, resp.text
+        bool_m = resp.json()
+
+        num_m = await create_metric(
+            client, token, name="Steps", metric_type="number", slug="steps_bool_annot",
+        )
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, bool_m["id"], date_str, True, slot_id=slot_a["id"])
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, slot_id=slot_b["id"])
+            await create_entry(client, token, num_m["id"], date_str, day * 100)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+        assert pairs_data["total"] > 0
+
+        # Find aggregate bool source — should have "(хоть раз)" annotation
+        aggregate_labels = set()
+        for p in pairs_data["pairs"]:
+            for label_key, sk_key in [("label_a", "source_key_a"), ("label_b", "source_key_b")]:
+                # skip if source_key not exposed; check label
+                pass
+            if "хоть раз" in p.get("label_a", ""):
+                aggregate_labels.add(p["label_a"])
+            if "хоть раз" in p.get("label_b", ""):
+                aggregate_labels.add(p["label_b"])
+
+        assert len(aggregate_labels) > 0, (
+            f"Expected '(хоть раз)' annotation on bool aggregate label"
+        )
+        # The annotation should include the metric name
+        for lbl in aggregate_labels:
+            assert "Зарядка" in lbl
+
+    async def test_bool_without_slots_no_annotation(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Bool metric without slots should NOT have '(хоть раз)' annotation."""
+        token = user_a["token"]
+
+        bool_m = await create_metric(
+            client, token, name="SimpleBool", metric_type="bool", slug="simplebool_noannot",
+        )
+        num_m = await create_metric(
+            client, token, name="SimpleNum", metric_type="number", slug="simplenum_noannot",
+        )
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+            await create_entry(client, token, num_m["id"], date_str, day * 10)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # No "(хоть раз)" annotation on any label
+        for p in pairs_data["pairs"]:
+            assert "хоть раз" not in p.get("label_a", ""), (
+                f"Unexpected annotation in label_a: {p['label_a']}"
+            )
+            assert "хоть раз" not in p.get("label_b", ""), (
+                f"Unexpected annotation in label_b: {p['label_b']}"
+            )

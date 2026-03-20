@@ -65,6 +65,8 @@ Enum-метрика с N опциями порождает N отдельных 
 |---|---|---|---|
 | **nonzero** | `auto:nonzero:metric:{id}` | `1.0` если значение метрики > 0, иначе `0.0` | Да — генерируется для каждой number/duration метрики |
 | **note_count** | `auto:note_count:metric:{id}` | Количество заметок за день | Да — генерируется для каждой text-метрики |
+| **slot_max** | `auto:slot_max:metric:{id}` | Максимальное значение среди слотов за день | Да — для number/scale/duration/time метрик со слотами |
+| **slot_min** | `auto:slot_min:metric:{id}` | Минимальное значение среди слотов за день | Да — для number/scale/duration/time метрик со слотами |
 | **day_of_week** | `auto:day_of_week` | День недели (1=Пн, 7=Вс) | Нет — глобальный |
 | **month** | `auto:month` | Номер месяца (1–12) | Нет — глобальный |
 | **week_number** | `auto:week_number` | Номер недели в году (1–53) | Нет — глобальный |
@@ -179,6 +181,7 @@ p = I_x(df/2, 0.5, df / (df + t²))   # incomplete beta function
 - `M_computed` — вычисляемых метрик
 - `M_text` — текстовых метрик
 - `M_num_dur` — из M_plain, тех что number или duration (генерируют nonzero)
+- `M_slot_minmax` — из M_slot, тех что number/scale/duration/time (генерируют slot_max и slot_min)
 
 Общее количество источников:
 
@@ -189,6 +192,7 @@ N = M_plain                          # обычные метрики (1 исто
   + M_enum_slot × O × (1 + S)        # enum со слотами (опция × (агрегат + слоты))
   + M_computed                        # вычисляемые
   + M_num_dur                         # nonzero авто-источники
+  + M_slot_minmax × 2                # slot_max + slot_min авто-источники
   + M_text                            # note_count авто-источники
   + 3                                 # day_of_week, month, week_number
   + (1 если есть AW)                  # aw_active

@@ -7,6 +7,8 @@ SourceKey encodes which data source a correlation side refers to:
 - metric:{id}:enum_opt:{opt_id}:slot:{slot_id}   — enum option with slot
 - auto:nonzero:metric:{id}                       — nonzero for a metric
 - auto:note_count:metric:{id}                    — note count for text metric
+- auto:slot_max:metric:{id}                      — max across slots for a metric
+- auto:slot_min:metric:{id}                      — min across slots for a metric
 - auto:day_of_week:opt:{N}                       — calendar (enum-like boolean per option)
 - auto:month:opt:{N}
 - auto:is_workday:opt:{N}
@@ -24,6 +26,8 @@ class AutoSourceType(str, Enum):
     NOTE_COUNT = "note_count"
     DAY_OF_WEEK = "day_of_week"
     MONTH = "month"
+    SLOT_MAX = "slot_max"
+    SLOT_MIN = "slot_min"
     WEEK_NUMBER = "week_number"  # kept for backward compat parsing old reports
     AW_ACTIVE = "aw_active"
     IS_WORKDAY = "is_workday"

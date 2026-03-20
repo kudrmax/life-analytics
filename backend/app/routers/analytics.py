@@ -92,6 +92,23 @@ def _extract_numeric(value_row, metric_type: str = "bool") -> float | None:
     return 1.0 if v else 0.0
 
 
+def _compute_slot_agg(
+    slot_indices: list[int],
+    source_data: dict[int, dict[str, float]],
+    agg_fn: type[max] | type[min],
+) -> dict[str, float]:
+    """Compute max or min across slot sources per date."""
+    all_dates: set[str] = set()
+    for si in slot_indices:
+        all_dates.update(source_data.get(si, {}).keys())
+    result: dict[str, float] = {}
+    for d in all_dates:
+        vals = [source_data[si][d] for si in slot_indices if d in source_data.get(si, {})]
+        if vals:
+            result[d] = agg_fn(vals)
+    return result
+
+
 def _aggregate_by_date(rows, metric_type: str) -> dict[str, float]:
     """Group rows by date, aggregate multiple entries per day (multi-slot).
 
@@ -503,11 +520,22 @@ async def trends(
     qt.mark("values")
 
     points = [{"date": d, "value": v} for d, v in sorted(aggregated.items())]
+
+    # Bool metric with slots: annotate aggregate name
+    display_name = metric["name"]
+    if mt == "bool":
+        has_slots_row = await db.fetchrow(
+            "SELECT 1 FROM metric_slots WHERE metric_id = $1 AND enabled = TRUE LIMIT 1",
+            metric_id,
+        )
+        if has_slots_row:
+            display_name = f"{display_name} (хоть раз)"
+    qt.mark("display_name")
     qt.log()
 
     return {
         "metric_id": metric_id,
-        "metric_name": metric["name"],
+        "metric_name": display_name,
         "start": start,
         "end": end,
         "points": points,
@@ -1029,7 +1057,14 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 if sk.slot_id is None and mt != "computed" and sk.metric_id is not None:
                     aggregate_indices[sk.metric_id] = i
 
+            # Map metric_id -> list of slot source indices (for slot_max/slot_min)
+            slot_source_indices_by_metric: dict[int, list[int]] = defaultdict(list)
+            for i, (sk, mt) in enumerate(sources):
+                if sk.slot_id is not None and sk.metric_id is not None and not sk.is_auto:
+                    slot_source_indices_by_metric[sk.metric_id].append(i)
+
             # Per-metric auto sources: "nonzero" for number/duration
+            _SLOT_MINMAX_TYPES = {"number", "scale", "duration", "time"}
             for m in metrics_rows:
                 if m["type"] == "computed":
                     continue
@@ -1038,6 +1073,9 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     continue
                 if m["type"] in ("number", "duration"):
                     sources.append((SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=mid), "bool"))
+                if m["type"] in _SLOT_MINMAX_TYPES and mid in slot_source_indices_by_metric:
+                    sources.append((SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=mid), m["type"]))
+                    sources.append((SourceKey(auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=mid), m["type"]))
 
             # "note_count" for text metrics
             for m in metrics_rows:
@@ -1089,6 +1127,10 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                         source_data[idx] = {d: (1.0 if date_type.fromisoformat(d).isoweekday() <= 5 else 0.0) for d in all_dates}
                     else:
                         source_data[idx] = {d: (1.0 if date_type.fromisoformat(d).isoweekday() > 5 else 0.0) for d in all_dates}
+                elif sk.auto_type in (AutoSourceType.SLOT_MAX, AutoSourceType.SLOT_MIN):
+                    slot_indices = slot_source_indices_by_metric.get(sk.auto_parent_metric_id, [])
+                    agg_fn = max if sk.auto_type == AutoSourceType.SLOT_MAX else min
+                    source_data[idx] = _compute_slot_agg(slot_indices, source_data, agg_fn) if slot_indices else {}
 
             # Pre-compute low-variance sources
             _BINARY_VAR_THRESHOLD = 0.10
@@ -1274,6 +1316,8 @@ def _build_display_label(
     source_key_str: str,
     metric_name: str | None,
     parent_metric_name: str | None,
+    metric_type: str | None = None,
+    has_slots: bool = False,
 ) -> str:
     sk = SourceKey.parse(source_key_str)
     if sk.auto_type:
@@ -1288,7 +1332,14 @@ def _build_display_label(
             return f"{parent_metric_name}: не ноль"
         if sk.auto_type == AutoSourceType.NOTE_COUNT and parent_metric_name:
             return f"{parent_metric_name}: кол-во заметок"
+        if sk.auto_type == AutoSourceType.SLOT_MAX and parent_metric_name:
+            return f"{parent_metric_name}: максимум"
+        if sk.auto_type == AutoSourceType.SLOT_MIN and parent_metric_name:
+            return f"{parent_metric_name}: минимум"
         return "Авто-источник"
+    # Bool aggregate with slots — annotate "(хоть раз)"
+    if metric_type == "bool" and has_slots and sk.slot_id is None:
+        return f"{metric_name} (хоть раз)" if metric_name else "Удалённая метрика"
     return metric_name or "Удалённая метрика"
 
 
@@ -1320,6 +1371,7 @@ def _format_pair(
     enum_labels: dict[int, str],
     parent_names: dict[int, str],
     privacy_mode: bool = False,
+    metrics_with_slots: set[int] | None = None,
 ) -> dict:
     priv_a = p.get("private_a", False)
     priv_b = p.get("private_b", False)
@@ -1333,12 +1385,15 @@ def _format_pair(
 
     sk_a = SourceKey.parse(p["source_key_a"])
     sk_b = SourceKey.parse(p["source_key_b"])
+    _mws = metrics_with_slots or set()
 
     label_a = PRIVATE_MASK if blocked_a else _build_display_label(
         p["source_key_a"], p["name_a"], parent_names.get(sk_a.auto_parent_metric_id),
+        metric_type=p["type_a"], has_slots=(p["metric_a_id"] in _mws if p["metric_a_id"] else False),
     )
     label_b = PRIVATE_MASK if blocked_b else _build_display_label(
         p["source_key_b"], p["name_b"], parent_names.get(sk_b.auto_parent_metric_id),
+        metric_type=p["type_b"], has_slots=(p["metric_b_id"] in _mws if p["metric_b_id"] else False),
     )
     icon_a = PRIVATE_ICON if blocked_a else _resolve_icon(p["source_key_a"], p["icon_a"], metric_icons_by_id)
     icon_b = PRIVATE_ICON if blocked_b else _resolve_icon(p["source_key_b"], p["icon_b"], metric_icons_by_id)
@@ -1495,8 +1550,23 @@ async def get_correlation_pairs(
         )
         enum_labels = {r["id"]: r["label"] for r in eo_rows}
 
+    # Batch: metrics with slots (for bool annotation)
+    all_metric_ids: set[int] = set()
+    for p in pairs:
+        if p["metric_a_id"] is not None:
+            all_metric_ids.add(p["metric_a_id"])
+        if p["metric_b_id"] is not None:
+            all_metric_ids.add(p["metric_b_id"])
+    metrics_with_slots: set[int] = set()
+    if all_metric_ids:
+        mws_rows = await db.fetch(
+            "SELECT DISTINCT metric_id FROM metric_slots WHERE metric_id = ANY($1) AND enabled = TRUE",
+            list(all_metric_ids),
+        )
+        metrics_with_slots = {r["metric_id"] for r in mws_rows}
+
     return {
-        "pairs": [_format_pair(p, metric_icons_by_id, enum_labels, parent_names, privacy_mode) for p in pairs],
+        "pairs": [_format_pair(p, metric_icons_by_id, enum_labels, parent_names, privacy_mode, metrics_with_slots) for p in pairs],
         "total": total,
         "has_more": offset + limit < total,
     }
@@ -1561,6 +1631,37 @@ async def _reconstruct_source_data(
                 sk.auto_parent_metric_id, user_id, start_date, end_date,
             )
             return {str(r["date"]): float(r["cnt"]) for r in nc_rows}
+        if sk.auto_type in (AutoSourceType.SLOT_MAX, AutoSourceType.SLOT_MIN) and sk.auto_parent_metric_id is not None:
+            parent = await conn.fetchrow(
+                "SELECT id, type FROM metric_definitions WHERE id = $1",
+                sk.auto_parent_metric_id,
+            )
+            if not parent:
+                return {}
+            slot_rows = await conn.fetch(
+                """SELECT ms.id FROM metric_slots msl
+                   JOIN measurement_slots ms ON ms.id = msl.slot_id
+                   WHERE msl.metric_id = $1 AND msl.enabled = TRUE""",
+                sk.auto_parent_metric_id,
+            )
+            if not slot_rows:
+                return {}
+            slot_data: list[dict[str, float]] = []
+            for sr in slot_rows:
+                sd = await _values_by_date_for_slot(
+                    conn, parent["id"], parent["type"], start_date, end_date, user_id, slot_id=sr["id"],
+                )
+                slot_data.append(sd)
+            all_dates_set: set[str] = set()
+            for sd in slot_data:
+                all_dates_set.update(sd.keys())
+            agg_fn = max if sk.auto_type == AutoSourceType.SLOT_MAX else min
+            result: dict[str, float] = {}
+            for d in all_dates_set:
+                vals = [sd[d] for sd in slot_data if d in sd]
+                if vals:
+                    result[d] = agg_fn(vals)
+            return result
         return {}
 
     # Enum option source
@@ -1691,11 +1792,23 @@ async def correlation_pair_chart(
         mb_row = await db.fetchrow("SELECT name FROM metric_definitions WHERE id = $1", row["metric_b_id"])
         mb_name = mb_row["name"] if mb_row else None
 
+    # Check if metrics have slots (for bool annotation)
+    chart_metric_ids = [mid for mid in (row["metric_a_id"], row["metric_b_id"]) if mid is not None]
+    chart_mws: set[int] = set()
+    if chart_metric_ids:
+        mws_rows = await db.fetch(
+            "SELECT DISTINCT metric_id FROM metric_slots WHERE metric_id = ANY($1) AND enabled = TRUE",
+            chart_metric_ids,
+        )
+        chart_mws = {r["metric_id"] for r in mws_rows}
+
     display_label_a = PRIVATE_MASK if blocked_a else _build_display_label(
         row["source_key_a"], ma_name, parent_names.get(sk_a.auto_parent_metric_id),
+        metric_type=row["type_a"], has_slots=(row["metric_a_id"] in chart_mws if row["metric_a_id"] else False),
     )
     display_label_b = PRIVATE_MASK if blocked_b else _build_display_label(
         row["source_key_b"], mb_name, parent_names.get(sk_b.auto_parent_metric_id),
+        metric_type=row["type_b"], has_slots=(row["metric_b_id"] in chart_mws if row["metric_b_id"] else False),
     )
 
     return {

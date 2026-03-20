@@ -262,7 +262,7 @@ See `.env.example`. Defaults work for local Docker Compose dev.
 **Correlation reports pattern:**
 - Background: `asyncio.create_task(_compute_report(...))` в том же процессе
 - Data sources: каждая метрика со слотами → N+1 sources (среднее + каждый слот); enum метрики → per-option boolean sources
-- Auto-sources (virtual, not backed by metrics): `nonzero` (has non-zero value, per number/duration metric), `note_count` (notes count per text metric), `day_of_week` (1–7), `month` (1–12), `week_number` (1–53), `aw_active` (active screen time in hours from AW)
+- Auto-sources (virtual, not backed by metrics): `nonzero` (has non-zero value, per number/duration metric), `note_count` (notes count per text metric), `slot_max` (max across slots per day, for number/scale/duration/time with slots), `slot_min` (min across slots per day, same types), `day_of_week` (1–7), `month` (1–12), `week_number` (1–53), `aw_active` (active screen time in hours from AW)
 - Lag correlations: for each pair, computes lag=0 (same-day) + lag=1 (yesterday→today, both directions)
 - Blacklist (`correlation_blacklist.py`): skips same-metric pairs (except different enum options), auto+parent pairs, two autos from same parent, two calendar autos
 - P-value: stored in DB on computation; fallback to on-the-fly `_p_value(r, n)` (t-test + beta distribution) for old reports
