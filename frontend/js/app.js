@@ -33,6 +33,21 @@ let _todayRenderVersion = 0;
 let _historyRenderVersion = 0;
 let _dayHeaderObserver = null;
 
+// ─── Card Mode (mobile) ───
+const CARD_MODE_KEY = 'la_card_mode';
+let _cardModeActive = false;
+let _cardIndex = 0;
+let _cardList = [];
+let _cardDragActive = false;
+let _cardDragLocked = false;
+let _cardDragStartX = 0;
+let _cardDragStartY = 0;
+let _cardDragCurrentX = 0;
+let _cardDragCurrentY = 0;
+let _cardDragAnimating = false;
+let _peekCard = null;
+let _peekDirection = 0;
+
 function todayStr() {
     return new Date().toISOString().slice(0, 10);
 }
@@ -300,6 +315,16 @@ async function renderToday(container) {
                 </button>
             </div>
         </div>
+        <div class="card-mode-bar" id="card-mode-bar">
+            <div class="card-mode-segmented" id="card-mode-segmented">
+                <button class="card-mode-seg" id="seg-list">
+                    <i data-lucide="list"></i> Список
+                </button>
+                <button class="card-mode-seg" id="seg-cards">
+                    <i data-lucide="layers"></i> Карточки
+                </button>
+            </div>
+        </div>
         <div id="metrics-form"></div>
         <div class="today-actions" style="display:none">
             <button class="btn-small" id="today-edit-metrics">
@@ -329,30 +354,323 @@ async function renderToday(container) {
     document.getElementById('today-add-metric').onclick = () => { navigateTo('settings', { openAddModal: true }); };
     document.getElementById('today-edit-metrics').onclick = () => { navigateTo('settings'); };
 
-    // Swipe navigation for mobile
+    // Pointer-based swipe/drag navigation (works with touch + mouse)
     const metricsForm = document.getElementById('metrics-form');
-    let touchStartX = 0;
-    let touchStartY = 0;
-    metricsForm.addEventListener('touchstart', (e) => {
-        touchStartX = e.touches[0].clientX;
-        touchStartY = e.touches[0].clientY;
-    }, { passive: true });
-    metricsForm.addEventListener('touchend', (e) => {
-        const dx = e.changedTouches[0].clientX - touchStartX;
-        const dy = e.changedTouches[0].clientY - touchStartY;
-        if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-            changeDay(dx < 0 ? 1 : -1);
+    const _interactiveSelector = 'button, input, select, textarea, label, .number-btn, .scale-btn, .bool-btn, .enum-btn, .metric-clear-btn, .period-clear-btn';
+
+    metricsForm.addEventListener('pointerdown', (e) => {
+        if (_cardDragAnimating) return;
+        if (e.target.closest(_interactiveSelector)) return;
+        _cardDragStartX = e.clientX;
+        _cardDragStartY = e.clientY;
+        _cardDragCurrentX = 0;
+        _cardDragCurrentY = 0;
+        _cardDragActive = true;
+        _cardDragLocked = false;
+        if (_cardModeActive) {
+            metricsForm.setPointerCapture(e.pointerId);
         }
-    }, { passive: true });
+    });
+
+    metricsForm.addEventListener('pointermove', (e) => {
+        if (!_cardDragActive || _cardDragAnimating) return;
+        const dx = e.clientX - _cardDragStartX;
+        const dy = e.clientY - _cardDragStartY;
+
+        if (!_cardDragLocked) {
+            if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+            if (!_cardModeActive && Math.abs(dy) > Math.abs(dx)) {
+                // Vertical in list mode — abort drag, allow scroll
+                _cardDragActive = false;
+                return;
+            }
+            _cardDragLocked = true;
+        }
+
+        if (!_cardModeActive) return; // day-swipe resolved on pointerup
+        e.preventDefault();
+
+        const card = _cardList[_cardIndex];
+        if (!card) return;
+
+        const atStart = _cardIndex === 0 && dx > 0;
+        const atEnd = _cardIndex >= _cardList.length - 1 && dx < 0;
+        const effectiveDx = (atStart || atEnd) ? dx * 0.3 : dx;
+        _cardDragCurrentX = effectiveDx;
+        _cardDragCurrentY = dy;
+
+        // Show/update peek card (dead zone prevents flicker on diagonal swipes)
+        if (Math.abs(dx) > 15) {
+            const newPeekDir = dx < 0 ? -1 : 1;
+            if (newPeekDir !== _peekDirection) _showPeekCard(dx);
+        }
+
+        const screenW = window.innerWidth || 400;
+        const angle = (effectiveDx / screenW) * 5;
+        card.style.transition = 'none';
+        card.style.transform = `translate(${effectiveDx}px, ${dy}px) rotate(${angle}deg)`;
+
+        // Parallax on peek card
+        if (_peekCard) {
+            const progress = Math.min(Math.abs(effectiveDx) / (screenW * 0.4), 1);
+            _peekCard.style.transition = 'none';
+            _peekCard.style.transform = `scale(${0.97 + 0.03 * progress})`;
+            _peekCard.style.opacity = String(0.6 + 0.4 * progress);
+        }
+    }, { passive: false });
+
+    metricsForm.addEventListener('pointerup', (e) => {
+        if (!_cardDragActive) return;
+        _cardDragActive = false;
+        const dx = e.clientX - _cardDragStartX;
+        const dy = e.clientY - _cardDragStartY;
+
+        if (!_cardModeActive) {
+            // Day-swipe fallback
+            if (_cardDragLocked && Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+                changeDay(dx < 0 ? 1 : -1);
+            }
+            return;
+        }
+
+        if (!_cardDragLocked) return;
+
+        const card = _cardList[_cardIndex];
+        if (!card) return;
+
+        const screenW = window.innerWidth || 400;
+        const threshold = Math.max(80, screenW * 0.25);
+        const absDx = Math.abs(_cardDragCurrentX);
+        const atStart = _cardIndex === 0 && _cardDragCurrentX > 0;
+        const atEnd = _cardIndex >= _cardList.length - 1 && _cardDragCurrentX < 0;
+
+        if (absDx > threshold && !atStart && !atEnd) {
+            _flyOffCard(card, _cardDragCurrentX < 0 ? -1 : 1);
+        } else {
+            _springBackCard(card);
+        }
+    });
+
+    metricsForm.addEventListener('pointercancel', () => {
+        if (!_cardDragActive) return;
+        _cardDragActive = false;
+        const card = _cardList[_cardIndex];
+        if (card && _cardModeActive) _springBackCard(card);
+    });
+
+    // Card mode initialization (segmented control)
+    _cardModeActive = window.innerWidth <= 768 && localStorage.getItem(CARD_MODE_KEY) === 'true';
+    const segList = document.getElementById('seg-list');
+    const segCards = document.getElementById('seg-cards');
+    if (segList && segCards) {
+        segList.classList.toggle('active', !_cardModeActive);
+        segCards.classList.toggle('active', _cardModeActive);
+        segList.addEventListener('click', () => setCardMode(false));
+        segCards.addEventListener('click', () => setCardMode(true));
+    }
 
     await renderTodayForm();
 }
 
 function changeDay(delta) {
+    _cardList = [];
     const d = new Date(currentDate);
     d.setDate(d.getDate() + delta);
     currentDate = d.toISOString().slice(0, 10);
     renderTodayForm(true, delta > 0 ? 'next' : 'prev');
+}
+
+// ─── Card Mode Functions ───
+
+function setCardMode(active) {
+    if (_cardModeActive === active) return;
+    _cardModeActive = active;
+    localStorage.setItem(CARD_MODE_KEY, String(_cardModeActive));
+    _updateSegmentedControl();
+    if (_cardModeActive) {
+        const form = document.getElementById('metrics-form');
+        if (form) _cardList = Array.from(form.querySelectorAll('.metric-card:not(.auto-metric)'));
+        _cardIndex = _findFirstUnfilledIndex();
+        applyCardMode();
+    } else {
+        exitCardMode();
+    }
+}
+
+function _updateSegmentedControl() {
+    const segList = document.getElementById('seg-list');
+    const segCards = document.getElementById('seg-cards');
+    if (segList) segList.classList.toggle('active', !_cardModeActive);
+    if (segCards) segCards.classList.toggle('active', _cardModeActive);
+}
+
+function _findFirstUnfilledIndex() {
+    const idx = _cardList.findIndex(c => !c.classList.contains('filled'));
+    return idx >= 0 ? idx : 0;
+}
+
+function applyCardMode(findFirst = false) {
+    const form = document.getElementById('metrics-form');
+    if (!form || !_cardModeActive || window.innerWidth > 768) return;
+    _cardList = Array.from(form.querySelectorAll('.metric-card:not(.auto-metric)'));
+    if (_cardList.length === 0) return;
+    if (findFirst) {
+        _cardIndex = _findFirstUnfilledIndex();
+    } else {
+        _cardIndex = Math.min(_cardIndex, _cardList.length - 1);
+    }
+    form.classList.add('card-mode');
+    document.body.dataset.scrollY = String(window.scrollY);
+    document.body.style.top = `-${window.scrollY}px`;
+    document.body.classList.add('card-mode-active');
+    _cardList.forEach((c, i) => c.classList.toggle('card-mode-visible', i === _cardIndex));
+    updateCardCounter();
+}
+
+function exitCardMode() {
+    _hidePeekCard();
+    const form = document.getElementById('metrics-form');
+    if (form) form.classList.remove('card-mode');
+    const scrollY = parseInt(document.body.dataset.scrollY || '0', 10);
+    document.body.classList.remove('card-mode-active');
+    document.body.style.top = '';
+    window.scrollTo(0, scrollY);
+    _cardList.forEach(c => c.classList.remove('card-mode-visible'));
+    _cardList = [];
+}
+
+
+function _flyOffCard(card, direction) {
+    _cardDragAnimating = true;
+    const hasPeek = !!_peekCard;
+    const flyX = direction > 0 ? '120vw' : '-120vw';
+    const flyY = _cardDragCurrentY;
+    const flyAngle = direction > 0 ? 15 : -15;
+    card.style.transition = 'transform 300ms ease-out, opacity 300ms ease-out';
+    card.style.transform = `translate(${flyX}, ${flyY}px) rotate(${flyAngle}deg)`;
+    card.style.opacity = '0';
+
+    // Animate peek to full size while card flies off
+    if (hasPeek && _peekCard) {
+        _peekCard.style.transition = 'transform 300ms ease-out, opacity 300ms ease-out';
+        _peekCard.style.transform = 'scale(1)';
+        _peekCard.style.opacity = '1';
+    }
+
+    let done = false;
+    const onDone = () => {
+        if (done) return;
+        done = true;
+        card.removeEventListener('transitionend', onTransEnd);
+        card.classList.remove('card-mode-visible');
+        card.style.cssText = '';
+
+        const newIndex = _cardIndex + (direction > 0 ? -1 : 1);
+        _cardIndex = Math.max(0, Math.min(newIndex, _cardList.length - 1));
+        const next = _cardList[_cardIndex];
+        if (next) {
+            if (hasPeek && _peekCard === next) {
+                // Peek becomes active card — just swap class
+                _peekCard.classList.remove('card-mode-peek');
+                _peekCard.classList.add('card-mode-visible');
+                _peekCard.style.cssText = '';
+                _peekCard = null;
+                _peekDirection = 0;
+                _cardDragAnimating = false;
+            } else {
+                _hidePeekCard();
+                _slideInCard(next, direction);
+            }
+        } else {
+            _hidePeekCard();
+            _cardDragAnimating = false;
+        }
+        updateCardCounter();
+    };
+    const onTransEnd = (e) => { if (e.target === card) onDone(); };
+    card.addEventListener('transitionend', onTransEnd);
+    setTimeout(onDone, 350); // safety timeout
+}
+
+function _slideInCard(card, fromDirection) {
+    const startX = fromDirection > 0 ? -50 : 50;
+    card.style.transition = 'none';
+    card.style.transform = `translateX(${startX}px)`;
+    card.style.opacity = '0.5';
+    card.classList.add('card-mode-visible');
+    card.offsetHeight; // force reflow
+    card.style.transition = 'transform 250ms ease-out, opacity 250ms ease-out';
+    card.style.transform = 'translateX(0)';
+    card.style.opacity = '1';
+
+    let done = false;
+    const onDone = () => {
+        if (done) return;
+        done = true;
+        card.removeEventListener('transitionend', onTransEnd);
+        card.style.cssText = '';
+        _cardDragAnimating = false;
+    };
+    const onTransEnd = (e) => { if (e.target === card) onDone(); };
+    card.addEventListener('transitionend', onTransEnd);
+    setTimeout(onDone, 300); // safety timeout
+}
+
+function _springBackCard(card) {
+    _cardDragAnimating = true;
+    card.style.transition = 'transform 200ms ease-out';
+    card.style.transform = 'translate(0, 0) rotate(0deg)';
+
+    // Animate peek back to resting state
+    if (_peekCard) {
+        _peekCard.style.transition = 'transform 200ms ease-out, opacity 200ms ease-out';
+        _peekCard.style.transform = 'scale(0.97)';
+        _peekCard.style.opacity = '0.6';
+    }
+
+    let done = false;
+    const onDone = () => {
+        if (done) return;
+        done = true;
+        card.removeEventListener('transitionend', onTransEnd);
+        card.style.cssText = '';
+        _hidePeekCard();
+        _cardDragAnimating = false;
+    };
+    const onTransEnd = (e) => { if (e.target === card) onDone(); };
+    card.addEventListener('transitionend', onTransEnd);
+    setTimeout(onDone, 250); // safety timeout
+}
+
+function _showPeekCard(dx) {
+    const oldPeek = _peekCard;
+    const peekIndex = dx < 0 ? _cardIndex + 1 : _cardIndex - 1;
+    if (peekIndex < 0 || peekIndex >= _cardList.length) {
+        _hidePeekCard();
+        return;
+    }
+    _peekCard = _cardList[peekIndex];
+    _peekCard.classList.add('card-mode-peek');
+    const activeCard = _cardList[_cardIndex];
+    _peekCard.style.top = activeCard.offsetTop + 'px';
+    _peekDirection = dx < 0 ? -1 : 1;
+    if (oldPeek && oldPeek !== _peekCard) {
+        oldPeek.classList.remove('card-mode-peek');
+        oldPeek.style.cssText = '';
+    }
+}
+
+function _hidePeekCard() {
+    if (_peekCard) {
+        _peekCard.classList.remove('card-mode-peek');
+        _peekCard.style.cssText = '';
+        _peekCard = null;
+    }
+    _peekDirection = 0;
+}
+
+function updateCardCounter() {
+    // no-op — kept for call sites; counter/nav removed
 }
 
 async function renderTodayForm(preserveScroll = false, direction = null) {
@@ -592,6 +910,23 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
     const next = new Date(currentDate);
     next.setDate(next.getDate() + 1);
     api.getDailySummary(next.toISOString().slice(0, 10));
+
+    // Card mode reapply
+    if (_cardModeActive && window.innerWidth <= 768) {
+        const isFirstRender = _cardList.length === 0;
+        const prevMetricId = _cardList[_cardIndex]?.dataset?.metricId;
+        applyCardMode(isFirstRender);
+        if (!isFirstRender && prevMetricId) {
+            const newIdx = _cardList.findIndex(c => c.dataset.metricId === prevMetricId);
+            if (newIdx >= 0) {
+                _cardIndex = newIdx;
+                _cardList.forEach((c, i) => c.classList.toggle('card-mode-visible', i === _cardIndex));
+                updateCardCounter();
+            }
+        }
+    }
+    _updateSegmentedControl();
+
     console.debug(`[render] today  ${(performance.now() - _t0).toFixed(0)}ms`);
 }
 
