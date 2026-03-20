@@ -3791,6 +3791,7 @@ body.card-mode-active {
         min-height: calc(100dvh - 170px);
         position: relative;
         overflow: hidden;
+        z-index: 110; /* above day-header(50) and nav(100) */
     }
 
     #metrics-form.card-mode .metric-card {

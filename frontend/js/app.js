@@ -43,6 +43,7 @@ let _cardDragLocked = false;
 let _cardDragStartX = 0;
 let _cardDragStartY = 0;
 let _cardDragCurrentX = 0;
+let _cardDragCurrentY = 0;
 let _cardDragAnimating = false;
 let _peekCard = null;
 let _peekDirection = 0;
@@ -363,6 +364,7 @@ async function renderToday(container) {
         _cardDragStartX = e.clientX;
         _cardDragStartY = e.clientY;
         _cardDragCurrentX = 0;
+        _cardDragCurrentY = 0;
         _cardDragActive = true;
         _cardDragLocked = false;
         if (_cardModeActive) {
@@ -377,8 +379,8 @@ async function renderToday(container) {
 
         if (!_cardDragLocked) {
             if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
-            if (Math.abs(dy) > Math.abs(dx)) {
-                // Vertical — abort drag, allow scroll
+            if (!_cardModeActive && Math.abs(dy) > Math.abs(dx)) {
+                // Vertical in list mode — abort drag, allow scroll
                 _cardDragActive = false;
                 return;
             }
@@ -395,15 +397,20 @@ async function renderToday(container) {
         const atEnd = _cardIndex >= _cardList.length - 1 && dx < 0;
         const effectiveDx = (atStart || atEnd) ? dx * 0.3 : dx;
         _cardDragCurrentX = effectiveDx;
+        _cardDragCurrentY = dy;
 
-        // Show/update peek card
-        const newPeekDir = dx < 0 ? -1 : 1;
-        if (newPeekDir !== _peekDirection) _showPeekCard(dx);
+        // Show/update peek card (dead zone prevents flicker on diagonal swipes)
+        if (Math.abs(dx) > 15) {
+            const newPeekDir = dx < 0 ? -1 : 1;
+            if (newPeekDir !== _peekDirection) _showPeekCard(dx);
+        } else if (_peekCard) {
+            _hidePeekCard();
+        }
 
         const screenW = window.innerWidth || 400;
         const angle = (effectiveDx / screenW) * 5;
         card.style.transition = 'none';
-        card.style.transform = `translateX(${effectiveDx}px) rotate(${angle}deg)`;
+        card.style.transform = `translate(${effectiveDx}px, ${dy}px) rotate(${angle}deg)`;
 
         // Parallax on peek card
         if (_peekCard) {
@@ -539,9 +546,10 @@ function _flyOffCard(card, direction) {
     _cardDragAnimating = true;
     const hasPeek = !!_peekCard;
     const flyX = direction > 0 ? '120vw' : '-120vw';
+    const flyY = _cardDragCurrentY;
     const flyAngle = direction > 0 ? 15 : -15;
     card.style.transition = 'transform 300ms ease-out, opacity 300ms ease-out';
-    card.style.transform = `translateX(${flyX}) rotate(${flyAngle}deg)`;
+    card.style.transform = `translate(${flyX}, ${flyY}px) rotate(${flyAngle}deg)`;
     card.style.opacity = '0';
 
     // Animate peek to full size while card flies off
@@ -613,7 +621,7 @@ function _slideInCard(card, fromDirection) {
 function _springBackCard(card) {
     _cardDragAnimating = true;
     card.style.transition = 'transform 200ms ease-out';
-    card.style.transform = 'translateX(0) rotate(0deg)';
+    card.style.transform = 'translate(0, 0) rotate(0deg)';
 
     // Animate peek back to resting state
     if (_peekCard) {
