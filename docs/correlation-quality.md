@@ -8,7 +8,7 @@ NULL — пара статистически надёжна. NOT NULL — ест
 | Уровень | severity | Условие | На фронтенде |
 |---|---|---|---|
 | Надёжно | — (`quality_issue IS NULL`) | Все проверки пройдены | Первый раздел (всегда видим) |
-| Может быть ненадёжно | `maybe` | `wide_ci` | Второй раздел (`<details>`, lazy load) |
+| Может быть ненадёжно | `maybe` | `wide_ci`, `fisher_exact_high_p` | Второй раздел (`<details>`, lazy load) |
 | Ненадёжно | `bad` | `low_data_points`, `insufficient_variance`, `low_binary_data_points`, `high_p_value` | Третий раздел (`<details>`, lazy load) |
 
 Severity маппинг задаётся словарём `QUALITY_SEVERITY` в `analytics.py`.
@@ -21,6 +21,7 @@ Severity маппинг задаётся словарём `QUALITY_SEVERITY` в 
 | `insufficient_variance` | variance=0 (константа, любой тип) или бинарный с variance ≤ 0.10 | bad | Значение почти не меняется, корреляция случайна |
 | `low_binary_data_points` | min(count_true, count_false) < 5 для бинарного источника | bad | В одной из групп бинарного источника слишком мало наблюдений |
 | `high_p_value` | p-value ≥ 0.05 | bad | Статистически незначимо |
+| `fisher_exact_high_p` | оба источника бинарные и Fisher exact p ≥ 0.05 | maybe | Совпадение бинарных значений может быть случайным |
 | `wide_ci` | ширина 95% ДИ > 0.5 | maybe | Оценка силы связи неточная, нужно больше данных |
 
 ## Приоритет
@@ -32,7 +33,8 @@ Severity маппинг задаётся словарём `QUALITY_SEVERITY` в 
 2. `low_binary_data_points` — бинарный источник прошёл variance threshold, но в меньшей группе < 5 наблюдений
 3. `insufficient_variance` — при низкой дисперсии даже p < 0.05 ненадёжен
 4. `high_p_value` — данных и вариации достаточно, но связь не подтверждена
-5. `wide_ci` — пара прошла все "bad" проверки, но ДИ слишком широкий (> 0.5)
+5. `fisher_exact_high_p` — Pearson p < 0.05, но точный тест Фишера показывает p ≥ 0.05 для бинарной пары
+6. `wide_ci` — пара прошла все "bad" проверки, но ДИ слишком широкий (> 0.5)
 
 ## Доверительный интервал (95% CI)
 
@@ -59,6 +61,31 @@ Severity маппинг задаётся словарём `QUALITY_SEVERITY` в 
 
 Применяется только к источникам, которые **не** были уже отфильтрованы по `low_var_sources` (variance threshold).
 
+## Fisher's exact test (бинарные пары)
+
+### Проблема
+
+Когда оба источника в паре бинарные (type ∈ {bool, enum_bool}), p-value от t-теста Пирсона некорректен. Корень проблемы — шорткат `abs(r) >= 1.0 → return 0.0` в `_p_value()`. Пример: два бинарных ряда, оба True в 1 день из 10 — Pearson даёт r=1.0, p=0.0. Реально одно совпадение из 10 — случайность.
+
+### Решение
+
+Для пар где **оба** источника бинарные — дополнительно считается Fisher's exact test по таблице сопряжённости 2×2. Если Fisher p ≥ 0.05, пара получает `fisher_exact_high_p` (severity "maybe").
+
+### Алгоритм
+
+1. **Таблица сопряжённости** (`_build_contingency_table`): по общим датам двух рядов строится 2×2 таблица (значение ≥ 0.5 → True):
+   - a = оба True, b = A true & B false, c = A false & B true, d = оба False
+2. **Log-вероятность** (`_log_hypergeometric`): вычисляется через `math.lgamma` для избежания overflow при больших факториалах
+3. **Двусторонний тест** (`_fisher_exact_p`): перебирает все таблицы с фиксированными маржиналями, суммирует вероятности тех, что ≤ наблюдаемой
+
+### Типы источников
+
+Fisher test применяется только когда **оба** типа в паре ∈ `_BINARY_TYPES` = {`bool`, `enum_bool`}. Это включает:
+- bool метрики
+- enum-опции (каждая опция — отдельный бинарный источник)
+- календарные auto-sources (день недели, месяц, рабочий/выходной)
+- nonzero auto-sources
+
 ## Код
 
-`QualityIssue` enum, `_determine_quality_issue()`, `low_var_sources`, `binary_sources`, `_check_small_binary_group()` → `backend/app/routers/analytics.py`
+`QualityIssue` enum, `_determine_quality_issue()`, `low_var_sources`, `binary_sources`, `_check_small_binary_group()`, `_BINARY_TYPES`, `_build_contingency_table()`, `_log_hypergeometric()`, `_fisher_exact_p()` → `backend/app/routers/analytics.py`

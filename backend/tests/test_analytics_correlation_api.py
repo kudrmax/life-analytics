@@ -1857,3 +1857,71 @@ class TestInsufficientBinaryGroup:
                 f"Expected low_binary_data_points but got {p['quality_issue']} "
                 f"for pair {p['label_a']} vs {p['label_b']}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Fisher exact test quality issue for binary pairs
+# ---------------------------------------------------------------------------
+
+class TestFisherExactQualityIssue:
+
+    async def test_binary_pair_fisher_disagrees_with_pearson(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Two bool metrics, 5 True each out of 20 days, overlapping on 3 days.
+
+        Pearson gives r≈0.47, p≈0.04 (significant), but Fisher's exact test
+        gives p≈0.07 (not significant). The pair should get fisher_exact_high_p.
+
+        Data layout:
+          Days 1-3:   both True  (overlap)
+          Days 4-5:   A True, B False
+          Days 6-7:   A False, B True
+          Days 8-20:  both False
+        """
+        token = user_a["token"]
+        bool_a = await create_metric(
+            client, token, name="FisherA", metric_type="bool", slug="fisher_a",
+        )
+        bool_b = await create_metric(
+            client, token, name="FisherB", metric_type="bool", slug="fisher_b",
+        )
+        # A True on days 1-5, B True on days 1-3 and 6-7
+        a_true_days = {1, 2, 3, 4, 5}
+        b_true_days = {1, 2, 3, 6, 7}
+        for day in range(1, 21):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, bool_a["id"], date_str, day in a_true_days)
+            await create_entry(client, token, bool_b["id"], date_str, day in b_true_days)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            params={"category": "maybe"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        pairs_data = resp.json()
+
+        a_id = bool_a["id"]
+        b_id = bool_b["id"]
+        fisher_pairs = [
+            p for p in pairs_data["pairs"]
+            if {p["metric_a_id"], p["metric_b_id"]} == {a_id, b_id}
+            and p["label_a"] in ("FisherA", "FisherB")
+            and p["label_b"] in ("FisherA", "FisherB")
+            and p["lag_days"] == 0
+        ]
+        assert len(fisher_pairs) > 0, (
+            "Expected at least one FisherA↔FisherB lag=0 pair in 'maybe' category"
+        )
+        for p in fisher_pairs:
+            assert p["quality_issue"] == "fisher_exact_high_p", (
+                f"Expected fisher_exact_high_p but got {p['quality_issue']} "
+                f"for pair {p['label_a']} vs {p['label_b']}"
+            )
+            assert p["quality_severity"] == "maybe"

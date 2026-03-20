@@ -38,6 +38,7 @@ class QualityIssue(str, Enum):
     INSUFFICIENT_VARIANCE = "insufficient_variance"
     LOW_BINARY_DATA_POINTS = "low_binary_data_points"
     HIGH_P_VALUE = "high_p_value"
+    FISHER_EXACT_HIGH_P = "fisher_exact_high_p"
     WIDE_CI = "wide_ci"
 
 
@@ -46,6 +47,7 @@ QUALITY_ISSUE_LABELS: dict[str, str] = {
     QualityIssue.INSUFFICIENT_VARIANCE: "Недостаточная дисперсия (значение почти не меняется)",
     QualityIssue.LOW_BINARY_DATA_POINTS: "Мало наблюдений в группе бинарного источника (менее 5)",
     QualityIssue.HIGH_P_VALUE: "Статистически незначимо (p ≥ 0.05)",
+    QualityIssue.FISHER_EXACT_HIGH_P: "Совпадение бинарных значений может быть случайным (точный тест Фишера, p ≥ 0.05)",
     QualityIssue.WIDE_CI: "Широкий доверительный интервал",
 }
 
@@ -54,6 +56,7 @@ QUALITY_SEVERITY: dict[str, str] = {
     QualityIssue.INSUFFICIENT_VARIANCE: "bad",
     QualityIssue.LOW_BINARY_DATA_POINTS: "bad",
     QualityIssue.HIGH_P_VALUE: "bad",
+    QualityIssue.FISHER_EXACT_HIGH_P: "maybe",
     QualityIssue.WIDE_CI: "maybe",
 }
 
@@ -61,6 +64,7 @@ QUALITY_SEVERITY: dict[str, str] = {
 def _determine_quality_issue(
     n: int, p_value: float, low_variance: bool = False,
     small_binary_group: bool = False, wide_ci: bool = False,
+    fisher_high_p: bool = False,
 ) -> str | None:
     # Priority order: first match wins. Reorder to change priority.
     checks = [
@@ -68,6 +72,7 @@ def _determine_quality_issue(
         (small_binary_group,  QualityIssue.LOW_BINARY_DATA_POINTS),
         (low_variance,        QualityIssue.INSUFFICIENT_VARIANCE),
         (p_value >= 0.05,     QualityIssue.HIGH_P_VALUE),
+        (fisher_high_p,       QualityIssue.FISHER_EXACT_HIGH_P),
         (wide_ci,             QualityIssue.WIDE_CI),
     ]
     return next((issue.value for cond, issue in checks if cond), None)
@@ -423,6 +428,75 @@ def _confidence_interval(r: float, n: int) -> tuple[float, float] | None:
     z_lower = z - 1.96 * se
     z_upper = z + 1.96 * se
     return (round(math.tanh(z_lower), 4), round(math.tanh(z_upper), 4))
+
+
+_BINARY_TYPES: frozenset[str] = frozenset({"bool", "enum_bool"})
+
+
+def _build_contingency_table(
+    a_by_date: dict[str, float], b_by_date: dict[str, float],
+) -> tuple[int, int, int, int, int]:
+    """Build 2x2 contingency table from two binary data dicts.
+
+    Returns (a, b, c, d, n) where:
+      a = both True, b = A true & B false,
+      c = A false & B true, d = both False,
+      n = total common dates.
+    """
+    a = b = c = d = 0
+    for date in a_by_date:
+        if date not in b_by_date:
+            continue
+        va = a_by_date[date] >= 0.5
+        vb = b_by_date[date] >= 0.5
+        if va and vb:
+            a += 1
+        elif va and not vb:
+            b += 1
+        elif not va and vb:
+            c += 1
+        else:
+            d += 1
+    return a, b, c, d, a + b + c + d
+
+
+def _log_hypergeometric(a: int, b: int, c: int, d: int) -> float:
+    """Log probability of a specific 2x2 table under the hypergeometric distribution."""
+    n = a + b + c + d
+    return (
+        math.lgamma(a + b + 1) + math.lgamma(c + d + 1)
+        + math.lgamma(a + c + 1) + math.lgamma(b + d + 1)
+        - math.lgamma(n + 1)
+        - math.lgamma(a + 1) - math.lgamma(b + 1)
+        - math.lgamma(c + 1) - math.lgamma(d + 1)
+    )
+
+
+def _fisher_exact_p(
+    a_by_date: dict[str, float], b_by_date: dict[str, float],
+) -> float:
+    """Two-sided Fisher's exact test p-value for two binary data series."""
+    a, b, c, d, n = _build_contingency_table(a_by_date, b_by_date)
+    if n == 0:
+        return 1.0
+    # Fixed marginals: row1=a+b, row2=c+d, col1=a+c, col2=b+d
+    row1 = a + b
+    col1 = a + c
+    # Observed log-probability
+    log_p_obs = _log_hypergeometric(a, b, c, d)
+    # Enumerate all possible tables with these marginals
+    # a can range from max(0, row1+col1-n) to min(row1, col1)
+    a_min = max(0, row1 + col1 - n)
+    a_max = min(row1, col1)
+    p_total = 0.0
+    for a_i in range(a_min, a_max + 1):
+        b_i = row1 - a_i
+        c_i = col1 - a_i
+        d_i = n - row1 - col1 + a_i
+        log_p_i = _log_hypergeometric(a_i, b_i, c_i, d_i)
+        if log_p_i <= log_p_obs + 1e-10:  # as extreme or more extreme
+            p_total += math.exp(log_p_i)
+    return min(p_total, 1.0)
 
 
 @router.get("/trends")
@@ -1203,6 +1277,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     low_var = (i in low_var_sources) or (j in low_var_sources)
                     data_i = source_data.get(i, {})
                     data_j = source_data.get(j, {})
+                    both_binary = mt_i in _BINARY_TYPES and mt_j in _BINARY_TYPES
 
                     # lag=0: same-day correlation
                     r, n = _compute_pearson(data_i, data_j)
@@ -1211,11 +1286,12 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                         p_val = round(_p_value(r, n), 4)
                         ci = _confidence_interval(r, n)
                         is_wide_ci = ci is not None and (ci[1] - ci[0]) > 0.5
+                        fisher_hp = both_binary and _fisher_exact_p(data_i, data_j) >= 0.05
                         pairs_to_insert.append((
                             report_id,
                             sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
                             key_i, key_j, mt_i, mt_j,
-                            r, n, 0, p_val, _determine_quality_issue(n, p_val, low_var, small_group, is_wide_ci),
+                            r, n, 0, p_val, _determine_quality_issue(n, p_val, low_var, small_group, is_wide_ci, fisher_hp),
                         ))
 
                     # lag=1: yesterday's j → today's i
@@ -1226,11 +1302,12 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                         p_val_lag = round(_p_value(r_lag, n_lag), 4)
                         ci_lag = _confidence_interval(r_lag, n_lag)
                         is_wide_ci_lag = ci_lag is not None and (ci_lag[1] - ci_lag[0]) > 0.5
+                        fisher_hp_lag = both_binary and _fisher_exact_p(data_i, shifted_j) >= 0.05
                         pairs_to_insert.append((
                             report_id,
                             sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
                             key_i, key_j, mt_i, mt_j,
-                            r_lag, n_lag, 1, p_val_lag, _determine_quality_issue(n_lag, p_val_lag, low_var, small_group_lag, is_wide_ci_lag),
+                            r_lag, n_lag, 1, p_val_lag, _determine_quality_issue(n_lag, p_val_lag, low_var, small_group_lag, is_wide_ci_lag, fisher_hp_lag),
                         ))
 
                     # lag=1: yesterday's i → today's j
@@ -1241,11 +1318,12 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                         p_val_lag2 = round(_p_value(r_lag2, n_lag2), 4)
                         ci_lag2 = _confidence_interval(r_lag2, n_lag2)
                         is_wide_ci_lag2 = ci_lag2 is not None and (ci_lag2[1] - ci_lag2[0]) > 0.5
+                        fisher_hp_lag2 = both_binary and _fisher_exact_p(data_j, shifted_i) >= 0.05
                         pairs_to_insert.append((
                             report_id,
                             sk_j.metric_id, sk_i.metric_id, sk_j.slot_id, sk_i.slot_id,
                             key_j, key_i, mt_j, mt_i,
-                            r_lag2, n_lag2, 1, p_val_lag2, _determine_quality_issue(n_lag2, p_val_lag2, low_var, small_group_lag2, is_wide_ci_lag2),
+                            r_lag2, n_lag2, 1, p_val_lag2, _determine_quality_issue(n_lag2, p_val_lag2, low_var, small_group_lag2, is_wide_ci_lag2, fisher_hp_lag2),
                         ))
 
             qt.mark(f"compute_{len(pairs_to_insert)}_pairs")
@@ -1318,8 +1396,9 @@ async def get_latest_correlation_report(
                    COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) > 0.3
                                     AND ABS(correlation) <= 0.7) AS sig_medium,
                    COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) <= 0.3) AS sig_weak,
-                   COUNT(*) FILTER (WHERE quality_issue = 'wide_ci') AS maybe,
-                   COUNT(*) FILTER (WHERE quality_issue IS NOT NULL AND quality_issue != 'wide_ci') AS insig
+                   COUNT(*) FILTER (WHERE quality_issue IN ('wide_ci', 'fisher_exact_high_p')) AS maybe,
+                   COUNT(*) FILTER (WHERE quality_issue IS NOT NULL
+                                    AND quality_issue NOT IN ('wide_ci', 'fisher_exact_high_p')) AS insig
                FROM correlation_pairs WHERE report_id = $1""",
             done_row["id"],
         )
@@ -1494,8 +1573,8 @@ _CATEGORY_FILTERS: dict[str, str] = {
     "sig_strong": "AND quality_issue IS NULL AND ABS(correlation) > 0.7",
     "sig_medium": "AND quality_issue IS NULL AND ABS(correlation) > 0.3 AND ABS(correlation) <= 0.7",
     "sig_weak": "AND quality_issue IS NULL AND ABS(correlation) <= 0.3",
-    "maybe": "AND quality_issue = 'wide_ci'",
-    "insig": "AND quality_issue IS NOT NULL AND quality_issue != 'wide_ci'",
+    "maybe": "AND quality_issue IN ('wide_ci', 'fisher_exact_high_p')",
+    "insig": "AND quality_issue IS NOT NULL AND quality_issue NOT IN ('wide_ci', 'fisher_exact_high_p')",
     "all": "",
 }
 
