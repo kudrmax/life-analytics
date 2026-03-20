@@ -9,8 +9,8 @@ function setPrivacyMode(on) { localStorage.setItem(PRIVACY_KEY, on ? 'true' : 'f
 const PRIVATE_MASK = '***';
 const PRIVATE_ICON = '🔒';
 function isMetricBlocked(m) { return m.private && isPrivacyMode(); }
-function metricIconHtml(m) { const i = m.icon || ''; return i ? '<span class="metric-icon">' + i + '</span>' : ''; }
-function metricLabelHtml(m) { return metricIconHtml(m) + m.name; }
+function metricIconHtml(m) { const i = m.icon || ''; return i ? '<span class="metric-icon">' + _escapeHtml(i) + '</span>' : ''; }
+function metricLabelHtml(m) { return metricIconHtml(m) + _escapeHtml(m.name); }
 function _pluralize(n, one, few, many) {
     const m = Math.abs(n) % 100;
     if (m >= 11 && m <= 19) return many;
@@ -441,7 +441,7 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
             const childrenWithMetrics = (topCat.children || []).filter(ch => (metricsByCat[ch.id] || []).length > 0);
             if (topMetrics.length === 0 && childrenWithMetrics.length === 0) continue;
 
-            html += `<h2 class="fill-time-header">${topCat.name}</h2>`;
+            html += `<h2 class="fill-time-header">${_escapeHtml(topCat.name)}</h2>`;
             if (topMetrics.length > 0) {
                 html += `<div class="category">`;
                 for (const m of topMetrics) html += renderMetricInput(m, metricNameById);
@@ -450,7 +450,7 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
             for (const ch of (topCat.children || [])) {
                 const chMetrics = metricsByCat[ch.id] || [];
                 if (chMetrics.length === 0) continue;
-                html += `<div class="category"><h3>${ch.name}</h3>`;
+                html += `<div class="category"><h3>${_escapeHtml(ch.name)}</h3>`;
                 for (const m of chMetrics) html += renderMetricInput(m, metricNameById);
                 html += '</div>';
             }
@@ -741,10 +741,10 @@ function renderMetricInput(m, metricNameById) {
             ? `<button class="metric-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`
             : '';
 
-        const slotBadge = `<span class="slot-badge">${slot.label}</span>`;
+        const slotBadge = `<span class="slot-badge">${_escapeHtml(slot.label)}</span>`;
         const labelHtml = m.icon
-            ? `<span class="metric-icon">${m.icon}</span> ${m.name}${slotBadge}`
-            : `${m.name}${slotBadge}`;
+            ? `<span class="metric-icon">${_escapeHtml(m.icon)}</span> ${_escapeHtml(m.name)}${slotBadge}`
+            : `${_escapeHtml(m.name)}${slotBadge}`;
 
         return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}" data-slot-id="${slot.slot_id}">
             <div class="metric-header">
@@ -785,7 +785,7 @@ function renderMetricInput(m, metricNameById) {
 
             slotsHtml += `<div class="metric-slot" data-slot-id="${slot.slot_id}" data-entry-id="${entryId || ''}">
                 <div class="period-header">
-                    <span class="period-label">${slot.label}</span>
+                    <span class="period-label">${_escapeHtml(slot.label)}</span>
                     ${clearBtn}
                 </div>
                 <div class="metric-input">${input}</div>
@@ -879,7 +879,8 @@ function renderTime(val) {
 function renderScale(val, min, max, step, labels) {
     let buttons = '';
     for (let v = min; v <= max; v += step) {
-        const text = (labels && labels[String(v)]) ? labels[String(v)] : v;
+        const rawText = (labels && labels[String(v)]) ? labels[String(v)] : v;
+        const text = (labels && labels[String(v)]) ? _escapeHtml(String(rawText)) : v;
         const title = (labels && labels[String(v)]) ? ` title="${v}"` : '';
         buttons += `<button class="scale-btn ${val === v ? 'active' : ''}" data-value="${v}"${title}>${text}</button>`;
     }
@@ -890,7 +891,7 @@ function renderEnum(selectedIds, options, multiSelect, hasEntry) {
     let buttons = '';
     for (const opt of (options || [])) {
         const isSelected = selectedIds && Array.isArray(selectedIds) && selectedIds.includes(opt.id);
-        buttons += `<button class="enum-btn ${isSelected ? 'active' : ''}" data-option-id="${opt.id}" data-value="${opt.id}">${opt.label}</button>`;
+        buttons += `<button class="enum-btn ${isSelected ? 'active' : ''}" data-option-id="${opt.id}" data-value="${opt.id}">${_escapeHtml(opt.label)}</button>`;
     }
     if (multiSelect) {
         const noneActive = hasEntry && Array.isArray(selectedIds) && selectedIds.length === 0;
@@ -1692,7 +1693,7 @@ async function loadChartsTrends(start, end) {
             if (isMetricBlocked(m)) {
                 cardHtml = `<div class="trend-card-row metric-private" data-metric-id="${m.id}" style="cursor:pointer">
                     <div class="trend-card-header">
-                        <h4>${metricIconHtml(m)}<span class="trend-metric-name">${m.name}</span></h4>
+                        <h4>${metricIconHtml(m)}<span class="trend-metric-name">${_escapeHtml(m.name)}</span></h4>
                     </div>
                     <div class="metric-private-hint">Сначала отключите приватный режим</div>
                 </div>`;
@@ -1700,7 +1701,7 @@ async function loadChartsTrends(start, end) {
                 const total = (trend.points || []).reduce((s, p) => s + (p.value || 0), 0);
                 cardHtml = `<div class="trend-card-row" data-metric-id="${m.id}" style="cursor:pointer">
                     <div class="trend-card-header">
-                        <h4>${metricIconHtml(m)}<span class="trend-metric-name">${m.name}</span></h4>
+                        <h4>${metricIconHtml(m)}<span class="trend-metric-name">${_escapeHtml(m.name)}</span></h4>
                         <i data-lucide="info" class="trend-info-icon"></i>
                     </div>
                     <div class="trend-text-count">${total} ${_pluralize(total, 'запись', 'записи', 'записей')}</div>
@@ -1710,7 +1711,7 @@ async function loadChartsTrends(start, end) {
                 const trendDescHtml = m.description ? `<div class="metric-description" style="margin-bottom:4px">${_escapeHtml(m.description)}</div>` : '';
                 cardHtml = `<div class="trend-card-row" data-metric-id="${m.id}" style="cursor:pointer">
                     <div class="trend-card-header">
-                        <h4>${metricIconHtml(m)}<span class="trend-metric-name">${m.name}</span></h4>
+                        <h4>${metricIconHtml(m)}<span class="trend-metric-name">${_escapeHtml(m.name)}</span></h4>
                         <i data-lucide="info" class="trend-info-icon"></i>
                     </div>
                     ${trendDescHtml}
@@ -1758,7 +1759,7 @@ async function loadChartsTrends(start, end) {
             const childrenWithItems = (topCat.children || []).filter(ch => (metricsByCat[ch.id] || []).length > 0);
             if (topItems.length === 0 && childrenWithItems.length === 0) continue;
 
-            trendsHtml += `<h2 class="fill-time-header">${topCat.name}</h2>`;
+            trendsHtml += `<h2 class="fill-time-header">${_escapeHtml(topCat.name)}</h2>`;
             if (topItems.length > 0) {
                 trendsHtml += '<div class="trends-list">';
                 for (const item of topItems) trendsHtml += item.cardHtml;
@@ -1767,7 +1768,7 @@ async function loadChartsTrends(start, end) {
             for (const ch of (topCat.children || [])) {
                 const chItems = metricsByCat[ch.id] || [];
                 if (chItems.length === 0) continue;
-                trendsHtml += `<h3 class="fill-time-header">${ch.name}</h3>`;
+                trendsHtml += `<h3 class="fill-time-header">${_escapeHtml(ch.name)}</h3>`;
                 trendsHtml += '<div class="trends-list">';
                 for (const item of chItems) trendsHtml += item.cardHtml;
                 trendsHtml += '</div>';
@@ -1963,10 +1964,10 @@ async function renderInsights(container) {
 function renderInsightCard(insight) {
     const metricTags = insight.metrics.map(m => {
         if (m.metric_id) {
-            const icon = m.metric_icon ? `<span class="metric-icon">${m.metric_icon}</span>` : '';
-            return `<span class="insight-metric-tag">${icon}${m.metric_name || 'Удалённая метрика'}</span>`;
+            const icon = m.metric_icon ? `<span class="metric-icon">${_escapeHtml(m.metric_icon)}</span>` : '';
+            return `<span class="insight-metric-tag">${icon}${_escapeHtml(m.metric_name || 'Удалённая метрика')}</span>`;
         } else {
-            return `<span class="insight-metric-tag custom">${m.custom_label || ''}</span>`;
+            return `<span class="insight-metric-tag custom">${_escapeHtml(m.custom_label || '')}</span>`;
         }
     }).join('');
 
@@ -1978,7 +1979,7 @@ function renderInsightCard(insight) {
         : '';
 
     const textHtml = insight.text
-        ? `<div class="insight-text">${insight.text.replace(/\n/g, '<br>')}</div>`
+        ? `<div class="insight-text">${_escapeHtml(insight.text).replace(/\n/g, '<br>')}</div>`
         : '';
 
     return `<div class="insight-card" data-insight-id="${insight.id}">
@@ -2008,12 +2009,12 @@ async function showInsightModal(existing = null) {
             const selectHtml = `<select class="insight-metric-select" data-idx="${i}">
                 <option value="">— Выберите метрику —</option>
                 ${metrics.filter(mt => mt.enabled).map(mt =>
-                    `<option value="${mt.id}" ${m.metric_id === mt.id ? 'selected' : ''}>${mt.icon || ''} ${mt.name}</option>`
+                    `<option value="${mt.id}" ${m.metric_id === mt.id ? 'selected' : ''}>${_escapeHtml(mt.icon || '')} ${_escapeHtml(mt.name)}</option>`
                 ).join('')}
                 <option value="custom" ${isCustom && m.custom_label ? 'selected' : ''}>Произвольное название...</option>
             </select>`;
             const customInput = isCustom
-                ? `<input type="text" class="insight-custom-input" data-idx="${i}" value="${m.custom_label || ''}" placeholder="Название">`
+                ? `<input type="text" class="insight-custom-input" data-idx="${i}" value="${_escapeHtml(m.custom_label || '')}" placeholder="Название">`
                 : '';
             return `<div class="insight-metric-row">
                 ${selectHtml}
@@ -2034,7 +2035,7 @@ async function showInsightModal(existing = null) {
                 </div>
                 <div class="form-section">
                     <span class="label-text">Текст вывода</span>
-                    <textarea id="insight-modal-text" class="note-textarea" rows="4" placeholder="Опишите вывод о связи..." style="min-height:80px">${existing ? existing.text : ''}</textarea>
+                    <textarea id="insight-modal-text" class="note-textarea" rows="4" placeholder="Опишите вывод о связи..." style="min-height:80px">${_escapeHtml(existing ? existing.text : '')}</textarea>
                 </div>
             </div>
             <div class="modal-actions">
@@ -3331,13 +3332,13 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
 
         for (const topCat of settingsCategories) {
             const topMetrics = settingsMetricsByCat[topCat.id] || [];
-            html += `<h2 class="fill-time-header">${topCat.name}</h2>`;
+            html += `<h2 class="fill-time-header">${_escapeHtml(topCat.name)}</h2>`;
             html += `<div class="category" data-category-id="${topCat.id}">`;
             for (const m of topMetrics) html += renderSettingRow(m);
             html += '</div>';
             for (const ch of (topCat.children || [])) {
                 const chMetrics = settingsMetricsByCat[ch.id] || [];
-                html += `<div class="category" data-category-id="${ch.id}"><h3>${ch.name}</h3>`;
+                html += `<div class="category" data-category-id="${ch.id}"><h3>${_escapeHtml(ch.name)}</h3>`;
                 for (const m of chMetrics) html += renderSettingRow(m);
                 html += '</div>';
             }
@@ -3899,7 +3900,7 @@ async function renderCategoryManager(container) {
         for (const cat of categories) {
             html += `<div class="cat-item" data-cat-id="${cat.id}" data-parent-id="">
                 <span class="drag-handle">⠿</span>
-                <span class="cat-item-name">${cat.name}</span>
+                <span class="cat-item-name">${_escapeHtml(cat.name)}</span>
                 <div class="cat-item-actions">
                     <button class="btn-icon cat-edit" data-cat-id="${cat.id}"><i data-lucide="pencil"></i></button>
                     <button class="btn-icon btn-icon-danger cat-del" data-cat-id="${cat.id}"><i data-lucide="trash-2"></i></button>
@@ -3908,7 +3909,7 @@ async function renderCategoryManager(container) {
             for (const ch of (cat.children || [])) {
                 html += `<div class="cat-item cat-item-child" data-cat-id="${ch.id}" data-parent-id="${cat.id}">
                     <span class="drag-handle">⠿</span>
-                    <span class="cat-item-name">${ch.name}</span>
+                    <span class="cat-item-name">${_escapeHtml(ch.name)}</span>
                     <div class="cat-item-actions">
                         <button class="btn-icon cat-edit" data-cat-id="${ch.id}"><i data-lucide="pencil"></i></button>
                         <button class="btn-icon btn-icon-danger cat-del" data-cat-id="${ch.id}"><i data-lucide="trash-2"></i></button>
@@ -4170,7 +4171,7 @@ async function renderSlotManager(container) {
             const delTitle = used ? `title="Используется в ${slot.usage_count} метриках"` : '';
             html += `<div class="cat-item" data-slot-id="${slot.id}">
                 <span class="drag-handle">⠿</span>
-                <span class="cat-item-name">${slot.label}</span>
+                <span class="cat-item-name">${_escapeHtml(slot.label)}</span>
                 <div class="cat-item-actions">
                     <button class="btn-icon slot-edit" data-slot-id="${slot.id}"><i data-lucide="pencil"></i></button>
                     <button class="${delClass}" data-slot-id="${slot.id}" ${delTitle}><i data-lucide="trash-2"></i></button>
@@ -4509,7 +4510,7 @@ async function _loadAWCategories() {
             html += `<div class="aw-category-item" data-cat-id="${cat.id}">
                 <div class="aw-category-header" data-toggle="${sectionKey}">
                     <span class="aw-category-color" style="background:${cat.color}"></span>
-                    <span class="aw-category-name">${cat.name}</span>
+                    <span class="aw-category-name">${_escapeHtml(cat.name)}</span>
                     <span class="aw-category-count">${catApps.length}</span>
                     <button class="btn-icon aw-cat-edit" data-cat-id="${cat.id}" title="Редактировать"><i data-lucide="pencil"></i></button>
                     <button class="btn-icon aw-cat-delete" data-cat-id="${cat.id}" title="Удалить"><i data-lucide="trash-2"></i></button>
@@ -4690,7 +4691,7 @@ async function showConvertModal(metric) {
 
         overlay.innerHTML = `
             <div class="modal">
-                <h3>Конвертация: ${metric.icon ? `<span class="metric-icon">${metric.icon}</span> ` : ''}${metric.name}</h3>
+                <h3>Конвертация: ${metric.icon ? `<span class="metric-icon">${_escapeHtml(metric.icon)}</span> ` : ''}${_escapeHtml(metric.name)}</h3>
                 <div class="convert-warning">⚠ Рекомендуем сделать экспорт данных перед конвертацией</div>
                 <div class="convert-type-info">
                     <span>Текущий тип: <strong>${sourceLabel}${scaleInfo}</strong></span>
@@ -5129,12 +5130,12 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             <div class="modal-form">
                 <div class="form-label">
                     <span class="label-text">Название</span>
-                    <input id="nm-name" placeholder="Например: Зарядка" class="form-input" value="${existingMetric?.name || ''}">
+                    <input id="nm-name" placeholder="Например: Зарядка" class="form-input" value="${_escapeHtml(existingMetric?.name || '')}">
                 </div>
 
                 <div class="form-label">
                     <span class="label-text">Описание <span class="label-optional">(необязательно)</span></span>
-                    <textarea id="nm-description" class="note-textarea" rows="2" maxlength="2000" placeholder="Описание метрики...">${existingMetric?.description || ''}</textarea>
+                    <textarea id="nm-description" class="note-textarea" rows="2" maxlength="2000" placeholder="Описание метрики...">${_escapeHtml(existingMetric?.description || '')}</textarea>
                 </div>
 
                 <div class="form-label" ${isEdit && currentType === 'integration' ? 'style="display:none"' : ''}>
@@ -5142,7 +5143,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     <div class="emoji-picker-wrapper">
                         <button type="button" class="emoji-trigger-btn ${existingMetric?.icon ? 'has-icon' : ''}" id="nm-icon-btn">${existingMetric?.icon || '<i data-lucide="smile-plus"></i>'}</button>
                         <button type="button" class="emoji-clear-btn" id="nm-icon-clear" style="display:${existingMetric?.icon ? 'inline' : 'none'}">&times;</button>
-                        <input type="hidden" id="nm-icon" value="${existingMetric?.icon || ''}">
+                        <input type="hidden" id="nm-icon" value="${_escapeHtml(existingMetric?.icon || '')}">
                     </div>
                 </div>
 
@@ -5319,14 +5320,14 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 <div class="form-section" id="nm-integration-config" style="display: none">
                     <span class="label-text">Метрика Todoist</span>
                     <select id="nm-integration-metric" class="form-input">
-                        ${todoistAvailableMetrics.map(m => `<option value="${m.key}" data-config-fields="${(m.config_fields || []).join(',')}">${m.name}</option>`).join('')}
+                        ${todoistAvailableMetrics.map(m => `<option value="${m.key}" data-config-fields="${(m.config_fields || []).join(',')}">${_escapeHtml(m.name)}</option>`).join('')}
                     </select>
                     <div id="nm-integration-fields"></div>
                 </div>
                 <div class="form-section" id="nm-aw-config" style="display: none">
                     <span class="label-text">Метрика ActivityWatch</span>
                     <select id="nm-aw-metric" class="form-input">
-                        ${awAvailableMetrics.map(m => `<option value="${m.key}" data-config-fields="${(m.config_fields || []).join(',')}">${m.name}${m.description ? ' — ' + m.description : ''}</option>`).join('')}
+                        ${awAvailableMetrics.map(m => `<option value="${m.key}" data-config-fields="${(m.config_fields || []).join(',')}">${_escapeHtml(m.name)}${m.description ? ' — ' + _escapeHtml(m.description) : ''}</option>`).join('')}
                     </select>
                     <div id="nm-aw-fields"></div>
                 </div>
@@ -5449,7 +5450,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     <div id="metric-preview" class="metric-preview">
                         <div class="metric-card" id="preview-card">
                             <div class="metric-header">
-                                <label class="metric-label">${existingMetric?.icon ? '<span class="metric-icon">' + existingMetric.icon + '</span>' : ''}${existingMetric?.name || 'Название метрики'}</label>
+                                <label class="metric-label">${existingMetric?.icon ? '<span class="metric-icon">' + _escapeHtml(existingMetric.icon) + '</span>' : ''}${_escapeHtml(existingMetric?.name || 'Название метрики')}</label>
                             </div>
                             <div class="metric-input" id="preview-input">
                                 ${previewInputHtml(currentType)}
@@ -5466,7 +5467,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     <div id="metric-preview-inline" class="metric-preview">
                         <div class="metric-card" id="preview-card-inline">
                             <div class="metric-header">
-                                <label class="metric-label">${existingMetric?.icon ? '<span class="metric-icon">' + existingMetric.icon + '</span>' : ''}${existingMetric?.name || 'Название метрики'}</label>
+                                <label class="metric-label">${existingMetric?.icon ? '<span class="metric-icon">' + _escapeHtml(existingMetric.icon) + '</span>' : ''}${_escapeHtml(existingMetric?.name || 'Название метрики')}</label>
                             </div>
                             <div class="metric-input">${previewInputHtml(currentType)}</div>
                         </div>
@@ -6012,9 +6013,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     function _buildCategoryOptions(selectedCatId) {
         let html = '<option value="">Без категории</option>';
         for (const c of modalCategories) {
-            html += `<option value="${c.id}" ${selectedCatId === c.id ? 'selected' : ''}>${c.name}</option>`;
+            html += `<option value="${c.id}" ${selectedCatId === c.id ? 'selected' : ''}>${_escapeHtml(c.name)}</option>`;
             for (const ch of (c.children || [])) {
-                html += `<option value="${ch.id}" ${selectedCatId === ch.id ? 'selected' : ''}>  └ ${ch.name}</option>`;
+                html += `<option value="${ch.id}" ${selectedCatId === ch.id ? 'selected' : ''}>  └ ${_escapeHtml(ch.name)}</option>`;
             }
         }
         return html;
@@ -6058,7 +6059,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             const row = document.createElement('div');
             row.className = 'slot-label-row';
             row.dataset.slotId = slot.id;
-            row.innerHTML = `<span class="slot-selected-label">${slot.label}</span>
+            row.innerHTML = `<span class="slot-selected-label">${_escapeHtml(slot.label)}</span>
                 <select class="form-select slot-category-select" data-category-id="${slot.category_id || ''}">${_buildCategoryOptions(slot.category_id)}</select>
                 <button type="button" class="btn-remove-slot">&times;</button>`;
             slotList.appendChild(row);
@@ -6079,7 +6080,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         let hasOptions = false;
         for (const slot of _globalSlots) {
             if (!selectedIds.has(slot.id)) {
-                html += `<option value="${slot.id}">${slot.label}</option>`;
+                html += `<option value="${slot.id}">${_escapeHtml(slot.label)}</option>`;
                 hasOptions = true;
             }
         }
