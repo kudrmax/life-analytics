@@ -191,6 +191,8 @@ async def create_metric(
     scale_max: int | None = None,
     scale_step: int | None = None,
     slot_configs: list[dict] | None = None,
+    enum_options: list[str] | None = None,
+    multi_select: bool | None = None,
 ) -> dict:
     """Create a metric via API, return full response dict."""
     payload: dict = {"name": name, "type": metric_type}
@@ -204,6 +206,10 @@ async def create_metric(
         payload["scale_step"] = scale_step
     if slot_configs is not None:
         payload["slot_configs"] = slot_configs
+    if enum_options is not None:
+        payload["enum_options"] = enum_options
+    if multi_select is not None:
+        payload["multi_select"] = multi_select
     resp = await client.post("/api/metrics", json=payload, headers=auth_headers(token))
     assert resp.status_code == 201, resp.text
     return resp.json()
@@ -225,7 +231,7 @@ async def create_entry(
     token: str,
     metric_id: int,
     date: str,
-    value: bool | int | str,
+    value: bool | int | str | list[int],
     slot_id: int | None = None,
 ) -> dict:
     """Create an entry via API, return full response dict."""

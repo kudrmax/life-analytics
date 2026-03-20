@@ -728,6 +728,7 @@ async def delete_metric(
 ALLOWED_CONVERSIONS: dict[str, list[str]] = {
     "scale": ["scale"],
     "bool": ["enum"],
+    "enum": ["scale"],
 }
 
 VALUE_TABLE_MAP: dict[str, str] = {
@@ -789,6 +790,44 @@ async def convert_preview(
             entries_by_value.append({"value": str(r["value"]).lower(), "display": display, "count": r["cnt"]})
             total += r["cnt"]
 
+    elif source_type == "enum":
+        # Check multi_select — only single-select enum can be converted
+        ec = await db.fetchrow(
+            "SELECT multi_select FROM enum_config WHERE metric_id = $1", metric_id,
+        )
+        if ec and ec["multi_select"]:
+            raise HTTPException(400, "Cannot convert multi-select enum to scale")
+
+        # Load ALL enum_options (including disabled) to show in preview
+        opts = await db.fetch(
+            "SELECT id, label FROM enum_options WHERE metric_id = $1 ORDER BY sort_order",
+            metric_id,
+        )
+        opt_labels = {r["id"]: r["label"] for r in opts}
+
+        # Count entries per option
+        rows = await db.fetch(
+            """SELECT ve.selected_option_ids, COUNT(*) as cnt
+               FROM values_enum ve
+               JOIN entries e ON e.id = ve.entry_id
+               WHERE e.metric_id = $1 AND e.user_id = $2
+               GROUP BY ve.selected_option_ids""",
+            metric_id, current_user["id"],
+        )
+        for r in rows:
+            option_ids = r["selected_option_ids"]
+            if option_ids and len(option_ids) == 1:
+                oid = option_ids[0]
+                label = opt_labels.get(oid, str(oid))
+                entries_by_value.append({"value": str(oid), "display": label, "count": r["cnt"]})
+                total += r["cnt"]
+
+        # Add options with no entries (count=0)
+        seen_ids = {int(item["value"]) for item in entries_by_value}
+        for opt in opts:
+            if opt["id"] not in seen_ids:
+                entries_by_value.append({"value": str(opt["id"]), "display": opt["label"], "count": 0})
+
     return ConversionPreview(total_entries=total, entries_by_value=entries_by_value)
 
 
@@ -821,6 +860,8 @@ async def convert_metric(
             converted, deleted = await _convert_scale_to_scale(db, metric_id, current_user["id"], data)
         elif source_type == "bool" and target_type == "enum":
             converted, deleted = await _convert_bool_to_enum(db, metric_id, current_user["id"], data)
+        elif source_type == "enum" and target_type == "scale":
+            converted, deleted = await _convert_enum_to_scale(db, metric_id, current_user["id"], data)
 
     return MetricConvertResponse(converted=converted, deleted=deleted)
 
@@ -1013,6 +1054,130 @@ async def _convert_bool_to_enum(
     # Change metric type to enum
     await db.execute(
         "UPDATE metric_definitions SET type = 'enum' WHERE id = $1",
+        metric_id,
+    )
+
+    return converted, deleted
+
+
+async def _convert_enum_to_scale(
+    db, metric_id: int, user_id: int, data: MetricConvertRequest,
+) -> tuple[int, int]:
+    """Convert enum metric to scale within a transaction (caller must hold FOR UPDATE lock)."""
+    if data.scale_min is None or data.scale_max is None or data.scale_step is None:
+        raise HTTPException(400, "scale_min, scale_max, scale_step are required for enum→scale conversion")
+    if data.scale_min >= data.scale_max:
+        raise HTTPException(400, "scale_min must be less than scale_max")
+    if data.scale_step < 1 or data.scale_step > (data.scale_max - data.scale_min):
+        raise HTTPException(400, "scale_step must be >= 1 and <= (max - min)")
+
+    # Check multi_select
+    ec = await db.fetchrow(
+        "SELECT multi_select FROM enum_config WHERE metric_id = $1", metric_id,
+    )
+    if ec and ec["multi_select"]:
+        raise HTTPException(400, "Cannot convert multi-select enum to scale")
+
+    # Generate valid scale values
+    valid_new_values = set()
+    v = data.scale_min
+    while v <= data.scale_max:
+        valid_new_values.add(v)
+        v += data.scale_step
+
+    # Get actual option IDs from values_enum
+    actual_options = await db.fetch(
+        """SELECT DISTINCT unnest(ve.selected_option_ids) as option_id
+           FROM values_enum ve
+           JOIN entries e ON e.id = ve.entry_id
+           WHERE e.metric_id = $1 AND e.user_id = $2""",
+        metric_id, user_id,
+    )
+    actual_set = {str(r["option_id"]) for r in actual_options}
+
+    # Check mapping completeness
+    mapped_keys = set(data.value_mapping.keys())
+    missing = actual_set - mapped_keys
+    if missing:
+        raise HTTPException(400, f"Mapping is incomplete — missing values: {', '.join(sorted(missing))}")
+
+    # Validate new values
+    for old_str, new_str in data.value_mapping.items():
+        if new_str is not None:
+            try:
+                new_val = int(new_str)
+            except ValueError:
+                raise HTTPException(400, f"Invalid new value: {new_str}")
+            if new_val not in valid_new_values:
+                raise HTTPException(
+                    400,
+                    f"New value {new_val} is not in valid range "
+                    f"[{data.scale_min}..{data.scale_max}] step {data.scale_step}",
+                )
+
+    # DELETE entries mapped to None (by option_id in selected_option_ids)
+    deleted = 0
+    for old_str, new_str in data.value_mapping.items():
+        if new_str is not None:
+            continue
+        oid = int(old_str)
+        cnt = await db.fetchval(
+            """WITH deleted AS (
+                DELETE FROM entries WHERE id IN (
+                    SELECT e.id FROM entries e
+                    JOIN values_enum ve ON ve.entry_id = e.id
+                    WHERE e.metric_id = $1 AND e.user_id = $2
+                    AND ve.selected_option_ids = ARRAY[$3]::integer[]
+                ) RETURNING 1
+            ) SELECT COUNT(*) FROM deleted""",
+            metric_id, user_id, oid,
+        )
+        deleted += cnt
+
+    # INSERT values_scale from values_enum for each option_id → scale_value
+    converted = 0
+    for old_str, new_str in data.value_mapping.items():
+        if new_str is None:
+            continue
+        oid = int(old_str)
+        scale_val = int(new_str)
+        cnt = await db.fetchval(
+            """WITH inserted AS (
+                INSERT INTO values_scale (entry_id, value, scale_min, scale_max, scale_step)
+                SELECT ve.entry_id, $3, $4, $5, $6
+                FROM values_enum ve
+                JOIN entries e ON e.id = ve.entry_id
+                WHERE e.metric_id = $1 AND e.user_id = $2
+                AND ve.selected_option_ids = ARRAY[$7]::integer[]
+                RETURNING 1
+            ) SELECT COUNT(*) FROM inserted""",
+            metric_id, user_id, scale_val, data.scale_min, data.scale_max, data.scale_step, oid,
+        )
+        converted += cnt
+
+    # Delete ALL values_enum for this metric
+    await db.execute(
+        """DELETE FROM values_enum WHERE entry_id IN (
+            SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2
+        )""",
+        metric_id, user_id,
+    )
+
+    # Delete enum_options, enum_config
+    await db.execute("DELETE FROM enum_options WHERE metric_id = $1", metric_id)
+    await db.execute("DELETE FROM enum_config WHERE metric_id = $1", metric_id)
+
+    # Insert scale_config with labels
+    labels_json = json.dumps(data.scale_labels) if data.scale_labels else None
+    await db.execute(
+        """INSERT INTO scale_config (metric_id, scale_min, scale_max, scale_step, labels)
+           VALUES ($1, $2, $3, $4, $5::jsonb)""",
+        metric_id, data.scale_min, data.scale_max, data.scale_step, labels_json,
+    )
+
+    # Change metric type to scale
+    await db.execute(
+        "UPDATE metric_definitions SET type = 'scale' WHERE id = $1",
         metric_id,
     )
 

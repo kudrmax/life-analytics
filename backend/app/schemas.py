@@ -232,10 +232,11 @@ class ConversionPreview(BaseModel):
 class MetricConvertRequest(BaseModel):
     target_type: MetricType
     value_mapping: dict[str, str | None]  # old_value_str -> new_value_str or None (delete)
-    # For scale→scale:
+    # For scale→scale and enum→scale:
     scale_min: int | None = None
     scale_max: int | None = None
     scale_step: int | None = None
+    scale_labels: dict[str, str] | None = None
     # For bool→enum:
     enum_options: list[str] | None = None
     multi_select: bool = False

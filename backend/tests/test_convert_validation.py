@@ -106,6 +106,10 @@ class TestDisallowedConversions:
         ("number", {}, "enum"),
         ("number", {}, "bool"),
         ("number", {}, "scale"),
+        # enum can only go to scale
+        ("enum", {"enum_options": ["A", "B"]}, "enum"),
+        ("enum", {"enum_options": ["A", "B"]}, "bool"),
+        ("enum", {"enum_options": ["A", "B"]}, "number"),
         # duration has no conversions
         ("duration", {}, "enum"),
         ("duration", {}, "number"),
@@ -293,15 +297,12 @@ class TestDoubleConversion:
         )
         assert resp.status_code == 400
 
-        # Also try enum → scale
+        # enum → number (disallowed)
         resp = await client.post(
             f"/api/metrics/{mid}/convert",
             json={
-                "target_type": "scale",
+                "target_type": "number",
                 "value_mapping": {},
-                "scale_min": 1,
-                "scale_max": 5,
-                "scale_step": 1,
             },
             headers=auth_headers(token),
         )

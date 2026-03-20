@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, create_entry, create_metric, create_slot, register_user
+from tests.conftest import auth_headers, create_entry, create_metric, create_slot
 
 
 class TestPreviewBoolMetric:
@@ -90,6 +90,136 @@ class TestPreviewBoolMetric:
         by_val = {item["value"]: item for item in data["entries_by_value"]}
         assert by_val["true"]["display"] == "Да"
         assert by_val["false"]["display"] == "Нет"
+
+
+class TestPreviewEnumMetric:
+    """Preview for enum → scale conversion."""
+
+    async def test_preview_enum_3_options(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token, name="Mood Prev", metric_type="enum",
+            enum_options=["Плохо", "Средне", "Хорошо"],
+        )
+        mid = metric["id"]
+        opts = metric["enum_options"]
+        await create_entry(client, token, mid, "2026-01-10", [opts[0]["id"]])
+        await create_entry(client, token, mid, "2026-01-11", [opts[1]["id"]])
+        await create_entry(client, token, mid, "2026-01-12", [opts[2]["id"]])
+        await create_entry(client, token, mid, "2026-01-13", [opts[2]["id"]])
+
+        resp = await client.get(
+            f"/api/metrics/{mid}/convert/preview",
+            params={"target_type": "scale"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_entries"] == 4
+        by_val = {item["value"]: item for item in data["entries_by_value"]}
+        assert by_val[str(opts[0]["id"])]["display"] == "Плохо"
+        assert by_val[str(opts[0]["id"])]["count"] == 1
+        assert by_val[str(opts[2]["id"])]["display"] == "Хорошо"
+        assert by_val[str(opts[2]["id"])]["count"] == 2
+
+    async def test_preview_enum_value_format(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        """Value is option_id as string, display is option label. Unfilled options included with count=0."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token, name="Fmt Prev", metric_type="enum",
+            enum_options=["Alpha", "Beta"],
+        )
+        mid = metric["id"]
+        opts = metric["enum_options"]
+        await create_entry(client, token, mid, "2026-01-10", [opts[0]["id"]])
+
+        resp = await client.get(
+            f"/api/metrics/{mid}/convert/preview",
+            params={"target_type": "scale"},
+            headers=auth_headers(token),
+        )
+        data = resp.json()
+        assert len(data["entries_by_value"]) == 2
+        by_val = {item["value"]: item for item in data["entries_by_value"]}
+        assert by_val[str(opts[0]["id"])]["display"] == "Alpha"
+        assert by_val[str(opts[0]["id"])]["count"] == 1
+        assert by_val[str(opts[1]["id"])]["display"] == "Beta"
+        assert by_val[str(opts[1]["id"])]["count"] == 0
+
+    async def test_preview_enum_unfilled_options_included(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        """Regression: enum with 3 options, only 1 filled → all 3 in preview, unfilled have count=0."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token, name="Partial Prev", metric_type="enum",
+            enum_options=["Бег", "Зарядка", "Йога"],
+        )
+        mid = metric["id"]
+        opts = metric["enum_options"]
+        # Only fill the first option
+        await create_entry(client, token, mid, "2026-01-10", [opts[0]["id"]])
+
+        resp = await client.get(
+            f"/api/metrics/{mid}/convert/preview",
+            params={"target_type": "scale"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_entries"] == 1
+        assert len(data["entries_by_value"]) == 3
+        by_val = {item["value"]: item for item in data["entries_by_value"]}
+        assert by_val[str(opts[0]["id"])]["count"] == 1
+        assert by_val[str(opts[0]["id"])]["display"] == "Бег"
+        assert by_val[str(opts[1]["id"])]["count"] == 0
+        assert by_val[str(opts[1]["id"])]["display"] == "Зарядка"
+        assert by_val[str(opts[2]["id"])]["count"] == 0
+        assert by_val[str(opts[2]["id"])]["display"] == "Йога"
+
+    async def test_preview_enum_multi_select_rejected(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token, name="Multi Prev", metric_type="enum",
+            enum_options=["A", "B"], multi_select=True,
+        )
+        resp = await client.get(
+            f"/api/metrics/{metric['id']}/convert/preview",
+            params={"target_type": "scale"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 400
+
+    async def test_preview_enum_empty(
+        self, client: AsyncClient, user_a: dict,
+    ):
+        """No entries — all options still shown with count=0."""
+        token = user_a["token"]
+        metric = await create_metric(
+            client, token, name="Empty Prev", metric_type="enum",
+            enum_options=["X", "Y"],
+        )
+        resp = await client.get(
+            f"/api/metrics/{metric['id']}/convert/preview",
+            params={"target_type": "scale"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_entries"] == 0
+        assert len(data["entries_by_value"]) == 2
+        by_val = {item["value"]: item for item in data["entries_by_value"]}
+        opts = metric["enum_options"]
+        assert by_val[str(opts[0]["id"])]["display"] == "X"
+        assert by_val[str(opts[0]["id"])]["count"] == 0
+        assert by_val[str(opts[1]["id"])]["display"] == "Y"
+        assert by_val[str(opts[1]["id"])]["count"] == 0
 
 
 class TestPreviewScaleMetric:

@@ -3319,7 +3319,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                     ${descHtml}
                 </div>
                 <div class="setting-actions">
-                    ${(m.type === 'scale' || m.type === 'bool') ? `<button class="btn-icon convert-btn" data-metric="${m.id}" title="Конвертировать"><i data-lucide="repeat-2"></i></button>` : ''}
+                    ${(m.type === 'scale' || m.type === 'bool' || m.type === 'enum') ? `<button class="btn-icon convert-btn" data-metric="${m.id}" title="Конвертировать"><i data-lucide="repeat-2"></i></button>` : ''}
                     <button class="btn-icon edit-btn" data-metric="${m.id}"><i data-lucide="pencil"></i></button>
                     <button class="btn-icon archive-btn" data-metric="${m.id}"><i data-lucide="archive"></i></button>
                     <button class="btn-icon delete-btn btn-icon-danger" data-metric="${m.id}"><i data-lucide="trash-2"></i></button>
@@ -4620,7 +4620,7 @@ async function _loadAWCategories() {
 }
 
 async function showConvertModal(metric) {
-    const CONVERSIONS = { scale: ['scale'], bool: ['enum'] };
+    const CONVERSIONS = { scale: ['scale'], bool: ['enum'], enum: ['scale'] };
     const TYPE_LABELS = { scale: 'Шкала', bool: 'Да/Нет', enum: 'Варианты' };
     const allowed = CONVERSIONS[metric.type] || [];
     if (!allowed.length) return;
@@ -4660,6 +4660,19 @@ async function showConvertModal(metric) {
                 </div>`;
 
             mappingHtml = buildScaleMappingHtml(preview);
+        } else if (metric.type === 'enum' && targetType === 'scale') {
+            const defaultMax = Math.max((metric.enum_options || []).length - 1, 1);
+            configHtml = `
+                <div class="convert-config">
+                    <h4>Конфигурация шкалы</h4>
+                    <div class="convert-config-row">
+                        <label>Мин: <input type="number" id="conv-scale-min" value="0" class="input-small"></label>
+                        <label>Макс: <input type="number" id="conv-scale-max" value="${defaultMax}" class="input-small"></label>
+                        <label>Шаг: <input type="number" id="conv-scale-step" value="1" min="1" class="input-small"></label>
+                    </div>
+                </div>`;
+
+            mappingHtml = buildEnumToScaleMappingHtml(preview);
         } else if (metric.type === 'bool' && targetType === 'enum') {
             configHtml = `
                 <div class="convert-config">
@@ -4719,6 +4732,34 @@ async function showConvertModal(metric) {
                 <td>${entry.display}</td>
                 <td>${entry.count}</td>
                 <td><select class="convert-select" data-old="${entry.value}">${options.join('')}</select></td>
+            </tr>`;
+        }
+        html += '</tbody></table>';
+        return html;
+    }
+
+    function buildEnumToScaleMappingHtml(preview) {
+        if (!preview.entries_by_value.length) return '';
+        const newMin = parseInt(document.getElementById('conv-scale-min')?.value ?? 0);
+        const newMax = parseInt(document.getElementById('conv-scale-max')?.value ?? 1);
+        const newStep = parseInt(document.getElementById('conv-scale-step')?.value ?? 1);
+
+        const newValues = [];
+        for (let v = newMin; v <= newMax; v += newStep) newValues.push(v);
+
+        let html = '<table class="convert-mapping-table"><thead><tr><th>Вариант</th><th>Записей</th><th>→ Значение</th></tr></thead><tbody>';
+        for (let i = 0; i < preview.entries_by_value.length; i++) {
+            const entry = preview.entries_by_value[i];
+            const defaultVal = i < newValues.length ? newValues[i] : null;
+            const options = ['<option value="__delete__">Удалить</option>']
+                .concat(newValues.map(v => {
+                    const sel = (defaultVal !== null && v === defaultVal) ? ' selected' : '';
+                    return `<option value="${v}"${sel}>${v}</option>`;
+                }));
+            html += `<tr>
+                <td>${entry.display}</td>
+                <td>${entry.count}</td>
+                <td><select class="convert-select" data-old="${entry.value}" data-label="${entry.display}">${options.join('')}</select></td>
             </tr>`;
         }
         html += '</tbody></table>';
@@ -4813,6 +4854,13 @@ async function showConvertModal(metric) {
                     if (table) { table.innerHTML = buildScaleMappingHtml(preview); updateImpact(); attachMappingListeners(); }
                 });
             }
+        } else if (metric.type === 'enum') {
+            for (const id of ['conv-scale-min', 'conv-scale-max', 'conv-scale-step']) {
+                overlay.querySelector(`#${id}`)?.addEventListener('change', () => {
+                    const table = document.getElementById('convert-mapping-table');
+                    if (table) { table.innerHTML = buildEnumToScaleMappingHtml(preview); updateImpact(); attachMappingListeners(); }
+                });
+            }
         } else if (metric.type === 'bool') {
             // Pre-fill default options
             addConvEnumOption('Нет');
@@ -4848,6 +4896,24 @@ async function showConvertModal(metric) {
             body.scale_min = parseInt(overlay.querySelector('#conv-scale-min').value);
             body.scale_max = parseInt(overlay.querySelector('#conv-scale-max').value);
             body.scale_step = parseInt(overlay.querySelector('#conv-scale-step').value);
+        } else if (metric.type === 'enum' && targetType === 'scale') {
+            body.scale_min = parseInt(overlay.querySelector('#conv-scale-min').value);
+            body.scale_max = parseInt(overlay.querySelector('#conv-scale-max').value);
+            body.scale_step = parseInt(overlay.querySelector('#conv-scale-step').value);
+            if (body.scale_min >= body.scale_max) {
+                alert('Минимум должен быть меньше максимума');
+                return;
+            }
+            // Build scale_labels from data-label attributes
+            const labels = {};
+            overlay.querySelectorAll('.convert-select').forEach(sel => {
+                if (sel.value !== '__delete__' && sel.dataset.label) {
+                    labels[sel.value] = sel.dataset.label;
+                }
+            });
+            if (Object.keys(labels).length > 0) {
+                body.scale_labels = labels;
+            }
         } else if (metric.type === 'bool' && targetType === 'enum') {
             const enumOpts = getConvEnumOptions();
             if (enumOpts.length < 2) {
