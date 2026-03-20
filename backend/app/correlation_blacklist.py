@@ -3,12 +3,17 @@
 from app.source_key import AutoSourceType, SourceKey, _CALENDAR_TYPES
 
 
-def should_skip_pair(a: SourceKey, b: SourceKey) -> bool:
+def should_skip_pair(
+    a: SourceKey,
+    b: SourceKey,
+    single_select_metric_ids: set[int] | None = None,
+) -> bool:
     """Check if a correlation pair should be skipped.
 
     Rules:
     - Same metric (different slots) — skip
     - Same metric enum sources with different options — DON'T skip (independent data)
+      EXCEPT single-select enums where options are mutually exclusive — skip
     - Auto metric and its parent — skip
     - Two auto metrics from the same parent — skip
     - Two calendar metrics (day_of_week, month, week_number) — skip
@@ -18,7 +23,10 @@ def should_skip_pair(a: SourceKey, b: SourceKey) -> bool:
         # Exception: enum option sources from the same metric with different option_ids
         if a.enum_option_id is not None and b.enum_option_id is not None:
             if a.enum_option_id != b.enum_option_id:
-                return False  # different options = independent data
+                # Single-select enums: options are mutually exclusive, correlation is predetermined
+                if single_select_metric_ids and a.metric_id in single_select_metric_ids:
+                    return True
+                return False  # multi-select: different options = independent data
         return True
 
     if not a.is_auto and not b.is_auto:

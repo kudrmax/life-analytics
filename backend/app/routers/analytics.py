@@ -958,6 +958,18 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 for r in eo_rows:
                     enum_opts_by_metric[r["metric_id"]].append(r)
 
+            # Load enum_config to identify single-select enums
+            single_select_metric_ids: set[int] = set()
+            if enum_metric_ids:
+                ec_rows = await conn.fetch(
+                    "SELECT metric_id, multi_select FROM enum_config WHERE metric_id = ANY($1)",
+                    enum_metric_ids,
+                )
+                ec_by_metric = {r["metric_id"]: r["multi_select"] for r in ec_rows}
+                for mid in enum_metric_ids:
+                    if not ec_by_metric.get(mid, False):
+                        single_select_metric_ids.add(mid)
+
             # Build data sources: list of (SourceKey, source_type)
             sources: list[tuple[SourceKey, str]] = []
             for m in metrics_rows:
@@ -1100,7 +1112,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 for j in range(i + 1, len(sources)):
                     sk_i, mt_i = sources[i]
                     sk_j, mt_j = sources[j]
-                    if should_skip_pair(sk_i, sk_j):
+                    if should_skip_pair(sk_i, sk_j, single_select_metric_ids):
                         continue
 
                     key_i = sk_i.to_str()

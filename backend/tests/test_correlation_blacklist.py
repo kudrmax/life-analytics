@@ -21,12 +21,30 @@ class TestShouldSkipPair(unittest.TestCase):
         b = SourceKey(metric_id=1)
         self.assertTrue(should_skip_pair(a, b))
 
-    # ---- Same metric, different enum options -> don't skip ----
+    # ---- Same metric, different enum options (multi-select) -> don't skip ----
 
-    def test_same_metric_different_enum_options_not_skipped(self) -> None:
+    def test_multi_select_enum_different_options_not_skipped(self) -> None:
         a = SourceKey(metric_id=5, enum_option_id=100)
         b = SourceKey(metric_id=5, enum_option_id=200)
         self.assertFalse(should_skip_pair(a, b))
+
+    def test_multi_select_enum_different_options_explicit_set_not_skipped(self) -> None:
+        a = SourceKey(metric_id=5, enum_option_id=100)
+        b = SourceKey(metric_id=5, enum_option_id=200)
+        self.assertFalse(should_skip_pair(a, b, single_select_metric_ids=set()))
+
+    # ---- Same metric, different enum options (single-select) -> skip ----
+
+    def test_single_select_enum_different_options_skipped(self) -> None:
+        a = SourceKey(metric_id=5, enum_option_id=100)
+        b = SourceKey(metric_id=5, enum_option_id=200)
+        self.assertTrue(should_skip_pair(a, b, single_select_metric_ids={5}))
+
+    def test_single_select_enum_different_options_default_not_skipped(self) -> None:
+        """Without single_select_metric_ids param (None) — backward compat, don't skip."""
+        a = SourceKey(metric_id=5, enum_option_id=100)
+        b = SourceKey(metric_id=5, enum_option_id=200)
+        self.assertFalse(should_skip_pair(a, b, single_select_metric_ids=None))
 
     # ---- Same metric, same enum option -> skip ----
 
