@@ -650,6 +650,8 @@ function _showPeekCard(dx) {
     if (peekIndex < 0 || peekIndex >= _cardList.length) return;
     _peekCard = _cardList[peekIndex];
     _peekCard.classList.add('card-mode-peek');
+    const activeCard = _cardList[_cardIndex];
+    _peekCard.style.top = activeCard.offsetTop + 'px';
     _peekDirection = dx < 0 ? -1 : 1;
 }
 
