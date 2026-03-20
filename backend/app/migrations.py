@@ -392,6 +392,9 @@ MIGRATIONS = [
     (14, "add_labels_to_scale_config", """
         ALTER TABLE scale_config ADD COLUMN IF NOT EXISTS labels JSONB;
     """),
+    (15, "add_description_to_metrics", """
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS description TEXT DEFAULT NULL;
+    """),
 ]
 
 

@@ -39,6 +39,7 @@ async def build_metric_out(
         id=row["id"],
         slug=row["slug"],
         name=mask_name(row["name"], is_private, privacy_mode),
+        description=row.get("description"),
         category_id=row.get("category_id"),
         icon=mask_icon(row.get("icon", ""), is_private, privacy_mode),
         type=row["type"],

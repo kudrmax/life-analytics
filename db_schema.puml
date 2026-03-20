@@ -51,6 +51,7 @@ entity "metric_definitions" as md {
     * sort_order : INTEGER
     * icon : VARCHAR(600)
     * private : BOOLEAN
+    description : TEXT
     * created_at : TIMESTAMPTZ
     --
     <<UNIQUE>> (user_id, slug)

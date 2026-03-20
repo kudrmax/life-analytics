@@ -263,6 +263,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "metric_id": mid,
             "slug": m["slug"],
             "name": mask_name(m["name"], m_private, privacy_mode),
+            "description": m.get("description"),
             "icon": mask_icon(m.get("icon", ""), m_private, privacy_mode),
             "category_id": m.get("category_id"),
             "type": m["type"],

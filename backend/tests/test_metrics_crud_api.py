@@ -1403,3 +1403,89 @@ class TestUpdateScaleLabels:
         assert data["scale_min"] == 1
         assert data["scale_max"] == 3
         assert data["scale_labels"] == {"1": "low", "3": "high"}
+
+
+# ── Description ──────────────────────────────────────────────────────
+
+
+class TestCreateMetricWithDescription:
+    """POST /api/metrics — description field."""
+
+    async def test_create_with_description(self, client: AsyncClient, user_a: dict) -> None:
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Mood", "type": "bool", "description": "Общее настроение за день"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["description"] == "Общее настроение за день"
+
+    async def test_create_without_description(self, client: AsyncClient, user_a: dict) -> None:
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "NoDesc", "type": "bool"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        assert resp.json()["description"] is None
+
+
+class TestUpdateDescription:
+    """PATCH /api/metrics — update description."""
+
+    async def test_update_description(self, client: AsyncClient, user_a: dict) -> None:
+        metric = await create_metric(client, user_a["token"], name="Desc Test", metric_type="bool")
+        assert metric["description"] is None
+
+        resp = await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"description": "Новое описание"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["description"] == "Новое описание"
+
+    async def test_clear_description(self, client: AsyncClient, user_a: dict) -> None:
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "ClearDesc", "type": "bool", "description": "Temporary"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        metric = resp.json()
+
+        resp = await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"description": ""},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["description"] is None
+
+    async def test_description_in_list(self, client: AsyncClient, user_a: dict) -> None:
+        await client.post(
+            "/api/metrics",
+            json={"name": "Listed", "type": "number", "description": "Shows in list"},
+            headers=auth_headers(user_a["token"]),
+        )
+        resp = await client.get("/api/metrics", headers=auth_headers(user_a["token"]))
+        assert resp.status_code == 200
+        found = [m for m in resp.json() if m["name"] == "Listed"]
+        assert len(found) == 1
+        assert found[0]["description"] == "Shows in list"
+
+    async def test_description_in_daily(self, client: AsyncClient, user_a: dict) -> None:
+        from datetime import date
+
+        await client.post(
+            "/api/metrics",
+            json={"name": "DailyDesc", "type": "bool", "description": "Daily test"},
+            headers=auth_headers(user_a["token"]),
+        )
+        today = date.today().isoformat()
+        resp = await client.get(f"/api/daily/{today}", headers=auth_headers(user_a["token"]))
+        assert resp.status_code == 200
+        found = [m for m in resp.json()["metrics"] if m["name"] == "DailyDesc"]
+        assert len(found) == 1
+        assert found[0]["description"] == "Daily test"

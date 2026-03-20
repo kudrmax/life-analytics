@@ -791,10 +791,12 @@ function renderMetricInput(m, metricNameById) {
         }
         slotsHtml += '</div>';
 
+        const multiDescHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
         return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="">
             <div class="metric-header">
                 <label class="metric-label">${metricLabelHtml(m)}</label>
             </div>
+            ${multiDescHtml}
             ${slotsHtml}
         </div>`;
     }
@@ -819,11 +821,13 @@ function renderMetricInput(m, metricNameById) {
         ? `<button class="metric-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`
         : '';
 
+    const descHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
     return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}">
         <div class="metric-header">
             <label class="metric-label">${metricLabelHtml(m)}</label>
             ${clearBtn}
         </div>
+        ${descHtml}
         <div class="metric-input">${input}</div>
     </div>`;
 }
@@ -1701,11 +1705,13 @@ async function loadChartsTrends(start, end) {
                 </div>`;
             } else {
                 trendData.push({ metric: m, points: trend.points || [], trend });
+                const trendDescHtml = m.description ? `<div class="metric-description" style="margin-bottom:4px">${_escapeHtml(m.description)}</div>` : '';
                 cardHtml = `<div class="trend-card-row" data-metric-id="${m.id}" style="cursor:pointer">
                     <div class="trend-card-header">
                         <h4>${metricIconHtml(m)}<span class="trend-metric-name">${m.name}</span></h4>
                         <i data-lucide="info" class="trend-info-icon"></i>
                     </div>
+                    ${trendDescHtml}
                     <div class="trend-chart-container"><canvas id="trend-chart-${m.id}"></canvas></div>
                 </div>`;
             }
@@ -2422,8 +2428,10 @@ async function toggleCorrDetail(pairId, metricAId, metricBId, labelA, iconA, lab
         d && d.dbPairId ? api.getCorrelationPairChart(d.dbPairId).catch(() => null) : Promise.resolve(null),
     ];
     const [statsA, statsB, chartData] = await Promise.all(promises);
-    const blockA = `<div class="corr-stats-block"><div class="corr-stats-label">${iconA || ''} ${labelA}</div><div class="corr-detail-grid">${formatMetricStatsHtml(statsA)}</div></div>`;
-    const blockB = `<div class="corr-stats-block"><div class="corr-stats-label">${iconB || ''} ${labelB}</div><div class="corr-detail-grid">${formatMetricStatsHtml(statsB)}</div></div>`;
+    const descA = d && d.descA ? `<div class="metric-description">${_escapeHtml(d.descA)}</div>` : '';
+    const descB = d && d.descB ? `<div class="metric-description">${_escapeHtml(d.descB)}</div>` : '';
+    const blockA = `<div class="corr-stats-block"><div class="corr-stats-label">${iconA || ''} ${labelA}</div>${descA}<div class="corr-detail-grid">${formatMetricStatsHtml(statsA)}</div></div>`;
+    const blockB = `<div class="corr-stats-block"><div class="corr-stats-label">${iconB || ''} ${labelB}</div>${descB}<div class="corr-detail-grid">${formatMetricStatsHtml(statsB)}</div></div>`;
     statsEl.innerHTML = `<div class="corr-stats-columns">${blockA}${blockB}</div>`;
     statsEl.dataset.loaded = '1';
     const chartWrap = document.getElementById(pairId + '-chart-wrap');
@@ -2472,6 +2480,8 @@ function renderCorrPair(p, report) {
         lB: rawLabelB,
         iA: rawIconA,
         iB: rawIconB,
+        descA: isLagged ? (p.description_b || '') : (p.description_a || ''),
+        descB: isLagged ? (p.description_a || '') : (p.description_b || ''),
         pStart: report.period_start,
         pEnd: report.period_end,
         dbPairId: p.pair_id,
@@ -3300,11 +3310,13 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
                 : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge + condBadge;
+            const descHtml = m.description ? `<span class="metric-description">${_escapeHtml(m.description)}</span>` : '';
             return `<div class="setting-row" data-metric-id="${m.id}"${slotIds ? ` data-slot-ids="${slotIds}"` : ''}>
                 <span class="drag-handle">⠿</span>
                 <div class="setting-info">
                     <span class="setting-name">${metricLabelHtml(m)}</span>
                     <span class="setting-type">${typeIcon}</span>
+                    ${descHtml}
                 </div>
                 <div class="setting-actions">
                     ${(m.type === 'scale' || m.type === 'bool') ? `<button class="btn-icon convert-btn" data-metric="${m.id}" title="Конвертировать"><i data-lucide="repeat-2"></i></button>` : ''}
@@ -5052,6 +5064,11 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     <input id="nm-name" placeholder="Например: Зарядка" class="form-input" value="${existingMetric?.name || ''}">
                 </div>
 
+                <div class="form-label">
+                    <span class="label-text">Описание <span class="label-optional">(необязательно)</span></span>
+                    <textarea id="nm-description" class="note-textarea" rows="2" maxlength="2000" placeholder="Описание метрики...">${existingMetric?.description || ''}</textarea>
+                </div>
+
                 <div class="form-label" ${isEdit && currentType === 'integration' ? 'style="display:none"' : ''}>
                     <span class="label-text">Иконка</span>
                     <div class="emoji-picker-wrapper">
@@ -6115,8 +6132,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             if (isEdit) {
                 const icon = existingMetric.type === 'integration' ? undefined : document.getElementById('nm-icon').value;
                 const privateCb = document.getElementById('nm-private');
+                const descriptionEl = document.getElementById('nm-description');
                 const hasSlotConfigs = slotConfigs.length >= 2;
-                const updateData = { name, category_id: hasSlotConfigs ? 0 : (categoryIdVal ? parseInt(categoryIdVal) : 0), private: privateCb ? privateCb.checked : false };
+                const updateData = { name, category_id: hasSlotConfigs ? 0 : (categoryIdVal ? parseInt(categoryIdVal) : 0), private: privateCb ? privateCb.checked : false, description: descriptionEl ? descriptionEl.value.trim() || null : null };
                 if (icon !== undefined) updateData.icon = icon;
                 if (existingMetric.type === 'computed') {
                     if (formulaTokens.length === 0) {
@@ -6185,7 +6203,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
                 const icon = document.getElementById('nm-icon').value;
                 const privateCb = document.getElementById('nm-private');
-                const createData = { name, icon, type: selectedType, private: privateCb ? privateCb.checked : false };
+                const descriptionEl = document.getElementById('nm-description');
+                const createData = { name, icon, type: selectedType, private: privateCb ? privateCb.checked : false, description: descriptionEl ? descriptionEl.value.trim() || null : null };
                 if (categoryIdVal) createData.category_id = parseInt(categoryIdVal);
 
                 if (selectedType === 'scale') {

@@ -1352,6 +1352,8 @@ def _format_pair(
         "hint_b": "" if blocked_b else hint_b,
         "hint_a_positive": hint_a_pos,
         "hint_b_positive": hint_b_pos,
+        "description_a": "" if blocked_a else (p.get("description_a") or ""),
+        "description_b": "" if blocked_b else (p.get("description_b") or ""),
         "private_a": priv_a,
         "private_b": priv_b,
         "quality_issue": p.get("quality_issue"),
@@ -1416,8 +1418,8 @@ async def get_correlation_pairs(
                    cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days, cp.p_value, cp.quality_issue,
                    cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
                    cp.source_key_a, cp.source_key_b,
-                   ma.name AS name_a, ma.icon AS icon_a, COALESCE(ma.private, FALSE) AS private_a,
-                   mb.name AS name_b, mb.icon AS icon_b, COALESCE(mb.private, FALSE) AS private_b,
+                   ma.name AS name_a, ma.icon AS icon_a, COALESCE(ma.private, FALSE) AS private_a, ma.description AS description_a,
+                   mb.name AS name_b, mb.icon AS icon_b, COALESCE(mb.private, FALSE) AS private_b, mb.description AS description_b,
                    sa.label AS slot_label_a,
                    sb.label AS slot_label_b
             FROM correlation_pairs cp

@@ -58,6 +58,7 @@ class CategoryOut(BaseModel):
 class MetricDefinitionCreate(BaseModel):
     slug: str | None = None
     name: str
+    description: str | None = None
     category_id: int | None = None
     new_category_name: str | None = None
     new_category_parent_id: int | None = None
@@ -88,6 +89,7 @@ class MetricDefinitionCreate(BaseModel):
 
 class MetricDefinitionUpdate(BaseModel):
     name: str | None = None
+    description: str | None = None
     category_id: int | None = None
     icon: str | None = None
     enabled: bool | None = None
@@ -112,6 +114,7 @@ class MetricDefinitionOut(BaseModel):
     id: int
     slug: str
     name: str
+    description: str | None = None
     category_id: int | None = None
     icon: str = ""
     type: MetricType
