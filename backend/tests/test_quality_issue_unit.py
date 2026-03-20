@@ -81,6 +81,22 @@ class TestDetermineQualityIssue:
         result = _determine_quality_issue(n=5, p_value=0.10, low_variance=True)
         assert result == "low_data_points"
 
+    def test_low_binary_data_points(self) -> None:
+        result = _determine_quality_issue(n=15, p_value=0.01, small_binary_group=True)
+        assert result == "low_binary_data_points"
+
+    def test_small_binary_group_beats_low_variance(self) -> None:
+        result = _determine_quality_issue(n=15, p_value=0.01, low_variance=True, small_binary_group=True)
+        assert result == "low_binary_data_points"
+
+    def test_low_data_points_beats_small_binary_group(self) -> None:
+        result = _determine_quality_issue(n=5, p_value=0.01, small_binary_group=True)
+        assert result == "low_data_points"
+
+    def test_small_binary_group_beats_high_p_value(self) -> None:
+        result = _determine_quality_issue(n=15, p_value=0.10, small_binary_group=True)
+        assert result == "low_binary_data_points"
+
 
 # ---------------------------------------------------------------------------
 # QualityIssue mappings

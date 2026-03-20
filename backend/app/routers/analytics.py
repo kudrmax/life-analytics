@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 class QualityIssue(str, Enum):
     LOW_DATA_POINTS = "low_data_points"
     INSUFFICIENT_VARIANCE = "insufficient_variance"
+    LOW_BINARY_DATA_POINTS = "low_binary_data_points"
     HIGH_P_VALUE = "high_p_value"
     WIDE_CI = "wide_ci"
 
@@ -43,6 +44,7 @@ class QualityIssue(str, Enum):
 QUALITY_ISSUE_LABELS: dict[str, str] = {
     QualityIssue.LOW_DATA_POINTS: "Мало данных (менее 10 дней)",
     QualityIssue.INSUFFICIENT_VARIANCE: "Недостаточная дисперсия (значение почти не меняется)",
+    QualityIssue.LOW_BINARY_DATA_POINTS: "Мало наблюдений в группе бинарного источника (менее 5)",
     QualityIssue.HIGH_P_VALUE: "Статистически незначимо (p ≥ 0.05)",
     QualityIssue.WIDE_CI: "Широкий доверительный интервал",
 }
@@ -50,18 +52,23 @@ QUALITY_ISSUE_LABELS: dict[str, str] = {
 QUALITY_SEVERITY: dict[str, str] = {
     QualityIssue.LOW_DATA_POINTS: "bad",
     QualityIssue.INSUFFICIENT_VARIANCE: "bad",
+    QualityIssue.LOW_BINARY_DATA_POINTS: "bad",
     QualityIssue.HIGH_P_VALUE: "bad",
     QualityIssue.WIDE_CI: "maybe",
 }
 
 
-def _determine_quality_issue(n: int, p_value: float, low_variance: bool = False, wide_ci: bool = False) -> str | None:
+def _determine_quality_issue(
+    n: int, p_value: float, low_variance: bool = False,
+    small_binary_group: bool = False, wide_ci: bool = False,
+) -> str | None:
     # Priority order: first match wins. Reorder to change priority.
     checks = [
-        (n < 10,          QualityIssue.LOW_DATA_POINTS),
-        (low_variance,    QualityIssue.INSUFFICIENT_VARIANCE),
-        (p_value >= 0.05, QualityIssue.HIGH_P_VALUE),
-        (wide_ci,         QualityIssue.WIDE_CI),
+        (n < 10,              QualityIssue.LOW_DATA_POINTS),
+        (small_binary_group,  QualityIssue.LOW_BINARY_DATA_POINTS),
+        (low_variance,        QualityIssue.INSUFFICIENT_VARIANCE),
+        (p_value >= 0.05,     QualityIssue.HIGH_P_VALUE),
+        (wide_ci,             QualityIssue.WIDE_CI),
     ]
     return next((issue.value for cond, issue in checks if cond), None)
 
@@ -1152,6 +1159,36 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 if is_binary and var <= _BINARY_VAR_THRESHOLD:
                     low_var_sources.add(idx)
 
+            # Pre-compute which sources are binary (for pair-level small group check)
+            _MIN_BINARY_GROUP_SIZE = 5
+            binary_sources: set[int] = set()
+            for idx in range(len(sources)):
+                if idx in low_var_sources:
+                    continue
+                data = source_data.get(idx)
+                if not data:
+                    continue
+                vals = list(data.values())
+                if all(v == 0.0 or v == 1.0 for v in vals):
+                    binary_sources.add(idx)
+
+            def _check_small_binary_group(
+                data_a: dict[str, float], data_b: dict[str, float],
+                idx_a: int, idx_b: int,
+            ) -> bool:
+                """Check if either binary source has min(true, false) < 5 on common dates."""
+                if idx_a not in binary_sources and idx_b not in binary_sources:
+                    return False
+                common = set(data_a) & set(data_b)
+                for idx, data in ((idx_a, data_a), (idx_b, data_b)):
+                    if idx not in binary_sources:
+                        continue
+                    count_true = sum(1 for d in common if data.get(d) == 1.0)
+                    count_false = len(common) - count_true
+                    if min(count_true, count_false) < _MIN_BINARY_GROUP_SIZE:
+                        return True
+                return False
+
             # Compute all pairs (i < j, different metrics only)
             pairs_to_insert = []
             for i in range(len(sources)):
@@ -1164,10 +1201,13 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     key_i = sk_i.to_str()
                     key_j = sk_j.to_str()
                     low_var = (i in low_var_sources) or (j in low_var_sources)
+                    data_i = source_data.get(i, {})
+                    data_j = source_data.get(j, {})
 
                     # lag=0: same-day correlation
-                    r, n = _compute_pearson(source_data[i], source_data[j])
+                    r, n = _compute_pearson(data_i, data_j)
                     if r is not None:
+                        small_group = _check_small_binary_group(data_i, data_j, i, j)
                         p_val = round(_p_value(r, n), 4)
                         ci = _confidence_interval(r, n)
                         is_wide_ci = ci is not None and (ci[1] - ci[0]) > 0.5
@@ -1175,12 +1215,14 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             report_id,
                             sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
                             key_i, key_j, mt_i, mt_j,
-                            r, n, 0, p_val, _determine_quality_issue(n, p_val, low_var, is_wide_ci),
+                            r, n, 0, p_val, _determine_quality_issue(n, p_val, low_var, small_group, is_wide_ci),
                         ))
 
                     # lag=1: yesterday's j → today's i
-                    r_lag, n_lag = _compute_pearson(source_data[i], _shift_dates(source_data[j], 1))
+                    shifted_j = _shift_dates(data_j, 1)
+                    r_lag, n_lag = _compute_pearson(data_i, shifted_j)
                     if r_lag is not None:
+                        small_group_lag = _check_small_binary_group(data_i, shifted_j, i, j)
                         p_val_lag = round(_p_value(r_lag, n_lag), 4)
                         ci_lag = _confidence_interval(r_lag, n_lag)
                         is_wide_ci_lag = ci_lag is not None and (ci_lag[1] - ci_lag[0]) > 0.5
@@ -1188,12 +1230,14 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             report_id,
                             sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
                             key_i, key_j, mt_i, mt_j,
-                            r_lag, n_lag, 1, p_val_lag, _determine_quality_issue(n_lag, p_val_lag, low_var, is_wide_ci_lag),
+                            r_lag, n_lag, 1, p_val_lag, _determine_quality_issue(n_lag, p_val_lag, low_var, small_group_lag, is_wide_ci_lag),
                         ))
 
                     # lag=1: yesterday's i → today's j
-                    r_lag2, n_lag2 = _compute_pearson(source_data[j], _shift_dates(source_data[i], 1))
+                    shifted_i = _shift_dates(data_i, 1)
+                    r_lag2, n_lag2 = _compute_pearson(data_j, shifted_i)
                     if r_lag2 is not None:
+                        small_group_lag2 = _check_small_binary_group(data_j, shifted_i, j, i)
                         p_val_lag2 = round(_p_value(r_lag2, n_lag2), 4)
                         ci_lag2 = _confidence_interval(r_lag2, n_lag2)
                         is_wide_ci_lag2 = ci_lag2 is not None and (ci_lag2[1] - ci_lag2[0]) > 0.5
@@ -1201,7 +1245,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             report_id,
                             sk_j.metric_id, sk_i.metric_id, sk_j.slot_id, sk_i.slot_id,
                             key_j, key_i, mt_j, mt_i,
-                            r_lag2, n_lag2, 1, p_val_lag2, _determine_quality_issue(n_lag2, p_val_lag2, low_var, is_wide_ci_lag2),
+                            r_lag2, n_lag2, 1, p_val_lag2, _determine_quality_issue(n_lag2, p_val_lag2, low_var, small_group_lag2, is_wide_ci_lag2),
                         ))
 
             qt.mark(f"compute_{len(pairs_to_insert)}_pairs")

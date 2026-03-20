@@ -1800,3 +1800,60 @@ class TestBoolAggregateAnnotation:
             assert "хоть раз" not in p.get("label_b", ""), (
                 f"Unexpected annotation in label_b: {p['label_b']}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Insufficient binary group
+# ---------------------------------------------------------------------------
+
+class TestInsufficientBinaryGroup:
+    """Bool metric with only 3 True out of 15 days should get low_binary_data_points."""
+
+    async def test_small_binary_group_flagged(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        token = user_a["token"]
+
+        bool_m = await create_metric(
+            client, token, name="RareBool", metric_type="bool", slug="rarebool_grp",
+        )
+        num_m = await create_metric(
+            client, token, name="NumForBin", metric_type="number", slug="numforbin_grp",
+        )
+
+        # 3 True out of 15 days: variance ≈ 0.16 (passes threshold),
+        # but min(count_true, count_false) = 3 < 5
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            bool_val = day <= 3  # True for days 1-3, False for 4-15
+            await create_entry(client, token, bool_m["id"], date_str, bool_val)
+            await create_entry(client, token, num_m["id"], date_str, day * 10)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # Find direct bool↔number pairs (exclude auto-sources like nonzero
+        # which have variance=0 and would trigger insufficient_variance instead)
+        bool_id = bool_m["id"]
+        num_id = num_m["id"]
+        direct_pairs = [
+            p for p in pairs_data["pairs"]
+            if {p["metric_a_id"], p["metric_b_id"]} == {bool_id, num_id}
+            and p["label_a"] in ("RareBool", "NumForBin")
+            and p["label_b"] in ("RareBool", "NumForBin")
+        ]
+        assert len(direct_pairs) > 0, "Expected at least one direct bool↔number pair"
+
+        for p in direct_pairs:
+            assert p["quality_issue"] == "low_binary_data_points", (
+                f"Expected low_binary_data_points but got {p['quality_issue']} "
+                f"for pair {p['label_a']} vs {p['label_b']}"
+            )

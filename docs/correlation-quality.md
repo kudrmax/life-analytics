@@ -9,7 +9,7 @@ NULL — пара статистически надёжна. NOT NULL — ест
 |---|---|---|---|
 | Надёжно | — (`quality_issue IS NULL`) | Все проверки пройдены | Первый раздел (всегда видим) |
 | Может быть ненадёжно | `maybe` | `wide_ci` | Второй раздел (`<details>`, lazy load) |
-| Ненадёжно | `bad` | `low_data_points`, `insufficient_variance`, `high_p_value` | Третий раздел (`<details>`, lazy load) |
+| Ненадёжно | `bad` | `low_data_points`, `insufficient_variance`, `low_binary_data_points`, `high_p_value` | Третий раздел (`<details>`, lazy load) |
 
 Severity маппинг задаётся словарём `QUALITY_SEVERITY` в `analytics.py`.
 
@@ -19,6 +19,7 @@ Severity маппинг задаётся словарём `QUALITY_SEVERITY` в 
 |---|---|---|---|
 | `low_data_points` | < 10 общих дней данных | bad | Мало наблюдений |
 | `insufficient_variance` | variance=0 (константа, любой тип) или бинарный с variance ≤ 0.10 | bad | Значение почти не меняется, корреляция случайна |
+| `low_binary_data_points` | min(count_true, count_false) < 5 для бинарного источника | bad | В одной из групп бинарного источника слишком мало наблюдений |
 | `high_p_value` | p-value ≥ 0.05 | bad | Статистически незначимо |
 | `wide_ci` | ширина 95% ДИ > 0.5 | maybe | Оценка силы связи неточная, нужно больше данных |
 
@@ -28,9 +29,10 @@ Severity маппинг задаётся словарём `QUALITY_SEVERITY` в 
 Порядок задаётся списком `checks` в `_determine_quality_issue()` — первое совпадение побеждает.
 
 1. `low_data_points` — при малом n всё остальное бессмысленно
-2. `insufficient_variance` — при низкой дисперсии даже p < 0.05 ненадёжен
-3. `high_p_value` — данных и вариации достаточно, но связь не подтверждена
-4. `wide_ci` — пара прошла все "bad" проверки, но ДИ слишком широкий (> 0.5)
+2. `low_binary_data_points` — бинарный источник прошёл variance threshold, но в меньшей группе < 5 наблюдений
+3. `insufficient_variance` — при низкой дисперсии даже p < 0.05 ненадёжен
+4. `high_p_value` — данных и вариации достаточно, но связь не подтверждена
+5. `wide_ci` — пара прошла все "bad" проверки, но ДИ слишком широкий (> 0.5)
 
 ## Доверительный интервал (95% CI)
 
@@ -49,6 +51,14 @@ Severity маппинг задаётся словарём `QUALITY_SEVERITY` в 
 
 Непрерывные источники с variance > 0 не затрагиваются — при низкой дисперсии p-value уже высокий.
 
+## Детали low_binary_data_points
+
+Бинарный источник (bool метрика, enum-опция, nonzero auto-source) может пройти variance threshold (p*(1-p) > 0.10), но в меньшей группе (True или False) всего 2-4 наблюдения. Пример: "Уборка" True в 3 из 15 дней — variance ≈ 0.16, порог пройден, но корреляция строится фактически на 3 точках в одной группе.
+
+Проверка выполняется на уровне **пары** (pair-level), а не источника: для каждой пары вычисляются общие даты (пересечение), и `min(count_true, count_false)` считается только на этих общих датах. Это важно для календарных источников (день недели, месяц), которые имеют данные за все дни периода — глобально у них может быть достаточно наблюдений, но на пересечении с разреженной метрикой — нет.
+
+Применяется только к источникам, которые **не** были уже отфильтрованы по `low_var_sources` (variance threshold).
+
 ## Код
 
-`QualityIssue` enum, `_determine_quality_issue()`, `low_var_sources` → `backend/app/routers/analytics.py`
+`QualityIssue` enum, `_determine_quality_issue()`, `low_var_sources`, `binary_sources`, `_check_small_binary_group()` → `backend/app/routers/analytics.py`
