@@ -1263,6 +1263,28 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                         return True
                 return False
 
+            def _eval_pair(
+                data_a: dict[str, float], data_b: dict[str, float],
+                sk_a: SourceKey, sk_b: SourceKey, mt_a: str, mt_b: str,
+                idx_a: int, idx_b: int, lag: int,
+                low_var: bool, both_binary: bool,
+            ) -> tuple | None:
+                r, n = _compute_pearson(data_a, data_b)
+                if r is None:
+                    return None
+                small_group = _check_small_binary_group(data_a, data_b, idx_a, idx_b)
+                p_val = round(_p_value(r, n), 4)
+                ci = _confidence_interval(r, n)
+                wide_ci = ci is not None and (ci[1] - ci[0]) > 0.5
+                fisher_hp = both_binary and _fisher_exact_p(data_a, data_b) >= 0.05
+                qi = _determine_quality_issue(n, p_val, low_var, small_group, wide_ci, fisher_hp)
+                return (
+                    report_id,
+                    sk_a.metric_id, sk_b.metric_id, sk_a.slot_id, sk_b.slot_id,
+                    sk_a.to_str(), sk_b.to_str(), mt_a, mt_b,
+                    r, n, lag, p_val, qi,
+                )
+
             # Compute all pairs (i < j, different metrics only)
             pairs_to_insert = []
             for i in range(len(sources)):
@@ -1272,59 +1294,19 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     if should_skip_pair(sk_i, sk_j, single_select_metric_ids):
                         continue
 
-                    key_i = sk_i.to_str()
-                    key_j = sk_j.to_str()
                     low_var = (i in low_var_sources) or (j in low_var_sources)
                     data_i = source_data.get(i, {})
                     data_j = source_data.get(j, {})
                     both_binary = mt_i in _BINARY_TYPES and mt_j in _BINARY_TYPES
 
-                    # lag=0: same-day correlation
-                    r, n = _compute_pearson(data_i, data_j)
-                    if r is not None:
-                        small_group = _check_small_binary_group(data_i, data_j, i, j)
-                        p_val = round(_p_value(r, n), 4)
-                        ci = _confidence_interval(r, n)
-                        is_wide_ci = ci is not None and (ci[1] - ci[0]) > 0.5
-                        fisher_hp = both_binary and _fisher_exact_p(data_i, data_j) >= 0.05
-                        pairs_to_insert.append((
-                            report_id,
-                            sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
-                            key_i, key_j, mt_i, mt_j,
-                            r, n, 0, p_val, _determine_quality_issue(n, p_val, low_var, small_group, is_wide_ci, fisher_hp),
-                        ))
-
-                    # lag=1: yesterday's j → today's i
-                    shifted_j = _shift_dates(data_j, 1)
-                    r_lag, n_lag = _compute_pearson(data_i, shifted_j)
-                    if r_lag is not None:
-                        small_group_lag = _check_small_binary_group(data_i, shifted_j, i, j)
-                        p_val_lag = round(_p_value(r_lag, n_lag), 4)
-                        ci_lag = _confidence_interval(r_lag, n_lag)
-                        is_wide_ci_lag = ci_lag is not None and (ci_lag[1] - ci_lag[0]) > 0.5
-                        fisher_hp_lag = both_binary and _fisher_exact_p(data_i, shifted_j) >= 0.05
-                        pairs_to_insert.append((
-                            report_id,
-                            sk_i.metric_id, sk_j.metric_id, sk_i.slot_id, sk_j.slot_id,
-                            key_i, key_j, mt_i, mt_j,
-                            r_lag, n_lag, 1, p_val_lag, _determine_quality_issue(n_lag, p_val_lag, low_var, small_group_lag, is_wide_ci_lag, fisher_hp_lag),
-                        ))
-
-                    # lag=1: yesterday's i → today's j
-                    shifted_i = _shift_dates(data_i, 1)
-                    r_lag2, n_lag2 = _compute_pearson(data_j, shifted_i)
-                    if r_lag2 is not None:
-                        small_group_lag2 = _check_small_binary_group(data_j, shifted_i, j, i)
-                        p_val_lag2 = round(_p_value(r_lag2, n_lag2), 4)
-                        ci_lag2 = _confidence_interval(r_lag2, n_lag2)
-                        is_wide_ci_lag2 = ci_lag2 is not None and (ci_lag2[1] - ci_lag2[0]) > 0.5
-                        fisher_hp_lag2 = both_binary and _fisher_exact_p(data_j, shifted_i) >= 0.05
-                        pairs_to_insert.append((
-                            report_id,
-                            sk_j.metric_id, sk_i.metric_id, sk_j.slot_id, sk_i.slot_id,
-                            key_j, key_i, mt_j, mt_i,
-                            r_lag2, n_lag2, 1, p_val_lag2, _determine_quality_issue(n_lag2, p_val_lag2, low_var, small_group_lag2, is_wide_ci_lag2, fisher_hp_lag2),
-                        ))
+                    for data_a, data_b, sk_a, sk_b, mt_a, mt_b, idx_a, idx_b, lag in (
+                        (data_i, data_j, sk_i, sk_j, mt_i, mt_j, i, j, 0),
+                        (data_i, _shift_dates(data_j, 1), sk_i, sk_j, mt_i, mt_j, i, j, 1),
+                        (data_j, _shift_dates(data_i, 1), sk_j, sk_i, mt_j, mt_i, j, i, 1),
+                    ):
+                        row = _eval_pair(data_a, data_b, sk_a, sk_b, mt_a, mt_b, idx_a, idx_b, lag, low_var, both_binary)
+                        if row:
+                            pairs_to_insert.append(row)
 
             qt.mark(f"compute_{len(pairs_to_insert)}_pairs")
             # Batch insert
