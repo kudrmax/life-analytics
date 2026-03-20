@@ -355,46 +355,6 @@ function changeDay(delta) {
     renderTodayForm(true, delta > 0 ? 'next' : 'prev');
 }
 
-function isMetricFilled(m) {
-    if (m.condition && !m.condition_met) return false;
-    if (isMetricBlocked(m)) return false;
-    if (m.type === 'text') return (m.note_count || 0) > 0;
-    if (m.type === 'computed') return m.entry && m.entry.value != null;
-    if (m.type === 'integration') return m.entry && m.entry.value != null;
-    if (m.is_slot_split && m.slots && m.slots.length === 1) return !!m.slots[0].entry;
-    if (m.slots && m.slots.length > 0) return m.slots.every(s => s.entry !== null);
-    return !!m.entry;
-}
-
-function renderCategoryMetrics(categories, metricsByCat, uncategorized, metricNameById, hasCategories) {
-    let html = '';
-    for (const topCat of categories) {
-        const topMetrics = metricsByCat[topCat.id] || [];
-        const childrenWithMetrics = (topCat.children || []).filter(ch => (metricsByCat[ch.id] || []).length > 0);
-        if (topMetrics.length === 0 && childrenWithMetrics.length === 0) continue;
-        html += `<h2 class="fill-time-header">${_escapeHtml(topCat.name)}</h2>`;
-        if (topMetrics.length > 0) {
-            html += '<div class="category">';
-            for (const m of topMetrics) html += renderMetricInput(m, metricNameById);
-            html += '</div>';
-        }
-        for (const ch of (topCat.children || [])) {
-            const chMetrics = metricsByCat[ch.id] || [];
-            if (chMetrics.length === 0) continue;
-            html += `<div class="category"><h3>${_escapeHtml(ch.name)}</h3>`;
-            for (const m of chMetrics) html += renderMetricInput(m, metricNameById);
-            html += '</div>';
-        }
-    }
-    if (uncategorized.length > 0) {
-        if (hasCategories) html += '<h2 class="fill-time-header">Без категории</h2>';
-        html += '<div class="category">';
-        for (const m of uncategorized) html += renderMetricInput(m, metricNameById);
-        html += '</div>';
-    }
-    return html;
-}
-
 async function renderTodayForm(preserveScroll = false, direction = null) {
     const _t0 = performance.now();
     const myVersion = ++_todayRenderVersion;
@@ -448,20 +408,15 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
         }
     }
 
-    // Group metrics by category_id, split into unfilled/filled
-    const unfilledByCat = {};
-    const unfilledUncategorized = [];
-    const filledByCat = {};
-    const filledUncategorized = [];
-
+    // Group metrics by category_id
+    const metricsByCat = {};
+    const uncategorized = [];
     for (const m of summary.metrics) {
-        const filled = isMetricFilled(m);
         if (m.category_id && catById[m.category_id]) {
-            const target = filled ? filledByCat : unfilledByCat;
-            if (!target[m.category_id]) target[m.category_id] = [];
-            target[m.category_id].push(m);
+            if (!metricsByCat[m.category_id]) metricsByCat[m.category_id] = [];
+            metricsByCat[m.category_id].push(m);
         } else {
-            (filled ? filledUncategorized : unfilledUncategorized).push(m);
+            uncategorized.push(m);
         }
     }
 
@@ -479,16 +434,33 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
     } else {
         html += `<h3 class="section-header">Ваши метрики <span class="corr-count">${new Set(summary.metrics.map(m => m.metric_id)).size}</span></h3>`;
         const hasCategories = categories.length > 0;
-        const hasUnfilled = Object.keys(unfilledByCat).length > 0 || unfilledUncategorized.length > 0;
-        const hasFilled = Object.keys(filledByCat).length > 0 || filledUncategorized.length > 0;
 
-        html += renderCategoryMetrics(categories, unfilledByCat, unfilledUncategorized, metricNameById, hasCategories);
+        for (const topCat of categories) {
+            // Top-level: check if it or its children have metrics
+            const topMetrics = metricsByCat[topCat.id] || [];
+            const childrenWithMetrics = (topCat.children || []).filter(ch => (metricsByCat[ch.id] || []).length > 0);
+            if (topMetrics.length === 0 && childrenWithMetrics.length === 0) continue;
 
-        if (hasUnfilled && hasFilled) {
-            html += '<div class="today-section-divider"></div>';
+            html += `<h2 class="fill-time-header">${_escapeHtml(topCat.name)}</h2>`;
+            if (topMetrics.length > 0) {
+                html += `<div class="category">`;
+                for (const m of topMetrics) html += renderMetricInput(m, metricNameById);
+                html += '</div>';
+            }
+            for (const ch of (topCat.children || [])) {
+                const chMetrics = metricsByCat[ch.id] || [];
+                if (chMetrics.length === 0) continue;
+                html += `<div class="category"><h3>${_escapeHtml(ch.name)}</h3>`;
+                for (const m of chMetrics) html += renderMetricInput(m, metricNameById);
+                html += '</div>';
+            }
         }
-
-        html += renderCategoryMetrics(categories, filledByCat, filledUncategorized, metricNameById, hasCategories);
+        if (uncategorized.length > 0) {
+            if (hasCategories) html += `<h2 class="fill-time-header">Без категории</h2>`;
+            html += `<div class="category">`;
+            for (const m of uncategorized) html += renderMetricInput(m, metricNameById);
+            html += '</div>';
+        }
     }
 
     // Auto metrics section (collapsible)
@@ -1210,7 +1182,7 @@ async function handleFormClick(e) {
             else card.dataset.entryId = newId;
             _ensureClearButton(card, slotEl, newId);
             updateProgress();
-            setTimeout(() => renderTodayForm(true), 100);
+
         }).catch(err => {
             alert('Ошибка: ' + err.message);
             renderTodayForm(true);
@@ -1230,7 +1202,7 @@ async function handleFormClick(e) {
             else card.dataset.entryId = newId;
             _ensureClearButton(card, slotEl, newId);
             updateProgress();
-            setTimeout(() => renderTodayForm(true), 100);
+
         }).catch(err => {
             alert('Ошибка: ' + err.message);
             renderTodayForm(true);
@@ -1282,7 +1254,7 @@ async function handleFormClick(e) {
             else card.dataset.entryId = newId;
             _ensureClearButton(card, slotEl, newId);
             updateProgress();
-            setTimeout(() => renderTodayForm(true), 100);
+
         }).catch(err => {
             alert('Ошибка: ' + err.message);
             renderTodayForm(true);
@@ -1303,7 +1275,7 @@ async function handleFormClick(e) {
             else card.dataset.entryId = newId;
             _ensureClearButton(card, slotEl, newId);
             updateProgress();
-            setTimeout(() => renderTodayForm(true), 100);
+
         }).catch(err => {
             alert('Ошибка: ' + err.message);
             renderTodayForm(true);
@@ -1328,7 +1300,7 @@ async function handleFormClick(e) {
             else card.dataset.entryId = newId;
             _ensureClearButton(card, slotEl, newId);
             updateProgress();
-            setTimeout(() => renderTodayForm(true), 100);
+
         }).catch(err => {
             alert('Ошибка: ' + err.message);
             renderTodayForm(true);
