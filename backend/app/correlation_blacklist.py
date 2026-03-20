@@ -16,7 +16,9 @@ def should_skip_pair(
       EXCEPT single-select enums where options are mutually exclusive — skip
     - Auto metric and its parent — skip
     - Two auto metrics from the same parent — skip
-    - Two calendar metrics (day_of_week, month, week_number) — skip
+    - Two calendar auto sources (day_of_week, month, is_workday) — skip
+      This covers: same type different options (mutually exclusive),
+      and different calendar types (meaningless cross-correlation)
     """
     # Same metric (different slots)
     if a.metric_id is not None and a.metric_id == b.metric_id and not a.is_auto and not b.is_auto:

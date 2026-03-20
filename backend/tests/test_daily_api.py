@@ -611,23 +611,24 @@ class TestAutoMetrics:
     async def test_calendar_auto_metrics_present(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Calendar auto metrics always present: day_of_week, month, week_number."""
+        """Calendar auto metrics always present: day_of_week, month, is_workday."""
         daily = await _get_daily(client, user_a["token"])
 
         auto_types = {am["auto_type"] for am in daily["auto_metrics"]}
         assert "day_of_week" in auto_types
         assert "month" in auto_types
-        assert "week_number" in auto_types
+        assert "is_workday" in auto_types
+        assert "week_number" not in auto_types
 
         # Verify values for 2026-01-10 (Saturday)
         dow = next(am for am in daily["auto_metrics"] if am["auto_type"] == "day_of_week")
         month = next(am for am in daily["auto_metrics"] if am["auto_type"] == "month")
-        week = next(am for am in daily["auto_metrics"] if am["auto_type"] == "week_number")
+        workday = next(am for am in daily["auto_metrics"] if am["auto_type"] == "is_workday")
 
         assert dow["value"] == 6  # Saturday = isoweekday 6
         assert dow["source_metric_id"] is None
         assert month["value"] == 1  # January
-        assert week["value"] == 2  # ISO week 2
+        assert workday["value"] is False  # Saturday is not a workday
 
 
 # ---------------------------------------------------------------------------

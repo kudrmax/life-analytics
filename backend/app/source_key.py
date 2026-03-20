@@ -7,9 +7,9 @@ SourceKey encodes which data source a correlation side refers to:
 - metric:{id}:enum_opt:{opt_id}:slot:{slot_id}   — enum option with slot
 - auto:nonzero:metric:{id}                       — nonzero for a metric
 - auto:note_count:metric:{id}                    — note count for text metric
-- auto:day_of_week                               — calendar
-- auto:month
-- auto:week_number
+- auto:day_of_week:opt:{N}                       — calendar (enum-like boolean per option)
+- auto:month:opt:{N}
+- auto:is_workday:opt:{N}
 - auto:aw_active                                 — ActivityWatch active screen time
 """
 
@@ -24,27 +24,42 @@ class AutoSourceType(str, Enum):
     NOTE_COUNT = "note_count"
     DAY_OF_WEEK = "day_of_week"
     MONTH = "month"
-    WEEK_NUMBER = "week_number"
+    WEEK_NUMBER = "week_number"  # kept for backward compat parsing old reports
     AW_ACTIVE = "aw_active"
+    IS_WORKDAY = "is_workday"
 
 
 AUTO_DISPLAY_NAMES: dict[AutoSourceType, str] = {
     AutoSourceType.DAY_OF_WEEK: "День недели",
     AutoSourceType.MONTH: "Месяц",
-    AutoSourceType.WEEK_NUMBER: "Неделя года",
+    AutoSourceType.IS_WORKDAY: "Календарный тип",
     AutoSourceType.AW_ACTIVE: "Экранное время (активное)",
 }
 
 AUTO_ICONS: dict[AutoSourceType, str] = {
     AutoSourceType.DAY_OF_WEEK: "📅",
     AutoSourceType.MONTH: "🗓️",
-    AutoSourceType.WEEK_NUMBER: "📆",
+    AutoSourceType.IS_WORKDAY: "🏢",
+}
+
+CALENDAR_OPTION_LABELS: dict[AutoSourceType, dict[int, str]] = {
+    AutoSourceType.DAY_OF_WEEK: {
+        1: "Пн", 2: "Вт", 3: "Ср", 4: "Чт", 5: "Пт", 6: "Сб", 7: "Вс",
+    },
+    AutoSourceType.MONTH: {
+        1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
+        5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
+        9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь",
+    },
+    AutoSourceType.IS_WORKDAY: {
+        1: "Рабочий день", 2: "Выходной",
+    },
 }
 
 _CALENDAR_TYPES: frozenset[AutoSourceType] = frozenset({
     AutoSourceType.DAY_OF_WEEK,
     AutoSourceType.MONTH,
-    AutoSourceType.WEEK_NUMBER,
+    AutoSourceType.IS_WORKDAY,
 })
 
 
@@ -55,6 +70,7 @@ class SourceKey:
     enum_option_id: int | None = None
     auto_type: AutoSourceType | None = None
     auto_parent_metric_id: int | None = None
+    auto_option_id: int | None = None
 
     @property
     def is_auto(self) -> bool:
@@ -62,9 +78,14 @@ class SourceKey:
 
     def to_str(self) -> str:
         if self.auto_type is not None:
+            base: str
             if self.auto_parent_metric_id is not None:
-                return f"auto:{self.auto_type.value}:metric:{self.auto_parent_metric_id}"
-            return f"auto:{self.auto_type.value}"
+                base = f"auto:{self.auto_type.value}:metric:{self.auto_parent_metric_id}"
+            else:
+                base = f"auto:{self.auto_type.value}"
+            if self.auto_option_id is not None:
+                return f"{base}:opt:{self.auto_option_id}"
+            return base
 
         parts: list[str] = [f"metric:{self.metric_id}"]
         if self.enum_option_id is not None:
@@ -77,14 +98,20 @@ class SourceKey:
     def parse(key: str) -> SourceKey:
         if key.startswith("auto:"):
             rest = key[5:]
+            auto_option_id: int | None = None
+            # Extract :opt:N suffix if present
+            if ":opt:" in rest:
+                rest, _, opt_str = rest.rpartition(":opt:")
+                auto_option_id = int(opt_str)
             # auto:{type}:metric:{id} or auto:{type}
             if ":metric:" in rest:
                 type_str, _, mid_str = rest.partition(":metric:")
                 return SourceKey(
                     auto_type=AutoSourceType(type_str),
                     auto_parent_metric_id=int(mid_str),
+                    auto_option_id=auto_option_id,
                 )
-            return SourceKey(auto_type=AutoSourceType(rest))
+            return SourceKey(auto_type=AutoSourceType(rest), auto_option_id=auto_option_id)
 
         # metric:{id}[:enum_opt:{oid}][:slot:{sid}]
         tokens = key.split(":")

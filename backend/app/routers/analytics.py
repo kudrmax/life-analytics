@@ -17,7 +17,7 @@ from app.metric_helpers import mask_name, mask_icon, is_blocked, PRIVATE_MASK, P
 from app.formula import convert_metric_value, evaluate_formula, get_referenced_metric_ids
 from app.correlation_blacklist import should_skip_pair
 from app.source_key import (
-    AutoSourceType, SourceKey, AUTO_DISPLAY_NAMES, AUTO_ICONS,
+    AutoSourceType, SourceKey, AUTO_DISPLAY_NAMES, AUTO_ICONS, CALENDAR_OPTION_LABELS,
 )
 from app.timing import timed_fetch, QueryTimer
 
@@ -1044,9 +1044,10 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 if m["type"] == "text":
                     sources.append((SourceKey(auto_type=AutoSourceType.NOTE_COUNT, auto_parent_metric_id=m["id"]), "number"))
 
-            # Calendar auto sources
-            for auto_type in (AutoSourceType.DAY_OF_WEEK, AutoSourceType.MONTH, AutoSourceType.WEEK_NUMBER):
-                sources.append((SourceKey(auto_type=auto_type), "number"))
+            # Calendar auto sources (enum-like boolean per option)
+            for cal_type, options in CALENDAR_OPTION_LABELS.items():
+                for opt_id in options:
+                    sources.append((SourceKey(auto_type=cal_type, auto_option_id=opt_id), "enum_bool"))
 
             # ActivityWatch screen time auto source
             aw_rows = await conn.fetch(
@@ -1079,12 +1080,15 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                         sk.auto_parent_metric_id, user_id, start_date, end_date,
                     )
                     source_data[idx] = {str(r["date"]): float(r["cnt"]) for r in nc_rows}
-                elif sk.auto_type == AutoSourceType.DAY_OF_WEEK:
-                    source_data[idx] = {d: float(date_type.fromisoformat(d).isoweekday()) for d in all_dates}
-                elif sk.auto_type == AutoSourceType.MONTH:
-                    source_data[idx] = {d: float(date_type.fromisoformat(d).month) for d in all_dates}
-                elif sk.auto_type == AutoSourceType.WEEK_NUMBER:
-                    source_data[idx] = {d: float(date_type.fromisoformat(d).isocalendar()[1]) for d in all_dates}
+                elif sk.auto_type == AutoSourceType.DAY_OF_WEEK and sk.auto_option_id is not None:
+                    source_data[idx] = {d: (1.0 if date_type.fromisoformat(d).isoweekday() == sk.auto_option_id else 0.0) for d in all_dates}
+                elif sk.auto_type == AutoSourceType.MONTH and sk.auto_option_id is not None:
+                    source_data[idx] = {d: (1.0 if date_type.fromisoformat(d).month == sk.auto_option_id else 0.0) for d in all_dates}
+                elif sk.auto_type == AutoSourceType.IS_WORKDAY and sk.auto_option_id is not None:
+                    if sk.auto_option_id == 1:
+                        source_data[idx] = {d: (1.0 if date_type.fromisoformat(d).isoweekday() <= 5 else 0.0) for d in all_dates}
+                    else:
+                        source_data[idx] = {d: (1.0 if date_type.fromisoformat(d).isoweekday() > 5 else 0.0) for d in all_dates}
 
             # Pre-compute low-variance sources
             _BINARY_VAR_THRESHOLD = 0.10
@@ -1275,6 +1279,10 @@ def _build_display_label(
     if sk.auto_type:
         display = AUTO_DISPLAY_NAMES.get(sk.auto_type)
         if display:
+            if sk.auto_option_id is not None:
+                option_labels = CALENDAR_OPTION_LABELS.get(sk.auto_type, {})
+                opt_label = option_labels.get(sk.auto_option_id, str(sk.auto_option_id))
+                return f"{display}: {opt_label}"
             return display
         if sk.auto_type == AutoSourceType.NONZERO and parent_metric_name:
             return f"{parent_metric_name}: не ноль"
@@ -1335,8 +1343,17 @@ def _format_pair(
     icon_a = PRIVATE_ICON if blocked_a else _resolve_icon(p["source_key_a"], p["icon_a"], metric_icons_by_id)
     icon_b = PRIVATE_ICON if blocked_b else _resolve_icon(p["source_key_b"], p["icon_b"], metric_icons_by_id)
 
-    option_a = "" if blocked_a else (enum_labels.get(sk_a.enum_option_id, "") if sk_a.enum_option_id else "")
-    option_b = "" if blocked_b else (enum_labels.get(sk_b.enum_option_id, "") if sk_b.enum_option_id else "")
+    def _option_label(sk: SourceKey, blocked: bool) -> str:
+        if blocked:
+            return ""
+        if sk.auto_option_id is not None:
+            return CALENDAR_OPTION_LABELS.get(sk.auto_type, {}).get(sk.auto_option_id, "")  # type: ignore[arg-type]
+        if sk.enum_option_id:
+            return enum_labels.get(sk.enum_option_id, "")
+        return ""
+
+    option_a = _option_label(sk_a, blocked_a)
+    option_b = _option_label(sk_b, blocked_b)
 
     ci = _confidence_interval(corr, p["data_points"]) if corr is not None else None
 
@@ -1503,11 +1520,21 @@ async def _reconstruct_source_data(
             for i in range((end_date - start_date).days + 1)
         ]
         if sk.auto_type == AutoSourceType.DAY_OF_WEEK:
-            return {d: float(date_type.fromisoformat(d).isoweekday()) for d in all_dates}
+            if sk.auto_option_id is not None:
+                return {d: (1.0 if date_type.fromisoformat(d).isoweekday() == sk.auto_option_id else 0.0) for d in all_dates}
+            return {}  # old report without option — no data for chart
         if sk.auto_type == AutoSourceType.MONTH:
-            return {d: float(date_type.fromisoformat(d).month) for d in all_dates}
+            if sk.auto_option_id is not None:
+                return {d: (1.0 if date_type.fromisoformat(d).month == sk.auto_option_id else 0.0) for d in all_dates}
+            return {}
+        if sk.auto_type == AutoSourceType.IS_WORKDAY:
+            if sk.auto_option_id is not None:
+                if sk.auto_option_id == 1:
+                    return {d: (1.0 if date_type.fromisoformat(d).isoweekday() <= 5 else 0.0) for d in all_dates}
+                return {d: (1.0 if date_type.fromisoformat(d).isoweekday() > 5 else 0.0) for d in all_dates}
+            return {}
         if sk.auto_type == AutoSourceType.WEEK_NUMBER:
-            return {d: float(date_type.fromisoformat(d).isocalendar()[1]) for d in all_dates}
+            return {}  # deprecated, kept for backward compat
         if sk.auto_type == AutoSourceType.AW_ACTIVE:
             rows = await conn.fetch(
                 """SELECT date, active_seconds FROM activitywatch_daily_summary

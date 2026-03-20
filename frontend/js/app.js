@@ -486,8 +486,10 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
                 const days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
                 displayVal = days[am.value - 1];
             } else if (am.auto_type === 'month') {
-                const months = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+                const months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
                 displayVal = months[am.value - 1];
+            } else if (am.auto_type === 'is_workday') {
+                displayVal = am.value ? 'Рабочий день' : 'Выходной';
             } else {
                 displayVal = String(am.value);
             }

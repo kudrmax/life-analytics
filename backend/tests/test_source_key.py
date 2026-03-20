@@ -5,6 +5,7 @@ import unittest
 from app.source_key import (
     AUTO_DISPLAY_NAMES,
     AUTO_ICONS,
+    CALENDAR_OPTION_LABELS,
     AutoSourceType,
     SourceKey,
     _CALENDAR_TYPES,
@@ -32,8 +33,11 @@ class TestAutoSourceType(unittest.TestCase):
     def test_aw_active_value(self) -> None:
         self.assertEqual(AutoSourceType.AW_ACTIVE.value, "aw_active")
 
+    def test_is_workday_value(self) -> None:
+        self.assertEqual(AutoSourceType.IS_WORKDAY.value, "is_workday")
+
     def test_total_member_count(self) -> None:
-        self.assertEqual(len(AutoSourceType), 6)
+        self.assertEqual(len(AutoSourceType), 7)
 
     def test_is_str_subclass(self) -> None:
         self.assertIsInstance(AutoSourceType.NONZERO, str)
@@ -55,14 +59,17 @@ class TestAutoDisplayNames(unittest.TestCase):
     def test_month_display_name(self) -> None:
         self.assertEqual(AUTO_DISPLAY_NAMES[AutoSourceType.MONTH], "Месяц")
 
-    def test_week_number_display_name(self) -> None:
-        self.assertEqual(AUTO_DISPLAY_NAMES[AutoSourceType.WEEK_NUMBER], "Неделя года")
+    def test_is_workday_display_name(self) -> None:
+        self.assertEqual(AUTO_DISPLAY_NAMES[AutoSourceType.IS_WORKDAY], "Календарный тип")
 
     def test_aw_active_display_name(self) -> None:
         self.assertEqual(
             AUTO_DISPLAY_NAMES[AutoSourceType.AW_ACTIVE],
             "Экранное время (активное)",
         )
+
+    def test_week_number_not_in_display_names(self) -> None:
+        self.assertNotIn(AutoSourceType.WEEK_NUMBER, AUTO_DISPLAY_NAMES)
 
 
 class TestAutoIcons(unittest.TestCase):
@@ -78,6 +85,12 @@ class TestAutoIcons(unittest.TestCase):
     def test_aw_active_not_in_icons(self) -> None:
         self.assertNotIn(AutoSourceType.AW_ACTIVE, AUTO_ICONS)
 
+    def test_is_workday_icon(self) -> None:
+        self.assertEqual(AUTO_ICONS[AutoSourceType.IS_WORKDAY], "🏢")
+
+    def test_week_number_not_in_icons(self) -> None:
+        self.assertNotIn(AutoSourceType.WEEK_NUMBER, AUTO_ICONS)
+
 
 class TestCalendarTypes(unittest.TestCase):
     """Tests for _CALENDAR_TYPES frozenset."""
@@ -91,14 +104,49 @@ class TestCalendarTypes(unittest.TestCase):
     def test_contains_month(self) -> None:
         self.assertIn(AutoSourceType.MONTH, _CALENDAR_TYPES)
 
-    def test_contains_week_number(self) -> None:
-        self.assertIn(AutoSourceType.WEEK_NUMBER, _CALENDAR_TYPES)
+    def test_contains_is_workday(self) -> None:
+        self.assertIn(AutoSourceType.IS_WORKDAY, _CALENDAR_TYPES)
 
     def test_does_not_contain_nonzero(self) -> None:
         self.assertNotIn(AutoSourceType.NONZERO, _CALENDAR_TYPES)
 
+    def test_does_not_contain_week_number(self) -> None:
+        self.assertNotIn(AutoSourceType.WEEK_NUMBER, _CALENDAR_TYPES)
+
     def test_size_is_three(self) -> None:
         self.assertEqual(len(_CALENDAR_TYPES), 3)
+
+
+class TestCalendarOptionLabels(unittest.TestCase):
+    """Tests for CALENDAR_OPTION_LABELS dict."""
+
+    def test_has_three_calendar_types(self) -> None:
+        self.assertEqual(len(CALENDAR_OPTION_LABELS), 3)
+
+    def test_day_of_week_has_seven_options(self) -> None:
+        self.assertEqual(len(CALENDAR_OPTION_LABELS[AutoSourceType.DAY_OF_WEEK]), 7)
+
+    def test_month_has_twelve_options(self) -> None:
+        self.assertEqual(len(CALENDAR_OPTION_LABELS[AutoSourceType.MONTH]), 12)
+
+    def test_is_workday_has_two_options(self) -> None:
+        self.assertEqual(len(CALENDAR_OPTION_LABELS[AutoSourceType.IS_WORKDAY]), 2)
+
+    def test_day_of_week_monday(self) -> None:
+        self.assertEqual(CALENDAR_OPTION_LABELS[AutoSourceType.DAY_OF_WEEK][1], "Пн")
+
+    def test_day_of_week_sunday(self) -> None:
+        self.assertEqual(CALENDAR_OPTION_LABELS[AutoSourceType.DAY_OF_WEEK][7], "Вс")
+
+    def test_month_january(self) -> None:
+        self.assertEqual(CALENDAR_OPTION_LABELS[AutoSourceType.MONTH][1], "Январь")
+
+    def test_month_december(self) -> None:
+        self.assertEqual(CALENDAR_OPTION_LABELS[AutoSourceType.MONTH][12], "Декабрь")
+
+    def test_is_workday_labels(self) -> None:
+        self.assertEqual(CALENDAR_OPTION_LABELS[AutoSourceType.IS_WORKDAY][1], "Рабочий день")
+        self.assertEqual(CALENDAR_OPTION_LABELS[AutoSourceType.IS_WORKDAY][2], "Выходной")
 
 
 class TestSourceKeyToStr(unittest.TestCase):
@@ -140,6 +188,18 @@ class TestSourceKeyToStr(unittest.TestCase):
         sk = SourceKey(auto_type=AutoSourceType.AW_ACTIVE)
         self.assertEqual(sk.to_str(), "auto:aw_active")
 
+    def test_auto_with_option_id(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=3)
+        self.assertEqual(sk.to_str(), "auto:day_of_week:opt:3")
+
+    def test_auto_month_with_option_id(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.MONTH, auto_option_id=12)
+        self.assertEqual(sk.to_str(), "auto:month:opt:12")
+
+    def test_auto_is_workday_with_option_id(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.IS_WORKDAY, auto_option_id=1)
+        self.assertEqual(sk.to_str(), "auto:is_workday:opt:1")
+
 
 class TestSourceKeyParse(unittest.TestCase):
     """Tests for SourceKey.parse() deserialization."""
@@ -174,6 +234,7 @@ class TestSourceKeyParse(unittest.TestCase):
         self.assertEqual(sk.auto_type, AutoSourceType.DAY_OF_WEEK)
         self.assertIsNone(sk.auto_parent_metric_id)
         self.assertIsNone(sk.metric_id)
+        self.assertIsNone(sk.auto_option_id)
 
     def test_parse_auto_with_parent(self) -> None:
         sk = SourceKey.parse("auto:nonzero:metric:100")
@@ -184,6 +245,27 @@ class TestSourceKeyParse(unittest.TestCase):
         sk = SourceKey.parse("auto:month")
         self.assertEqual(sk.auto_type, AutoSourceType.MONTH)
         self.assertIsNone(sk.auto_parent_metric_id)
+
+    def test_parse_auto_with_option_id(self) -> None:
+        sk = SourceKey.parse("auto:day_of_week:opt:3")
+        self.assertEqual(sk.auto_type, AutoSourceType.DAY_OF_WEEK)
+        self.assertEqual(sk.auto_option_id, 3)
+        self.assertIsNone(sk.auto_parent_metric_id)
+
+    def test_parse_auto_month_with_option_id(self) -> None:
+        sk = SourceKey.parse("auto:month:opt:12")
+        self.assertEqual(sk.auto_type, AutoSourceType.MONTH)
+        self.assertEqual(sk.auto_option_id, 12)
+
+    def test_parse_auto_is_workday_with_option_id(self) -> None:
+        sk = SourceKey.parse("auto:is_workday:opt:1")
+        self.assertEqual(sk.auto_type, AutoSourceType.IS_WORKDAY)
+        self.assertEqual(sk.auto_option_id, 1)
+
+    def test_parse_old_week_number_backward_compat(self) -> None:
+        sk = SourceKey.parse("auto:week_number")
+        self.assertEqual(sk.auto_type, AutoSourceType.WEEK_NUMBER)
+        self.assertIsNone(sk.auto_option_id)
 
 
 class TestSourceKeyRoundTrip(unittest.TestCase):
@@ -212,6 +294,21 @@ class TestSourceKeyRoundTrip(unittest.TestCase):
     def test_round_trip_auto_with_parent(self) -> None:
         self._assert_round_trip(
             SourceKey(auto_type=AutoSourceType.NOTE_COUNT, auto_parent_metric_id=99)
+        )
+
+    def test_round_trip_auto_with_option_id(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=5)
+        )
+
+    def test_round_trip_auto_month_with_option_id(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.MONTH, auto_option_id=7)
+        )
+
+    def test_round_trip_auto_is_workday_with_option_id(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.IS_WORKDAY, auto_option_id=2)
         )
 
 
@@ -256,6 +353,12 @@ class TestSourceKeyFrozen(unittest.TestCase):
         c = SourceKey(metric_id=2)
         s = {a, b, c}
         self.assertEqual(len(s), 2)
+
+    def test_auto_option_id_in_hash(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=1)
+        b = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=2)
+        self.assertNotEqual(a, b)
+        self.assertNotEqual(hash(a), hash(b))
 
 
 if __name__ == "__main__":

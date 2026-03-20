@@ -473,9 +473,9 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
         {"name": "Месяц", "auto_type": "month",
          "source_metric_id": None, "source_metric_name": None,
          "value": d.month},
-        {"name": "Неделя года", "auto_type": "week_number",
+        {"name": "Календарный тип", "auto_type": "is_workday",
          "source_metric_id": None, "source_metric_name": None,
-         "value": d.isocalendar()[1]},
+         "value": d.isoweekday() <= 5},
     ])
 
     # Progress calculation (skip computed/integration, text=filled if note_count>0, multi-slot each slot separately)

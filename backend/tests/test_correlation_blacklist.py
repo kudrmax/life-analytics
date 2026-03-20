@@ -74,21 +74,26 @@ class TestShouldSkipPair(unittest.TestCase):
 
     # ---- Two calendar autos -> skip ----
 
-    def test_two_calendar_autos_skipped(self) -> None:
-        a = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK)
-        b = SourceKey(auto_type=AutoSourceType.MONTH)
+    def test_two_calendar_autos_different_types_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=1)
+        b = SourceKey(auto_type=AutoSourceType.MONTH, auto_option_id=3)
         self.assertTrue(should_skip_pair(a, b))
 
-    def test_day_of_week_and_week_number_skipped(self) -> None:
-        a = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK)
-        b = SourceKey(auto_type=AutoSourceType.WEEK_NUMBER)
+    def test_two_calendar_autos_same_type_different_options_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=1)
+        b = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=5)
+        self.assertTrue(should_skip_pair(a, b))
+
+    def test_is_workday_and_day_of_week_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.IS_WORKDAY, auto_option_id=1)
+        b = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=3)
         self.assertTrue(should_skip_pair(a, b))
 
     # ---- aw_active + calendar -> don't skip ----
 
     def test_aw_active_and_calendar_not_skipped(self) -> None:
         a = SourceKey(auto_type=AutoSourceType.AW_ACTIVE)
-        b = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK)
+        b = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=1)
         self.assertFalse(should_skip_pair(a, b))
 
     # ---- Two different regular metrics -> don't skip ----
@@ -106,7 +111,7 @@ class TestShouldSkipPair(unittest.TestCase):
         self.assertFalse(should_skip_pair(auto, regular))
 
     def test_calendar_auto_with_regular_metric_not_skipped(self) -> None:
-        auto = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK)
+        auto = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=1)
         regular = SourceKey(metric_id=5)
         self.assertFalse(should_skip_pair(auto, regular))
 
