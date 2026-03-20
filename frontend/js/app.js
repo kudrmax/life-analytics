@@ -44,6 +44,8 @@ let _cardDragStartX = 0;
 let _cardDragStartY = 0;
 let _cardDragCurrentX = 0;
 let _cardDragAnimating = false;
+let _peekCard = null;
+let _peekDirection = 0;
 
 function todayStr() {
     return new Date().toISOString().slice(0, 10);
@@ -313,9 +315,14 @@ async function renderToday(container) {
             </div>
         </div>
         <div class="card-mode-bar" id="card-mode-bar">
-            <button class="btn-small card-mode-toggle" id="card-mode-toggle">
-                <i data-lucide="layers"></i> Карточки
-            </button>
+            <div class="card-mode-segmented" id="card-mode-segmented">
+                <button class="card-mode-seg" id="seg-list">
+                    <i data-lucide="list"></i> Список
+                </button>
+                <button class="card-mode-seg" id="seg-cards">
+                    <i data-lucide="layers"></i> Карточки
+                </button>
+            </div>
             <div class="card-mode-nav" id="card-mode-nav">
                 <button class="card-nav-btn" id="card-prev"><i data-lucide="chevron-left"></i></button>
                 <span class="card-mode-counter" id="card-mode-counter"></span>
@@ -394,10 +401,22 @@ async function renderToday(container) {
         const effectiveDx = (atStart || atEnd) ? dx * 0.3 : dx;
         _cardDragCurrentX = effectiveDx;
 
+        // Show/update peek card
+        const newPeekDir = dx < 0 ? -1 : 1;
+        if (newPeekDir !== _peekDirection) _showPeekCard(dx);
+
         const screenW = window.innerWidth || 400;
         const angle = (effectiveDx / screenW) * 5;
         card.style.transition = 'none';
         card.style.transform = `translateX(${effectiveDx}px) rotate(${angle}deg)`;
+
+        // Parallax on peek card
+        if (_peekCard) {
+            const progress = Math.min(Math.abs(effectiveDx) / (screenW * 0.4), 1);
+            _peekCard.style.transition = 'none';
+            _peekCard.style.transform = `scale(${0.97 + 0.03 * progress})`;
+            _peekCard.style.opacity = String(0.6 + 0.4 * progress);
+        }
     }, { passive: false });
 
     metricsForm.addEventListener('pointerup', (e) => {
@@ -439,12 +458,15 @@ async function renderToday(container) {
         if (card && _cardModeActive) _springBackCard(card);
     });
 
-    // Card mode initialization
+    // Card mode initialization (segmented control)
     _cardModeActive = window.innerWidth <= 768 && localStorage.getItem(CARD_MODE_KEY) === 'true';
-    const cardModeToggle = document.getElementById('card-mode-toggle');
-    if (cardModeToggle) {
-        cardModeToggle.classList.toggle('active', _cardModeActive);
-        cardModeToggle.addEventListener('click', toggleCardMode);
+    const segList = document.getElementById('seg-list');
+    const segCards = document.getElementById('seg-cards');
+    if (segList && segCards) {
+        segList.classList.toggle('active', !_cardModeActive);
+        segCards.classList.toggle('active', _cardModeActive);
+        segList.addEventListener('click', () => setCardMode(false));
+        segCards.addEventListener('click', () => setCardMode(true));
     }
     const cardPrevBtn = document.getElementById('card-prev');
     const cardNextBtn = document.getElementById('card-next');
@@ -455,7 +477,7 @@ async function renderToday(container) {
 }
 
 function changeDay(delta) {
-    _cardIndex = 0;
+    _cardList = [];
     const d = new Date(currentDate);
     d.setDate(d.getDate() + delta);
     currentDate = d.toISOString().slice(0, 10);
@@ -464,28 +486,50 @@ function changeDay(delta) {
 
 // ─── Card Mode Functions ───
 
-function toggleCardMode() {
-    _cardModeActive = !_cardModeActive;
-    _cardIndex = 0;
+function setCardMode(active) {
+    if (_cardModeActive === active) return;
+    _cardModeActive = active;
     localStorage.setItem(CARD_MODE_KEY, String(_cardModeActive));
-    const btn = document.getElementById('card-mode-toggle');
-    if (btn) btn.classList.toggle('active', _cardModeActive);
-    if (_cardModeActive) applyCardMode();
-    else exitCardMode();
+    _updateSegmentedControl();
+    if (_cardModeActive) {
+        const form = document.getElementById('metrics-form');
+        if (form) _cardList = Array.from(form.querySelectorAll('.metric-card:not(.auto-metric)'));
+        _cardIndex = _findFirstUnfilledIndex();
+        applyCardMode();
+    } else {
+        exitCardMode();
+    }
 }
 
-function applyCardMode() {
+function _updateSegmentedControl() {
+    const segList = document.getElementById('seg-list');
+    const segCards = document.getElementById('seg-cards');
+    if (segList) segList.classList.toggle('active', !_cardModeActive);
+    if (segCards) segCards.classList.toggle('active', _cardModeActive);
+}
+
+function _findFirstUnfilledIndex() {
+    const idx = _cardList.findIndex(c => !c.classList.contains('filled'));
+    return idx >= 0 ? idx : 0;
+}
+
+function applyCardMode(findFirst = false) {
     const form = document.getElementById('metrics-form');
     if (!form || !_cardModeActive || window.innerWidth > 768) return;
     _cardList = Array.from(form.querySelectorAll('.metric-card:not(.auto-metric)'));
     if (_cardList.length === 0) return;
-    _cardIndex = Math.min(_cardIndex, _cardList.length - 1);
+    if (findFirst) {
+        _cardIndex = _findFirstUnfilledIndex();
+    } else {
+        _cardIndex = Math.min(_cardIndex, _cardList.length - 1);
+    }
     form.classList.add('card-mode');
     _cardList.forEach((c, i) => c.classList.toggle('card-mode-visible', i === _cardIndex));
     updateCardCounter();
 }
 
 function exitCardMode() {
+    _hidePeekCard();
     const form = document.getElementById('metrics-form');
     if (form) form.classList.remove('card-mode');
     _cardList.forEach(c => c.classList.remove('card-mode-visible'));
@@ -515,11 +559,19 @@ function navigateCard(delta) {
 
 function _flyOffCard(card, direction) {
     _cardDragAnimating = true;
+    const hasPeek = !!_peekCard;
     const flyX = direction > 0 ? '120vw' : '-120vw';
     const flyAngle = direction > 0 ? 15 : -15;
     card.style.transition = 'transform 300ms ease-out, opacity 300ms ease-out';
     card.style.transform = `translateX(${flyX}) rotate(${flyAngle}deg)`;
     card.style.opacity = '0';
+
+    // Animate peek to full size while card flies off
+    if (hasPeek && _peekCard) {
+        _peekCard.style.transition = 'transform 300ms ease-out, opacity 300ms ease-out';
+        _peekCard.style.transform = 'scale(1)';
+        _peekCard.style.opacity = '1';
+    }
 
     let done = false;
     const onDone = () => {
@@ -533,8 +585,20 @@ function _flyOffCard(card, direction) {
         _cardIndex = Math.max(0, Math.min(newIndex, _cardList.length - 1));
         const next = _cardList[_cardIndex];
         if (next) {
-            _slideInCard(next, direction);
+            if (hasPeek && _peekCard === next) {
+                // Peek becomes active card — just swap class
+                _peekCard.classList.remove('card-mode-peek');
+                _peekCard.classList.add('card-mode-visible');
+                _peekCard.style.cssText = '';
+                _peekCard = null;
+                _peekDirection = 0;
+                _cardDragAnimating = false;
+            } else {
+                _hidePeekCard();
+                _slideInCard(next, direction);
+            }
         } else {
+            _hidePeekCard();
             _cardDragAnimating = false;
         }
         updateCardCounter();
@@ -573,17 +637,43 @@ function _springBackCard(card) {
     card.style.transition = 'transform 200ms ease-out';
     card.style.transform = 'translateX(0) rotate(0deg)';
 
+    // Animate peek back to resting state
+    if (_peekCard) {
+        _peekCard.style.transition = 'transform 200ms ease-out, opacity 200ms ease-out';
+        _peekCard.style.transform = 'scale(0.97)';
+        _peekCard.style.opacity = '0.6';
+    }
+
     let done = false;
     const onDone = () => {
         if (done) return;
         done = true;
         card.removeEventListener('transitionend', onTransEnd);
         card.style.cssText = '';
+        _hidePeekCard();
         _cardDragAnimating = false;
     };
     const onTransEnd = (e) => { if (e.target === card) onDone(); };
     card.addEventListener('transitionend', onTransEnd);
     setTimeout(onDone, 250); // safety timeout
+}
+
+function _showPeekCard(dx) {
+    _hidePeekCard();
+    const peekIndex = dx < 0 ? _cardIndex + 1 : _cardIndex - 1;
+    if (peekIndex < 0 || peekIndex >= _cardList.length) return;
+    _peekCard = _cardList[peekIndex];
+    _peekCard.classList.add('card-mode-peek');
+    _peekDirection = dx < 0 ? -1 : 1;
+}
+
+function _hidePeekCard() {
+    if (_peekCard) {
+        _peekCard.classList.remove('card-mode-peek');
+        _peekCard.style.cssText = '';
+        _peekCard = null;
+    }
+    _peekDirection = 0;
 }
 
 function updateCardCounter() {
@@ -842,9 +932,10 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
 
     // Card mode reapply
     if (_cardModeActive && window.innerWidth <= 768) {
+        const isFirstRender = _cardList.length === 0;
         const prevMetricId = _cardList[_cardIndex]?.dataset?.metricId;
-        applyCardMode();
-        if (prevMetricId) {
+        applyCardMode(isFirstRender);
+        if (!isFirstRender && prevMetricId) {
             const newIdx = _cardList.findIndex(c => c.dataset.metricId === prevMetricId);
             if (newIdx >= 0) {
                 _cardIndex = newIdx;
@@ -853,8 +944,7 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
             }
         }
     }
-    const toggleBtn = document.getElementById('card-mode-toggle');
-    if (toggleBtn) toggleBtn.classList.toggle('active', _cardModeActive && window.innerWidth <= 768);
+    _updateSegmentedControl();
 
     console.debug(`[render] today  ${(performance.now() - _t0).toFixed(0)}ms`);
 }

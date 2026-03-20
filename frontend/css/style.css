@@ -3739,11 +3739,29 @@ emoji-picker {
         padding: 8px 0 4px;
     }
 
-    .card-mode-toggle.active {
-        background: var(--accent);
-        color: #fff;
-        border-color: var(--accent);
+    .card-mode-segmented {
+        display: flex;
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 2px;
+        gap: 2px;
     }
+    .card-mode-seg {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 6px 12px;
+        border: none;
+        background: transparent;
+        color: var(--text-dim);
+        font-size: 13px;
+        cursor: pointer;
+        border-radius: 6px;
+        transition: background 0.15s, color 0.15s;
+    }
+    .card-mode-seg svg { width: 14px; height: 14px; }
+    .card-mode-seg.active { background: var(--accent); color: #fff; }
 
     /* Navigation panel: arrows + counter */
     .card-mode-nav {
@@ -3797,6 +3815,7 @@ emoji-picker {
     #metrics-form.card-mode {
         touch-action: pan-y;
         min-height: calc(100dvh - 170px);
+        position: relative;
     }
 
     #metrics-form.card-mode .metric-card {
@@ -3815,11 +3834,33 @@ emoji-picker {
         min-height: calc(100dvh - 180px);
         user-select: none;
         will-change: transform;
+        position: relative;
+        z-index: 2;
     }
 
     #metrics-form.card-mode .metric-card.card-mode-visible.filled {
         opacity: 1 !important;
         border-color: var(--border);
+    }
+
+    #metrics-form.card-mode .metric-card.card-mode-peek {
+        display: flex;
+        flex-direction: column;
+        padding: 24px 20px;
+        margin: 0;
+        border-radius: 16px;
+        border: 1px solid var(--border);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+        min-height: calc(100dvh - 180px);
+        user-select: none;
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 1;
+        transform: scale(0.97);
+        opacity: 0.6;
+        pointer-events: none;
     }
 }
 
