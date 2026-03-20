@@ -1152,7 +1152,7 @@ class TestPairChartCalendarAutoSource:
     async def test_pair_chart_day_of_week(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Day-of-week auto-source pair chart returns isoweekday values."""
+        """Day-of-week auto-source pair chart returns per-option boolean values (0.0 or 1.0)."""
         token = user_a["token"]
         bool_m, num_m = await _create_metrics_with_entries(client, token)
         await _start_report(client, token)
@@ -1166,7 +1166,7 @@ class TestPairChartCalendarAutoSource:
         )
         pairs_data = resp.json()
 
-        # Find a pair with day_of_week source
+        # Find a pair with day_of_week source (per-option boolean, e.g. "День недели: Пн")
         dow_pair = None
         for p in pairs_data["pairs"]:
             if "День недели" in p.get("label_a", "") or "День недели" in p.get("label_b", ""):
@@ -1181,10 +1181,10 @@ class TestPairChartCalendarAutoSource:
         assert resp.status_code == 200
         chart = resp.json()
         assert len(chart["dates"]) > 0
-        # Day-of-week values should be 1-7
+        # Day-of-week is now per-option boolean: values should be 0.0 or 1.0
         dow_side = "values_a" if "День недели" in dow_pair.get("label_a", "") else "values_b"
         for v in chart[dow_side]:
-            assert 1 <= v <= 7, f"Day of week should be 1-7, got {v}"
+            assert v in (0.0, 1.0), f"Day of week per-option value should be 0.0 or 1.0, got {v}"
 
 
 # ---------------------------------------------------------------------------
