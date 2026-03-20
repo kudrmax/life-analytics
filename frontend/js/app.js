@@ -33,6 +33,18 @@ let _todayRenderVersion = 0;
 let _historyRenderVersion = 0;
 let _dayHeaderObserver = null;
 
+// ─── Card Mode (mobile) ───
+const CARD_MODE_KEY = 'la_card_mode';
+let _cardModeActive = false;
+let _cardIndex = 0;
+let _cardList = [];
+let _cardDragActive = false;
+let _cardDragLocked = false;
+let _cardDragStartX = 0;
+let _cardDragStartY = 0;
+let _cardDragCurrentX = 0;
+let _cardDragAnimating = false;
+
 function todayStr() {
     return new Date().toISOString().slice(0, 10);
 }
@@ -300,6 +312,16 @@ async function renderToday(container) {
                 </button>
             </div>
         </div>
+        <div class="card-mode-bar" id="card-mode-bar">
+            <button class="btn-small card-mode-toggle" id="card-mode-toggle">
+                <i data-lucide="layers"></i> Карточки
+            </button>
+            <div class="card-mode-nav" id="card-mode-nav">
+                <button class="card-nav-btn" id="card-prev"><i data-lucide="chevron-left"></i></button>
+                <span class="card-mode-counter" id="card-mode-counter"></span>
+                <button class="card-nav-btn" id="card-next"><i data-lucide="chevron-right"></i></button>
+            </div>
+        </div>
         <div id="metrics-form"></div>
         <div class="today-actions" style="display:none">
             <button class="btn-small" id="today-edit-metrics">
@@ -329,30 +351,255 @@ async function renderToday(container) {
     document.getElementById('today-add-metric').onclick = () => { navigateTo('settings', { openAddModal: true }); };
     document.getElementById('today-edit-metrics').onclick = () => { navigateTo('settings'); };
 
-    // Swipe navigation for mobile
+    // Pointer-based swipe/drag navigation (works with touch + mouse)
     const metricsForm = document.getElementById('metrics-form');
-    let touchStartX = 0;
-    let touchStartY = 0;
-    metricsForm.addEventListener('touchstart', (e) => {
-        touchStartX = e.touches[0].clientX;
-        touchStartY = e.touches[0].clientY;
-    }, { passive: true });
-    metricsForm.addEventListener('touchend', (e) => {
-        const dx = e.changedTouches[0].clientX - touchStartX;
-        const dy = e.changedTouches[0].clientY - touchStartY;
-        if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-            changeDay(dx < 0 ? 1 : -1);
+    const _interactiveSelector = 'button, input, select, textarea, label, .number-btn, .scale-btn, .bool-btn, .enum-btn, .metric-clear-btn, .period-clear-btn';
+
+    metricsForm.addEventListener('pointerdown', (e) => {
+        if (_cardDragAnimating) return;
+        if (e.target.closest(_interactiveSelector)) return;
+        _cardDragStartX = e.clientX;
+        _cardDragStartY = e.clientY;
+        _cardDragCurrentX = 0;
+        _cardDragActive = true;
+        _cardDragLocked = false;
+        if (_cardModeActive) {
+            metricsForm.setPointerCapture(e.pointerId);
         }
-    }, { passive: true });
+    });
+
+    metricsForm.addEventListener('pointermove', (e) => {
+        if (!_cardDragActive || _cardDragAnimating) return;
+        const dx = e.clientX - _cardDragStartX;
+        const dy = e.clientY - _cardDragStartY;
+
+        if (!_cardDragLocked) {
+            if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+            if (Math.abs(dy) > Math.abs(dx)) {
+                // Vertical — abort drag, allow scroll
+                _cardDragActive = false;
+                return;
+            }
+            _cardDragLocked = true;
+        }
+
+        if (!_cardModeActive) return; // day-swipe resolved on pointerup
+        e.preventDefault();
+
+        const card = _cardList[_cardIndex];
+        if (!card) return;
+
+        const atStart = _cardIndex === 0 && dx > 0;
+        const atEnd = _cardIndex >= _cardList.length - 1 && dx < 0;
+        const effectiveDx = (atStart || atEnd) ? dx * 0.3 : dx;
+        _cardDragCurrentX = effectiveDx;
+
+        const screenW = window.innerWidth || 400;
+        const angle = (effectiveDx / screenW) * 5;
+        card.style.transition = 'none';
+        card.style.transform = `translateX(${effectiveDx}px) rotate(${angle}deg)`;
+    }, { passive: false });
+
+    metricsForm.addEventListener('pointerup', (e) => {
+        if (!_cardDragActive) return;
+        _cardDragActive = false;
+        const dx = e.clientX - _cardDragStartX;
+        const dy = e.clientY - _cardDragStartY;
+
+        if (!_cardModeActive) {
+            // Day-swipe fallback
+            if (_cardDragLocked && Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+                changeDay(dx < 0 ? 1 : -1);
+            }
+            return;
+        }
+
+        if (!_cardDragLocked) return;
+
+        const card = _cardList[_cardIndex];
+        if (!card) return;
+
+        const screenW = window.innerWidth || 400;
+        const threshold = Math.max(80, screenW * 0.25);
+        const absDx = Math.abs(_cardDragCurrentX);
+        const atStart = _cardIndex === 0 && _cardDragCurrentX > 0;
+        const atEnd = _cardIndex >= _cardList.length - 1 && _cardDragCurrentX < 0;
+
+        if (absDx > threshold && !atStart && !atEnd) {
+            _flyOffCard(card, _cardDragCurrentX < 0 ? -1 : 1);
+        } else {
+            _springBackCard(card);
+        }
+    });
+
+    metricsForm.addEventListener('pointercancel', () => {
+        if (!_cardDragActive) return;
+        _cardDragActive = false;
+        const card = _cardList[_cardIndex];
+        if (card && _cardModeActive) _springBackCard(card);
+    });
+
+    // Card mode initialization
+    _cardModeActive = window.innerWidth <= 768 && localStorage.getItem(CARD_MODE_KEY) === 'true';
+    const cardModeToggle = document.getElementById('card-mode-toggle');
+    if (cardModeToggle) {
+        cardModeToggle.classList.toggle('active', _cardModeActive);
+        cardModeToggle.addEventListener('click', toggleCardMode);
+    }
+    const cardPrevBtn = document.getElementById('card-prev');
+    const cardNextBtn = document.getElementById('card-next');
+    if (cardPrevBtn) cardPrevBtn.addEventListener('click', () => navigateCard(-1));
+    if (cardNextBtn) cardNextBtn.addEventListener('click', () => navigateCard(1));
 
     await renderTodayForm();
 }
 
 function changeDay(delta) {
+    _cardIndex = 0;
     const d = new Date(currentDate);
     d.setDate(d.getDate() + delta);
     currentDate = d.toISOString().slice(0, 10);
     renderTodayForm(true, delta > 0 ? 'next' : 'prev');
+}
+
+// ─── Card Mode Functions ───
+
+function toggleCardMode() {
+    _cardModeActive = !_cardModeActive;
+    _cardIndex = 0;
+    localStorage.setItem(CARD_MODE_KEY, String(_cardModeActive));
+    const btn = document.getElementById('card-mode-toggle');
+    if (btn) btn.classList.toggle('active', _cardModeActive);
+    if (_cardModeActive) applyCardMode();
+    else exitCardMode();
+}
+
+function applyCardMode() {
+    const form = document.getElementById('metrics-form');
+    if (!form || !_cardModeActive || window.innerWidth > 768) return;
+    _cardList = Array.from(form.querySelectorAll('.metric-card:not(.auto-metric)'));
+    if (_cardList.length === 0) return;
+    _cardIndex = Math.min(_cardIndex, _cardList.length - 1);
+    form.classList.add('card-mode');
+    _cardList.forEach((c, i) => c.classList.toggle('card-mode-visible', i === _cardIndex));
+    updateCardCounter();
+}
+
+function exitCardMode() {
+    const form = document.getElementById('metrics-form');
+    if (form) form.classList.remove('card-mode');
+    _cardList.forEach(c => c.classList.remove('card-mode-visible'));
+    _cardList = [];
+    const nav = document.getElementById('card-mode-nav');
+    if (nav) nav.style.display = 'none';
+}
+
+function navigateCard(delta) {
+    if (!_cardModeActive || _cardList.length === 0 || _cardDragAnimating) return;
+    const newIndex = _cardIndex + delta;
+    if (newIndex < 0 || newIndex >= _cardList.length) {
+        // Bounce at boundary
+        const cur = _cardList[_cardIndex];
+        _cardDragAnimating = true;
+        cur.style.transition = 'transform 0.12s ease-out';
+        cur.style.transform = `translateX(${delta > 0 ? '-12px' : '12px'})`;
+        setTimeout(() => {
+            _springBackCard(cur);
+        }, 120);
+        return;
+    }
+    // Fly off in opposite direction of navigation
+    const flyDirection = delta > 0 ? -1 : 1;
+    _flyOffCard(_cardList[_cardIndex], flyDirection);
+}
+
+function _flyOffCard(card, direction) {
+    _cardDragAnimating = true;
+    const flyX = direction > 0 ? '120vw' : '-120vw';
+    const flyAngle = direction > 0 ? 15 : -15;
+    card.style.transition = 'transform 300ms ease-out, opacity 300ms ease-out';
+    card.style.transform = `translateX(${flyX}) rotate(${flyAngle}deg)`;
+    card.style.opacity = '0';
+
+    let done = false;
+    const onDone = () => {
+        if (done) return;
+        done = true;
+        card.removeEventListener('transitionend', onTransEnd);
+        card.classList.remove('card-mode-visible');
+        card.style.cssText = '';
+
+        const newIndex = _cardIndex + (direction > 0 ? -1 : 1);
+        _cardIndex = Math.max(0, Math.min(newIndex, _cardList.length - 1));
+        const next = _cardList[_cardIndex];
+        if (next) {
+            _slideInCard(next, direction);
+        } else {
+            _cardDragAnimating = false;
+        }
+        updateCardCounter();
+    };
+    const onTransEnd = (e) => { if (e.target === card) onDone(); };
+    card.addEventListener('transitionend', onTransEnd);
+    setTimeout(onDone, 350); // safety timeout
+}
+
+function _slideInCard(card, fromDirection) {
+    const startX = fromDirection > 0 ? -50 : 50;
+    card.style.transition = 'none';
+    card.style.transform = `translateX(${startX}px)`;
+    card.style.opacity = '0.5';
+    card.classList.add('card-mode-visible');
+    card.offsetHeight; // force reflow
+    card.style.transition = 'transform 250ms ease-out, opacity 250ms ease-out';
+    card.style.transform = 'translateX(0)';
+    card.style.opacity = '1';
+
+    let done = false;
+    const onDone = () => {
+        if (done) return;
+        done = true;
+        card.removeEventListener('transitionend', onTransEnd);
+        card.style.cssText = '';
+        _cardDragAnimating = false;
+    };
+    const onTransEnd = (e) => { if (e.target === card) onDone(); };
+    card.addEventListener('transitionend', onTransEnd);
+    setTimeout(onDone, 300); // safety timeout
+}
+
+function _springBackCard(card) {
+    _cardDragAnimating = true;
+    card.style.transition = 'transform 200ms ease-out';
+    card.style.transform = 'translateX(0) rotate(0deg)';
+
+    let done = false;
+    const onDone = () => {
+        if (done) return;
+        done = true;
+        card.removeEventListener('transitionend', onTransEnd);
+        card.style.cssText = '';
+        _cardDragAnimating = false;
+    };
+    const onTransEnd = (e) => { if (e.target === card) onDone(); };
+    card.addEventListener('transitionend', onTransEnd);
+    setTimeout(onDone, 250); // safety timeout
+}
+
+function updateCardCounter() {
+    const counter = document.getElementById('card-mode-counter');
+    const nav = document.getElementById('card-mode-nav');
+    if (counter) {
+        counter.textContent = `${_cardIndex + 1} / ${_cardList.length}`;
+    }
+    if (nav) {
+        nav.style.display = _cardModeActive ? 'flex' : 'none';
+    }
+    // Dim arrows at boundaries
+    const prevBtn = document.getElementById('card-prev');
+    const nextBtn = document.getElementById('card-next');
+    if (prevBtn) prevBtn.classList.toggle('disabled', _cardIndex === 0);
+    if (nextBtn) nextBtn.classList.toggle('disabled', _cardIndex >= _cardList.length - 1);
 }
 
 async function renderTodayForm(preserveScroll = false, direction = null) {
@@ -592,6 +839,23 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
     const next = new Date(currentDate);
     next.setDate(next.getDate() + 1);
     api.getDailySummary(next.toISOString().slice(0, 10));
+
+    // Card mode reapply
+    if (_cardModeActive && window.innerWidth <= 768) {
+        const prevMetricId = _cardList[_cardIndex]?.dataset?.metricId;
+        applyCardMode();
+        if (prevMetricId) {
+            const newIdx = _cardList.findIndex(c => c.dataset.metricId === prevMetricId);
+            if (newIdx >= 0) {
+                _cardIndex = newIdx;
+                _cardList.forEach((c, i) => c.classList.toggle('card-mode-visible', i === _cardIndex));
+                updateCardCounter();
+            }
+        }
+    }
+    const toggleBtn = document.getElementById('card-mode-toggle');
+    if (toggleBtn) toggleBtn.classList.toggle('active', _cardModeActive && window.innerWidth <= 768);
+
     console.debug(`[render] today  ${(performance.now() - _t0).toFixed(0)}ms`);
 }
 

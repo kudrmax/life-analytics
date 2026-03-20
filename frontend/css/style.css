@@ -3726,3 +3726,100 @@ emoji-picker {
     }
 }
 
+/* ─── Card Mode (mobile only) ─── */
+.card-mode-bar {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .card-mode-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 0 4px;
+    }
+
+    .card-mode-toggle.active {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+    }
+
+    /* Navigation panel: arrows + counter */
+    .card-mode-nav {
+        display: none;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .card-nav-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border: 1px solid var(--border);
+        background: var(--surface2);
+        color: var(--text);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: opacity 0.15s;
+    }
+    .card-nav-btn svg {
+        width: 18px;
+        height: 18px;
+    }
+    .card-nav-btn.disabled {
+        opacity: 0.25;
+        pointer-events: none;
+    }
+
+    .card-mode-counter {
+        font-size: 14px;
+        color: var(--text-dim);
+        font-weight: 600;
+        min-width: 40px;
+        text-align: center;
+    }
+
+    /* Card mode: hide structure, show single card */
+    #metrics-form.card-mode .fill-time-header,
+    #metrics-form.card-mode > .section-header,
+    #metrics-form.card-mode .category > h3,
+    #metrics-form.card-mode .auto-metrics-section {
+        display: none;
+    }
+
+    #metrics-form.card-mode .category {
+        margin-bottom: 0;
+    }
+
+    #metrics-form.card-mode {
+        touch-action: pan-y;
+        min-height: calc(100dvh - 170px);
+    }
+
+    #metrics-form.card-mode .metric-card {
+        display: none;
+    }
+
+    #metrics-form.card-mode .metric-card.card-mode-visible {
+        display: flex;
+        flex-direction: column;
+        padding: 24px 20px;
+        margin: 0;
+        border-radius: 16px;
+        border: 1px solid var(--border);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+        opacity: 1 !important;
+        min-height: calc(100dvh - 180px);
+        user-select: none;
+        will-change: transform;
+    }
+
+    #metrics-form.card-mode .metric-card.card-mode-visible.filled {
+        opacity: 1 !important;
+        border-color: var(--border);
+    }
+}
+
