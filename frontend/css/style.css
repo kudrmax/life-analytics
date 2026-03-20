@@ -3727,6 +3727,12 @@ emoji-picker {
 }
 
 /* ─── Card Mode (mobile only) ─── */
+body.card-mode-active {
+    overflow: hidden;
+    position: fixed;
+    width: 100%;
+}
+
 .card-mode-bar {
     display: none;
 }
@@ -3734,13 +3740,12 @@ emoji-picker {
 @media (max-width: 768px) {
     .card-mode-bar {
         display: flex;
-        align-items: center;
-        justify-content: space-between;
         padding: 8px 0 4px;
     }
 
     .card-mode-segmented {
         display: flex;
+        flex: 1;
         background: var(--surface2);
         border: 1px solid var(--border);
         border-radius: 8px;
@@ -3748,8 +3753,10 @@ emoji-picker {
         gap: 2px;
     }
     .card-mode-seg {
+        flex: 1;
         display: inline-flex;
         align-items: center;
+        justify-content: center;
         gap: 4px;
         padding: 6px 12px;
         border: none;
@@ -3763,43 +3770,6 @@ emoji-picker {
     .card-mode-seg svg { width: 14px; height: 14px; }
     .card-mode-seg.active { background: var(--accent); color: #fff; }
 
-    /* Navigation panel: arrows + counter */
-    .card-mode-nav {
-        display: none;
-        align-items: center;
-        gap: 12px;
-    }
-
-    .card-nav-btn {
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        border: 1px solid var(--border);
-        background: var(--surface2);
-        color: var(--text);
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: opacity 0.15s;
-    }
-    .card-nav-btn svg {
-        width: 18px;
-        height: 18px;
-    }
-    .card-nav-btn.disabled {
-        opacity: 0.25;
-        pointer-events: none;
-    }
-
-    .card-mode-counter {
-        font-size: 14px;
-        color: var(--text-dim);
-        font-weight: 600;
-        min-width: 40px;
-        text-align: center;
-    }
-
     /* Card mode: hide structure, show single card */
     #metrics-form.card-mode .fill-time-header,
     #metrics-form.card-mode > .section-header,
@@ -3808,14 +3778,19 @@ emoji-picker {
         display: none;
     }
 
+    #metrics-form.card-mode ~ .today-actions {
+        display: none !important;
+    }
+
     #metrics-form.card-mode .category {
         margin-bottom: 0;
     }
 
     #metrics-form.card-mode {
-        touch-action: pan-y;
+        touch-action: none;
         min-height: calc(100dvh - 170px);
         position: relative;
+        overflow: hidden;
     }
 
     #metrics-form.card-mode .metric-card {

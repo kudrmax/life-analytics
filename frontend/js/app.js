@@ -323,11 +323,6 @@ async function renderToday(container) {
                     <i data-lucide="layers"></i> Карточки
                 </button>
             </div>
-            <div class="card-mode-nav" id="card-mode-nav">
-                <button class="card-nav-btn" id="card-prev"><i data-lucide="chevron-left"></i></button>
-                <span class="card-mode-counter" id="card-mode-counter"></span>
-                <button class="card-nav-btn" id="card-next"><i data-lucide="chevron-right"></i></button>
-            </div>
         </div>
         <div id="metrics-form"></div>
         <div class="today-actions" style="display:none">
@@ -468,10 +463,6 @@ async function renderToday(container) {
         segList.addEventListener('click', () => setCardMode(false));
         segCards.addEventListener('click', () => setCardMode(true));
     }
-    const cardPrevBtn = document.getElementById('card-prev');
-    const cardNextBtn = document.getElementById('card-next');
-    if (cardPrevBtn) cardPrevBtn.addEventListener('click', () => navigateCard(-1));
-    if (cardNextBtn) cardNextBtn.addEventListener('click', () => navigateCard(1));
 
     await renderTodayForm();
 }
@@ -524,6 +515,9 @@ function applyCardMode(findFirst = false) {
         _cardIndex = Math.min(_cardIndex, _cardList.length - 1);
     }
     form.classList.add('card-mode');
+    document.body.dataset.scrollY = String(window.scrollY);
+    document.body.style.top = `-${window.scrollY}px`;
+    document.body.classList.add('card-mode-active');
     _cardList.forEach((c, i) => c.classList.toggle('card-mode-visible', i === _cardIndex));
     updateCardCounter();
 }
@@ -532,30 +526,14 @@ function exitCardMode() {
     _hidePeekCard();
     const form = document.getElementById('metrics-form');
     if (form) form.classList.remove('card-mode');
+    const scrollY = parseInt(document.body.dataset.scrollY || '0', 10);
+    document.body.classList.remove('card-mode-active');
+    document.body.style.top = '';
+    window.scrollTo(0, scrollY);
     _cardList.forEach(c => c.classList.remove('card-mode-visible'));
     _cardList = [];
-    const nav = document.getElementById('card-mode-nav');
-    if (nav) nav.style.display = 'none';
 }
 
-function navigateCard(delta) {
-    if (!_cardModeActive || _cardList.length === 0 || _cardDragAnimating) return;
-    const newIndex = _cardIndex + delta;
-    if (newIndex < 0 || newIndex >= _cardList.length) {
-        // Bounce at boundary
-        const cur = _cardList[_cardIndex];
-        _cardDragAnimating = true;
-        cur.style.transition = 'transform 0.12s ease-out';
-        cur.style.transform = `translateX(${delta > 0 ? '-12px' : '12px'})`;
-        setTimeout(() => {
-            _springBackCard(cur);
-        }, 120);
-        return;
-    }
-    // Fly off in opposite direction of navigation
-    const flyDirection = delta > 0 ? -1 : 1;
-    _flyOffCard(_cardList[_cardIndex], flyDirection);
-}
 
 function _flyOffCard(card, direction) {
     _cardDragAnimating = true;
@@ -677,19 +655,7 @@ function _hidePeekCard() {
 }
 
 function updateCardCounter() {
-    const counter = document.getElementById('card-mode-counter');
-    const nav = document.getElementById('card-mode-nav');
-    if (counter) {
-        counter.textContent = `${_cardIndex + 1} / ${_cardList.length}`;
-    }
-    if (nav) {
-        nav.style.display = _cardModeActive ? 'flex' : 'none';
-    }
-    // Dim arrows at boundaries
-    const prevBtn = document.getElementById('card-prev');
-    const nextBtn = document.getElementById('card-next');
-    if (prevBtn) prevBtn.classList.toggle('disabled', _cardIndex === 0);
-    if (nextBtn) nextBtn.classList.toggle('disabled', _cardIndex >= _cardList.length - 1);
+    // no-op — kept for call sites; counter/nav removed
 }
 
 async function renderTodayForm(preserveScroll = false, direction = null) {
