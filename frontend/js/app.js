@@ -3894,88 +3894,14 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         }
     });
 
-    // Copy metrics as markdown table
+    // Copy metrics as markdown table (fetched from backend)
     document.getElementById('copy-metrics-btn')?.addEventListener('click', async () => {
         try {
-            let cats = [];
-            try { cats = await api.getCategories(); } catch(e) {}
-            const catById = {};
-            for (const c of cats) {
-                catById[c.id] = c;
-                for (const ch of (c.children || [])) { ch._parentName = c.name; catById[ch.id] = ch; }
-            }
-            const metricNameById = {};
-            for (const m of allMetrics) metricNameById[m.id] = m.name;
-
-            const esc = (s) => String(s || '').replace(/\|/g, '\\|');
-
-            const typeLabels = {
-                bool: 'Да/Нет', number: 'Число', scale: 'Шкала', enum: 'Варианты',
-                time: 'Время', duration: 'Длительность', computed: 'Формула',
-                integration: 'Интеграция', text: 'Заметка'
-            };
-
-            function getDetails(m) {
-                if (m.type === 'scale') {
-                    return `${m.scale_min ?? 1}–${m.scale_max ?? 10}, шаг ${m.scale_step ?? 1}`;
-                }
-                if (m.type === 'enum') {
-                    const opts = (m.enum_options || []).filter(o => o.enabled !== false).map(o => o.label).join(', ');
-                    return opts + (m.multi_select ? ' (мультивыбор)' : '');
-                }
-                if (m.type === 'computed' && m.formula) {
-                    const parts = m.formula.map(t => {
-                        if (t.type === 'metric') return metricNameById[t.id] || `#${t.id}`;
-                        if (t.type === 'op') return t.value;
-                        if (t.type === 'number') return String(t.value);
-                        if (t.type === 'lparen') return '(';
-                        if (t.type === 'rparen') return ')';
-                        return '';
-                    }).join(' ');
-                    const rtLabels = { float: 'число', int: 'целое', bool: 'да/нет', time: 'время', duration: 'длительность' };
-                    return `${parts} → ${rtLabels[m.result_type] || m.result_type || 'число'}`;
-                }
-                if (m.type === 'integration') {
-                    const prov = m.provider === 'activitywatch' ? 'ActivityWatch' : 'Todoist';
-                    let detail = `${prov}: ${m.metric_key || '?'}`;
-                    if (m.filter_name) detail += ` (${m.filter_name})`;
-                    else if (m.filter_query) detail += ` (${m.filter_query})`;
-                    else if (m.config_app_name) detail += ` (${m.config_app_name})`;
-                    return detail;
-                }
-                return '';
-            }
-
-            function getCatPath(m) {
-                const cid = m.category_id;
-                if (!cid) return '';
-                const cat = catById[cid];
-                if (!cat) return '';
-                return cat._parentName ? `${cat._parentName} / ${cat.name}` : cat.name;
-            }
-
-            function getSlots(m) {
-                return (m.slots || []).map(s => s.label).join(', ');
-            }
-
-            const sorted = [...allMetrics.filter(m => m.enabled), ...allMetrics.filter(m => !m.enabled)];
-
-            const lines = [
-                '| Иконка | Название | Тип | Категория | Слоты | Детали | Статус |',
-                '|---|---|---|---|---|---|---|'
-            ];
-            for (const m of sorted) {
-                const icon = esc(m.icon || '');
-                const name = esc(m.name);
-                const type = esc(typeLabels[m.type] || m.type);
-                const cat = esc(getCatPath(m));
-                const slots = esc(getSlots(m));
-                const details = esc(getDetails(m));
-                const status = m.enabled ? '' : '❌ архив';
-                lines.push(`| ${icon} | ${name} | ${type} | ${cat} | ${slots} | ${details} | ${status} |`);
-            }
-
-            const text = lines.join('\n');
+            const res = await fetch(`${api.API_BASE}/api/metrics/export/markdown`, {
+                headers: { 'Authorization': `Bearer ${api.getToken()}` },
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const text = await res.text();
             if (navigator.clipboard && navigator.clipboard.writeText) {
                 await navigator.clipboard.writeText(text);
             } else {
