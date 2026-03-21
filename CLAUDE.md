@@ -78,6 +78,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - New business function → unit test
 - Bug fix → **must** write a test reproducing the bug BEFORE fixing. Investigate why existing tests missed it — add missing cases
 - Changed logic → update affected tests
+- **Always run the full test suite** (`python -m pytest tests/ -v`), not just tests for changed files. Changes to enums, constants, shared helpers can break unrelated tests.
 
 ### Test-first thinking
 

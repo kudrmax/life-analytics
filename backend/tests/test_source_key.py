@@ -47,7 +47,7 @@ class TestAutoSourceType(unittest.TestCase):
         self.assertEqual(AutoSourceType.ROLLING_AVG.value, "rolling_avg")
 
     def test_total_member_count(self) -> None:
-        self.assertEqual(len(AutoSourceType), 10)
+        self.assertEqual(len(AutoSourceType), 12)
 
     def test_is_str_subclass(self) -> None:
         self.assertIsInstance(AutoSourceType.NONZERO, str)

@@ -16,9 +16,10 @@ from app.auth import get_current_user, get_privacy_mode
 from app.metric_helpers import mask_name, mask_icon, is_blocked, PRIVATE_MASK, PRIVATE_ICON
 from app.formula import convert_metric_value, evaluate_formula, get_referenced_metric_ids
 from app.correlation_blacklist import should_skip_pair
+from app.correlation_config import correlation_config
 from app.source_key import (
     AutoSourceType, SourceKey, AUTO_DISPLAY_NAMES, AUTO_ICONS, CALENDAR_OPTION_LABELS,
-    ROLLING_AVG_WINDOWS, STREAK_TYPES,
+    STREAK_TYPES,
 )
 from app.timing import timed_fetch, QueryTimer
 
@@ -68,13 +69,14 @@ def _determine_quality_issue(
     fisher_high_p: bool = False,
 ) -> str | None:
     # Priority order: first match wins. Reorder to change priority.
+    _qf = correlation_config.quality_filters
     checks = [
-        (n < 10,              QualityIssue.LOW_DATA_POINTS),
-        (small_binary_group,  QualityIssue.LOW_BINARY_DATA_POINTS),
-        (low_variance,        QualityIssue.INSUFFICIENT_VARIANCE),
-        (p_value >= 0.05,     QualityIssue.HIGH_P_VALUE),
-        (fisher_high_p,       QualityIssue.FISHER_EXACT_HIGH_P),
-        (wide_ci,             QualityIssue.WIDE_CI),
+        (n < 10 and _qf.low_data_points,              QualityIssue.LOW_DATA_POINTS),
+        (small_binary_group and _qf.low_binary_data_points,  QualityIssue.LOW_BINARY_DATA_POINTS),
+        (low_variance and _qf.insufficient_variance,        QualityIssue.INSUFFICIENT_VARIANCE),
+        (p_value >= 0.05 and _qf.high_p_value,     QualityIssue.HIGH_P_VALUE),
+        (fisher_high_p and _qf.fisher_exact_high_p,       QualityIssue.FISHER_EXACT_HIGH_P),
+        (wide_ci and _qf.wide_ci,             QualityIssue.WIDE_CI),
     ]
     return next((issue.value for cond, issue in checks if cond), None)
 
@@ -1198,77 +1200,91 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
 
             # Per-metric auto sources: "nonzero" for number/duration
             _SLOT_MINMAX_TYPES = {"number", "scale", "duration", "time"}
+            _auto = correlation_config.auto_sources
             for m in metrics_rows:
                 if m["type"] == "computed":
                     continue
                 mid = m["id"]
                 if mid not in aggregate_indices:
                     continue
-                if m["type"] in ("number", "duration"):
+                if _auto.nonzero and m["type"] in ("number", "duration"):
                     sources.append((SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=mid), "bool"))
                 if m["type"] in _SLOT_MINMAX_TYPES and mid in slot_source_indices_by_metric:
-                    sources.append((SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=mid), m["type"]))
-                    sources.append((SourceKey(auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=mid), m["type"]))
+                    if _auto.slot_max:
+                        sources.append((SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=mid), m["type"]))
+                    if _auto.slot_min:
+                        sources.append((SourceKey(auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=mid), m["type"]))
 
             # "note_count" for text metrics
-            for m in metrics_rows:
-                if m["type"] == "text":
-                    sources.append((SourceKey(auto_type=AutoSourceType.NOTE_COUNT, auto_parent_metric_id=m["id"]), "number"))
+            if _auto.note_count:
+                for m in metrics_rows:
+                    if m["type"] == "text":
+                        sources.append((SourceKey(auto_type=AutoSourceType.NOTE_COUNT, auto_parent_metric_id=m["id"]), "number"))
 
             # Rolling average auto sources for numeric-like metrics
             _ROLLING_AVG_ELIGIBLE_TYPES = {"number", "scale", "duration", "time"}
-            for m in metrics_rows:
-                mid = m["id"]
-                mt = m["type"]
-                if mt == "computed":
-                    cfg = computed_cfgs.get(mid)
-                    if not cfg:
-                        continue
-                    rt = cfg["result_type"] or "float"
-                    if rt in ("float", "int"):
-                        resolved = "number"
-                    elif rt in ("time", "duration"):
-                        resolved = rt
-                    else:
-                        continue
-                    for w in ROLLING_AVG_WINDOWS:
-                        sources.append((
-                            SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=mid, auto_option_id=w),
-                            resolved,
-                        ))
-                elif mt in _ROLLING_AVG_ELIGIBLE_TYPES and mid in aggregate_indices:
-                    for w in ROLLING_AVG_WINDOWS:
-                        sources.append((
-                            SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=mid, auto_option_id=w),
-                            mt,
-                        ))
+            if _auto.rolling_avg:
+                _ra_windows = _auto.rolling_avg_windows
+                for m in metrics_rows:
+                    mid = m["id"]
+                    mt = m["type"]
+                    if mt == "computed":
+                        cfg = computed_cfgs.get(mid)
+                        if not cfg:
+                            continue
+                        rt = cfg["result_type"] or "float"
+                        if rt in ("float", "int"):
+                            resolved = "number"
+                        elif rt in ("time", "duration"):
+                            resolved = rt
+                        else:
+                            continue
+                        for w in _ra_windows:
+                            sources.append((
+                                SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=mid, auto_option_id=w),
+                                resolved,
+                            ))
+                    elif mt in _ROLLING_AVG_ELIGIBLE_TYPES and mid in aggregate_indices:
+                        for w in _ra_windows:
+                            sources.append((
+                                SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=mid, auto_option_id=w),
+                                mt,
+                            ))
 
             # Streak auto sources: for every binary source (bool metrics + enum options)
-            for src_idx, (sk, mt) in list(enumerate(sources)):
-                if mt not in _BINARY_TYPES:
-                    continue
-                if sk.is_auto:
-                    continue
-                if sk.slot_id is not None:
-                    continue
-                parent_mid = sk.metric_id
-                opt_id = sk.enum_option_id
-                sources.append((
-                    SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=parent_mid, auto_option_id=opt_id),
-                    "number",
-                ))
-                sources.append((
-                    SourceKey(auto_type=AutoSourceType.STREAK_FALSE, auto_parent_metric_id=parent_mid, auto_option_id=opt_id),
-                    "number",
-                ))
+            if _auto.streak:
+                for src_idx, (sk, mt) in list(enumerate(sources)):
+                    if mt not in _BINARY_TYPES:
+                        continue
+                    if sk.is_auto:
+                        continue
+                    if sk.slot_id is not None:
+                        continue
+                    parent_mid = sk.metric_id
+                    opt_id = sk.enum_option_id
+                    sources.append((
+                        SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=parent_mid, auto_option_id=opt_id),
+                        "number",
+                    ))
+                    sources.append((
+                        SourceKey(auto_type=AutoSourceType.STREAK_FALSE, auto_parent_metric_id=parent_mid, auto_option_id=opt_id),
+                        "number",
+                    ))
 
             # Calendar auto sources (enum-like boolean per option)
+            _CALENDAR_ENABLED = {
+                AutoSourceType.DAY_OF_WEEK: _auto.day_of_week,
+                AutoSourceType.MONTH: _auto.month,
+                AutoSourceType.IS_WORKDAY: _auto.is_workday,
+            }
             for cal_type, options in CALENDAR_OPTION_LABELS.items():
+                if not _CALENDAR_ENABLED.get(cal_type, True):
+                    continue
                 for opt_id in options:
                     sources.append((SourceKey(auto_type=cal_type, auto_option_id=opt_id), "enum_bool"))
 
             # ActivityWatch screen time auto source
-            aw_rows = await conn.fetch(
+            aw_rows = [] if not _auto.aw_active else await conn.fetch(
                 """SELECT date, active_seconds FROM activitywatch_daily_summary
                    WHERE user_id = $1 AND date >= $2 AND date <= $3""",
                 user_id, start_date, end_date,

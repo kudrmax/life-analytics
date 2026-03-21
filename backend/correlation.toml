@@ -1,0 +1,79 @@
+# Correlation engine configuration
+# Env: LA_ENV=prod|local (default: local)
+# Local inherits from prod unless explicitly overridden.
+
+[prod.auto_sources.nonzero]
+enabled = true
+description = "Бинарный источник: значение > 0 (для number/duration метрик)"
+
+[prod.auto_sources.note_count]
+enabled = true
+description = "Количество заметок за день (для текстовых метрик)"
+
+[prod.auto_sources.slot_max]
+enabled = true
+description = "Максимум по слотам за день (для number/scale/duration/time)"
+
+[prod.auto_sources.slot_min]
+enabled = true
+description = "Минимум по слотам за день (для number/scale/duration/time)"
+
+[prod.auto_sources.rolling_avg]
+enabled = true
+windows = [3, 7, 14]
+description = "Скользящее среднее за N дней (для числовых метрик)"
+
+[prod.auto_sources.streak]
+enabled = true
+description = "Длина текущей серии подряд — да/нет (для бинарных источников). Генерирует streak_true и streak_false"
+
+[prod.auto_sources.day_of_week]
+enabled = true
+description = "День недели как enum-источник (Пн–Вс)"
+
+[prod.auto_sources.month]
+enabled = true
+description = "Месяц как enum-источник (Январь–Декабрь)"
+
+[prod.auto_sources.is_workday]
+enabled = true
+description = "Рабочий день / выходной как enum-источник"
+
+[prod.auto_sources.aw_active]
+enabled = true
+description = "Активное экранное время из ActivityWatch (часы)"
+
+[prod.quality_filters.low_data_points]
+enabled = true
+description = "Мало данных — менее 10 общих дней в паре"
+
+[prod.quality_filters.insufficient_variance]
+enabled = true
+description = "Недостаточная дисперсия — значение почти не меняется"
+
+[prod.quality_filters.low_binary_data_points]
+enabled = true
+description = "Мало наблюдений в группе бинарного источника (менее 5)"
+
+[prod.quality_filters.high_p_value]
+enabled = true
+description = "Статистически незначимо (p ≥ 0.05)"
+
+[prod.quality_filters.fisher_exact_high_p]
+enabled = true
+description = "Совпадение бинарных значений может быть случайным (точный тест Фишера, p ≥ 0.05)"
+
+[prod.quality_filters.wide_ci]
+enabled = true
+description = "Широкий 95% доверительный интервал (> 0.5)"
+
+# --- Local overrides (uncomment to override prod) ---
+# [local.auto_sources.streak]
+# enabled = false
+#
+# [local.auto_sources.rolling_avg]
+# enabled = true
+# windows = [7]
+#
+# [local.quality_filters.wide_ci]
+# enabled = false
