@@ -63,6 +63,10 @@ description = "Статистически незначимо (p ≥ 0.05)"
 enabled = true
 description = "Совпадение бинарных значений может быть случайным (точный тест Фишера, p ≥ 0.05)"
 
+[prod.quality_filters.low_streak_resets]
+enabled = true
+description = "Серия сбрасывалась слишком редко (< 2 раз за период)"
+
 [prod.quality_filters.wide_ci]
 enabled = true
 description = "Широкий 95% доверительный интервал (> 0.5)"

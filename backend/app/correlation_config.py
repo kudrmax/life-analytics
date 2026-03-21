@@ -33,6 +33,7 @@ class QualityFiltersConfig:
     high_p_value: bool = True
     fisher_exact_high_p: bool = True
     wide_ci: bool = True
+    low_streak_resets: bool = True
 
 
 @dataclass(frozen=True)

@@ -105,5 +105,41 @@ class TestComputeStreak(unittest.TestCase):
         self.assertEqual(set(result.keys()), {dates[1], dates[3]})
 
 
+class TestStreakZeroCount(unittest.TestCase):
+    """Tests for counting streak resets (zeros) — used by low_streak_resets quality filter."""
+
+    def _make_dates(self, start: str, count: int) -> list[str]:
+        from datetime import date, timedelta
+        d = date.fromisoformat(start)
+        return [str(d + timedelta(days=i)) for i in range(count)]
+
+    @staticmethod
+    def _count_zeros(data: dict[str, float]) -> int:
+        return sum(1 for v in data.values() if v == 0.0)
+
+    def test_monotonic_streak_has_no_zeros(self) -> None:
+        """[1, 2, 3, ..., 14] → count_zeros = 0 < 2."""
+        dates = self._make_dates("2026-01-01", 14)
+        parent = {d: 1.0 for d in dates}
+        streak = _compute_streak(parent, dates, target_value=True)
+        self.assertEqual(self._count_zeros(streak), 0)
+
+    def test_streak_with_one_reset(self) -> None:
+        """[T, T, F, T, T, T] → streak_true = [1, 2, 0, 1, 2, 3] → count_zeros = 1 < 2."""
+        dates = self._make_dates("2026-01-01", 6)
+        parent = {dates[0]: 1.0, dates[1]: 1.0, dates[2]: 0.0,
+                  dates[3]: 1.0, dates[4]: 1.0, dates[5]: 1.0}
+        streak = _compute_streak(parent, dates, target_value=True)
+        self.assertEqual(self._count_zeros(streak), 1)
+
+    def test_streak_with_two_resets(self) -> None:
+        """[T, F, T, T, F, T] → streak_true = [1, 0, 1, 2, 0, 1] → count_zeros = 2 ≥ 2, OK."""
+        dates = self._make_dates("2026-01-01", 6)
+        parent = {dates[0]: 1.0, dates[1]: 0.0, dates[2]: 1.0,
+                  dates[3]: 1.0, dates[4]: 0.0, dates[5]: 1.0}
+        streak = _compute_streak(parent, dates, target_value=True)
+        self.assertEqual(self._count_zeros(streak), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

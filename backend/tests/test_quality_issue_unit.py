@@ -119,6 +119,32 @@ class TestDetermineQualityIssue:
         result = _determine_quality_issue(n=30, p_value=0.01, fisher_high_p=False)
         assert result is None
 
+    def test_low_streak_resets_detected(self) -> None:
+        result = _determine_quality_issue(n=30, p_value=0.01, low_streak_resets=True)
+        assert result == "low_streak_resets"
+
+    def test_low_streak_resets_disabled(self) -> None:
+        """When filter is disabled via config, issue should not be returned."""
+        from unittest.mock import patch, PropertyMock
+        from app.correlation_config import QualityFiltersConfig
+        disabled = QualityFiltersConfig(low_streak_resets=False)
+        with patch("app.routers.analytics.correlation_config") as mock_cfg:
+            type(mock_cfg).quality_filters = PropertyMock(return_value=disabled)
+            result = _determine_quality_issue(n=30, p_value=0.01, low_streak_resets=True)
+        assert result is None
+
+    def test_low_streak_resets_priority_over_variance(self) -> None:
+        """low_streak_resets has higher priority than insufficient_variance."""
+        result = _determine_quality_issue(
+            n=30, p_value=0.01, low_variance=True, low_streak_resets=True,
+        )
+        assert result == "low_streak_resets"
+
+    def test_low_data_points_priority_over_streak(self) -> None:
+        """low_data_points has higher priority than low_streak_resets."""
+        result = _determine_quality_issue(n=5, p_value=0.01, low_streak_resets=True)
+        assert result == "low_data_points"
+
 
 # ---------------------------------------------------------------------------
 # _build_contingency_table

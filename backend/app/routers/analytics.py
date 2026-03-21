@@ -42,6 +42,7 @@ class QualityIssue(str, Enum):
     HIGH_P_VALUE = "high_p_value"
     FISHER_EXACT_HIGH_P = "fisher_exact_high_p"
     WIDE_CI = "wide_ci"
+    LOW_STREAK_RESETS = "low_streak_resets"
 
 
 QUALITY_ISSUE_LABELS: dict[str, str] = {
@@ -51,6 +52,7 @@ QUALITY_ISSUE_LABELS: dict[str, str] = {
     QualityIssue.HIGH_P_VALUE: "Статистически незначимо (p ≥ 0.05)",
     QualityIssue.FISHER_EXACT_HIGH_P: "Совпадение бинарных значений может быть случайным (точный тест Фишера, p ≥ 0.05)",
     QualityIssue.WIDE_CI: "Широкий доверительный интервал",
+    QualityIssue.LOW_STREAK_RESETS: "Серия сбрасывалась слишком редко (< 2 раз за период)",
 }
 
 QUALITY_SEVERITY: dict[str, str] = {
@@ -60,19 +62,21 @@ QUALITY_SEVERITY: dict[str, str] = {
     QualityIssue.HIGH_P_VALUE: "bad",
     QualityIssue.FISHER_EXACT_HIGH_P: "maybe",
     QualityIssue.WIDE_CI: "maybe",
+    QualityIssue.LOW_STREAK_RESETS: "bad",
 }
 
 
 def _determine_quality_issue(
     n: int, p_value: float, low_variance: bool = False,
     small_binary_group: bool = False, wide_ci: bool = False,
-    fisher_high_p: bool = False,
+    fisher_high_p: bool = False, low_streak_resets: bool = False,
 ) -> str | None:
     # Priority order: first match wins. Reorder to change priority.
     _qf = correlation_config.quality_filters
     checks = [
         (n < 10 and _qf.low_data_points,              QualityIssue.LOW_DATA_POINTS),
         (small_binary_group and _qf.low_binary_data_points,  QualityIssue.LOW_BINARY_DATA_POINTS),
+        (low_streak_resets and _qf.low_streak_resets,        QualityIssue.LOW_STREAK_RESETS),
         (low_variance and _qf.insufficient_variance,        QualityIssue.INSUFFICIENT_VARIANCE),
         (p_value >= 0.05 and _qf.high_p_value,     QualityIssue.HIGH_P_VALUE),
         (fisher_high_p and _qf.fisher_exact_high_p,       QualityIssue.FISHER_EXACT_HIGH_P),
@@ -1355,6 +1359,19 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     else:
                         source_data[idx] = {}
 
+            # Pre-compute low-streak-reset sources
+            _MIN_STREAK_RESETS = 2
+            low_streak_reset_sources: set[int] = set()
+            for idx, (sk, _) in enumerate(sources):
+                if sk.auto_type not in STREAK_TYPES:
+                    continue
+                data = source_data.get(idx)
+                if not data:
+                    continue
+                count_zeros = sum(1 for v in data.values() if v == 0.0)
+                if count_zeros < _MIN_STREAK_RESETS:
+                    low_streak_reset_sources.add(idx)
+
             # Pre-compute low-variance sources
             _BINARY_VAR_THRESHOLD = 0.10
             _ZERO_VAR_EPS = 1e-9
@@ -1419,7 +1436,8 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 ci = _confidence_interval(r, n)
                 wide_ci = ci is not None and (ci[1] - ci[0]) > 0.5
                 fisher_hp = both_binary and _fisher_exact_p(data_a, data_b) >= 0.05
-                qi = _determine_quality_issue(n, p_val, low_var, small_group, wide_ci, fisher_hp)
+                streak_reset = (idx_a in low_streak_reset_sources) or (idx_b in low_streak_reset_sources)
+                qi = _determine_quality_issue(n, p_val, low_var, small_group, wide_ci, fisher_hp, low_streak_resets=streak_reset)
                 return (
                     report_id,
                     sk_a.metric_id, sk_b.metric_id, sk_a.slot_id, sk_b.slot_id,
