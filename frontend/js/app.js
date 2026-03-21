@@ -3961,18 +3961,19 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             const sorted = [...allMetrics.filter(m => m.enabled), ...allMetrics.filter(m => !m.enabled)];
 
             const lines = [
-                '| Иконка | Название | Тип | Категория | Слоты | Детали | Статус |',
-                '|---|---|---|---|---|---|---|'
+                '| Иконка | Название | Описание | Тип | Категория | Слоты | Детали | Статус |',
+                '|---|---|---|---|---|---|---|---|'
             ];
             for (const m of sorted) {
                 const icon = esc(m.icon || '');
                 const name = esc(m.name);
+                const desc = esc(m.description || '');
                 const type = esc(typeLabels[m.type] || m.type);
                 const cat = esc(getCatPath(m));
                 const slots = esc(getSlots(m));
                 const details = esc(getDetails(m));
                 const status = m.enabled ? '' : '❌ архив';
-                lines.push(`| ${icon} | ${name} | ${type} | ${cat} | ${slots} | ${details} | ${status} |`);
+                lines.push(`| ${icon} | ${name} | ${desc} | ${type} | ${cat} | ${slots} | ${details} | ${status} |`);
             }
 
             const text = lines.join('\n');
