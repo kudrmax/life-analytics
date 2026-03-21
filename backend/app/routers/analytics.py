@@ -1359,18 +1359,11 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     else:
                         source_data[idx] = {}
 
-            # Pre-compute low-streak-reset sources
+            # Pre-compute which sources are streaks (for pair-level reset check)
             _MIN_STREAK_RESETS = 2
-            low_streak_reset_sources: set[int] = set()
-            for idx, (sk, _) in enumerate(sources):
-                if sk.auto_type not in STREAK_TYPES:
-                    continue
-                data = source_data.get(idx)
-                if not data:
-                    continue
-                count_zeros = sum(1 for v in data.values() if v == 0.0)
-                if count_zeros < _MIN_STREAK_RESETS:
-                    low_streak_reset_sources.add(idx)
+            streak_sources: set[int] = {
+                idx for idx, (sk, _) in enumerate(sources) if sk.auto_type in STREAK_TYPES
+            }
 
             # Pre-compute low-variance sources
             _BINARY_VAR_THRESHOLD = 0.10
@@ -1422,6 +1415,24 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                         return True
                 return False
 
+            def _check_low_streak_resets(
+                data_a: dict[str, float], data_b: dict[str, float],
+                idx_a: int, idx_b: int,
+            ) -> bool:
+                """Check if a streak source is monotonically non-decreasing on common dates."""
+                if idx_a not in streak_sources and idx_b not in streak_sources:
+                    return False
+                common = sorted(set(data_a) & set(data_b))
+                if len(common) < 2:
+                    return False
+                for idx, data in ((idx_a, data_a), (idx_b, data_b)):
+                    if idx not in streak_sources:
+                        continue
+                    vals = [data[d] for d in common]
+                    if all(vals[i] <= vals[i + 1] for i in range(len(vals) - 1)):
+                        return True
+                return False
+
             def _eval_pair(
                 data_a: dict[str, float], data_b: dict[str, float],
                 sk_a: SourceKey, sk_b: SourceKey, mt_a: str, mt_b: str,
@@ -1436,7 +1447,7 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 ci = _confidence_interval(r, n)
                 wide_ci = ci is not None and (ci[1] - ci[0]) > 0.5
                 fisher_hp = both_binary and _fisher_exact_p(data_a, data_b) >= 0.05
-                streak_reset = (idx_a in low_streak_reset_sources) or (idx_b in low_streak_reset_sources)
+                streak_reset = _check_low_streak_resets(data_a, data_b, idx_a, idx_b)
                 qi = _determine_quality_issue(n, p_val, low_var, small_group, wide_ci, fisher_hp, low_streak_resets=streak_reset)
                 return (
                     report_id,
