@@ -1113,11 +1113,14 @@ function renderMetricInput(m, metricNameById) {
             ? `<span class="metric-icon">${_escapeHtml(m.icon)}</span> ${_escapeHtml(m.name)}${slotBadge}`
             : `${_escapeHtml(m.name)}${slotBadge}`;
 
+        const splitDescHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
+
         return `<div class="metric-card${hicCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}" data-slot-id="${slot.slot_id}">
             <div class="metric-header">
                 <label class="metric-label">${labelHtml}</label>
                 ${clearBtn}
             </div>
+            ${splitDescHtml}
             <div class="metric-input">${input}</div>
         </div>`;
     }
@@ -6527,7 +6530,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         for (const slot of _selectedSlots) {
             const row = slotList?.querySelector(`.slot-label-row[data-slot-id="${slot.id}"]`);
             const catSelect = row?.querySelector('.slot-category-select');
-            const catId = catSelect && catSelect.value ? parseInt(catSelect.value) : slot.category_id;
+            const catId = catSelect && catSelect.value ? parseInt(catSelect.value) : null;
             configs.push({ slot_id: slot.id, category_id: catId || null });
         }
         return configs;
