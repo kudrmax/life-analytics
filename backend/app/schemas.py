@@ -82,6 +82,7 @@ class MetricDefinitionCreate(BaseModel):
     enum_options: list[str] | None = None
     multi_select: bool | None = None
     private: bool = False
+    hide_in_cards: bool = False
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None
@@ -104,6 +105,7 @@ class MetricDefinitionUpdate(BaseModel):
     enum_options: list[dict] | None = None  # [{id?: int, label: str}]
     multi_select: bool | None = None
     private: bool | None = None
+    hide_in_cards: bool | None = None
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None
@@ -137,6 +139,7 @@ class MetricDefinitionOut(BaseModel):
     enum_options: list[dict] | None = None  # [{id, label, sort_order, enabled}]
     multi_select: bool | None = None
     private: bool = False
+    hide_in_cards: bool = False
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None

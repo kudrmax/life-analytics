@@ -395,6 +395,9 @@ MIGRATIONS = [
     (15, "add_description_to_metrics", """
         ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS description TEXT DEFAULT NULL;
     """),
+    (16, "add_hide_in_cards_to_metrics", """
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS hide_in_cards BOOLEAN NOT NULL DEFAULT FALSE;
+    """),
 ]
 
 

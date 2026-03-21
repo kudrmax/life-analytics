@@ -272,6 +272,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             "scale_step": m["scale_step"],
             "scale_labels": json.loads(m["scale_labels"]) if m.get("scale_labels") is not None else None,
             "private": m_private,
+            "hide_in_cards": m.get("hide_in_cards", False),
             "entry": None,
             "slots": None,
             "formula": _parse_formula(m.get("formula")) or None,

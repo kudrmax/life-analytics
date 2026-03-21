@@ -326,6 +326,7 @@ async function renderToday(container) {
             </div>
         </div>
         <div id="metrics-form"></div>
+        <button id="card-skip-unfilled" class="card-skip-unfilled-btn" style="display:none">К незаполненной ▶</button>
         <div class="today-actions" style="display:none">
             <button class="btn-small" id="today-edit-metrics">
                 <i data-lucide="settings"></i> Редактировать метрики
@@ -468,6 +469,10 @@ async function renderToday(container) {
         segList.addEventListener('click', () => setCardMode(false));
         segCards.addEventListener('click', () => setCardMode(true));
     }
+    const skipBtn = document.getElementById('card-skip-unfilled');
+    if (skipBtn) {
+        skipBtn.addEventListener('click', () => { if (!_cardDragAnimating) _skipToNextUnfilled(); });
+    }
 
     await renderTodayForm();
 }
@@ -489,7 +494,7 @@ function setCardMode(active) {
     _updateSegmentedControl();
     if (_cardModeActive) {
         const form = document.getElementById('metrics-form');
-        if (form) _cardList = Array.from(form.querySelectorAll('.metric-card:not(.auto-metric)'));
+        if (form) _cardList = Array.from(form.querySelectorAll('.metric-card:not(.auto-metric):not(.hide-in-cards)'));
         _cardIndex = _findFirstUnfilledIndex();
         applyCardMode();
     } else {
@@ -512,7 +517,7 @@ function _findFirstUnfilledIndex() {
 function applyCardMode(findFirst = false) {
     const form = document.getElementById('metrics-form');
     if (!form || !_cardModeActive || window.innerWidth > 768) return;
-    _cardList = Array.from(form.querySelectorAll('.metric-card:not(.auto-metric)'));
+    _cardList = Array.from(form.querySelectorAll('.metric-card:not(.auto-metric):not(.hide-in-cards)'));
     if (_cardList.length === 0) return;
     if (findFirst) {
         _cardIndex = _findFirstUnfilledIndex();
@@ -537,6 +542,8 @@ function exitCardMode() {
     window.scrollTo(0, scrollY);
     _cardList.forEach(c => c.classList.remove('card-mode-visible'));
     _cardList = [];
+    const skipBtn = document.getElementById('card-skip-unfilled');
+    if (skipBtn) skipBtn.style.display = 'none';
 }
 
 
@@ -670,7 +677,31 @@ function _hidePeekCard() {
 }
 
 function updateCardCounter() {
-    // no-op — kept for call sites; counter/nav removed
+    const btn = document.getElementById('card-skip-unfilled');
+    if (!btn) return;
+    if (!_cardModeActive || _cardList.length === 0) {
+        btn.style.display = 'none';
+        return;
+    }
+    // Show button if there's at least one unfilled card not at current position
+    const hasUnfilled = _cardList.some((c, i) => i !== _cardIndex && !c.classList.contains('filled'));
+    btn.style.display = hasUnfilled ? '' : 'none';
+}
+
+function _skipToNextUnfilled() {
+    if (_cardDragAnimating || _cardList.length === 0) return;
+    const len = _cardList.length;
+    for (let offset = 1; offset < len; offset++) {
+        const idx = (_cardIndex + offset) % len;
+        if (!_cardList[idx].classList.contains('filled')) {
+            const direction = 1;
+            _cardList[_cardIndex].classList.remove('card-mode-visible');
+            _cardIndex = idx;
+            _slideInCard(_cardList[_cardIndex], direction);
+            updateCardCounter();
+            return;
+        }
+    }
 }
 
 async function renderTodayForm(preserveScroll = false, direction = null) {
@@ -931,9 +962,10 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
 }
 
 function renderMetricInput(m, metricNameById) {
+    const hicCls = m.hide_in_cards ? ' hide-in-cards' : '';
     // Private metric blocked in privacy mode
     if (isMetricBlocked(m)) {
-        return `<div class="metric-card metric-private">
+        return `<div class="metric-card${hicCls} metric-private">
             <div class="metric-header"><label class="metric-label">${metricLabelHtml(m)}</label></div>
             <div class="metric-private-hint">Сначала отключите приватный режим</div>
         </div>`;
@@ -952,7 +984,7 @@ function renderMetricInput(m, metricNameById) {
             }
             if (dv) currentValHtml = `<div class="condition-current-value">Текущее значение: ${dv}</div>`;
         }
-        return `<div class="metric-card metric-condition-blocked" data-metric-id="${m.metric_id}" data-metric-type="${m.type}">
+        return `<div class="metric-card${hicCls} metric-condition-blocked" data-metric-id="${m.metric_id}" data-metric-type="${m.type}">
             <div class="metric-header"><label class="metric-label">${metricLabelHtml(m)}</label></div>
             <div class="condition-hint">Чтобы заполнить, сначала укажите «${depName}»</div>
             ${currentValHtml}
@@ -980,7 +1012,7 @@ function renderMetricInput(m, metricNameById) {
         let configHint = '';
         if (m.filter_name) configHint = `<span class="integration-hint">Фильтр: ${m.filter_name}</span>`;
         else if (m.filter_query) configHint = `<span class="integration-hint">Запрос: ${m.filter_query}</span>`;
-        return `<div class="metric-card ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="integration" data-provider="${m.provider || ''}" data-entry-id="${entryId || ''}">
+        return `<div class="metric-card${hicCls} ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="integration" data-provider="${m.provider || ''}" data-entry-id="${entryId || ''}">
             <div class="metric-header">
                 <label class="metric-label">${metricLabelHtml(m)}</label>
                 ${clearBtn}
@@ -1010,7 +1042,7 @@ function renderMetricInput(m, metricNameById) {
                 </div>
             </div>`;
         }
-        return `<div class="metric-card ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="text">
+        return `<div class="metric-card${hicCls} ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="text">
             <div class="metric-header">
                 <label class="metric-label">${metricLabelHtml(m)}</label>
                 ${noteCount > 0 ? `<span class="note-count-badge">${noteCount}</span>` : ''}
@@ -1041,7 +1073,7 @@ function renderMetricInput(m, metricNameById) {
         } else {
             displayVal = typeof val === 'number' ? val.toFixed(2) : String(val);
         }
-        return `<div class="metric-card ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="computed">
+        return `<div class="metric-card${hicCls} ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="computed">
             <div class="metric-header">
                 <label class="metric-label">${metricLabelHtml(m)}</label>
                 <span class="computed-badge">формула</span>
@@ -1081,7 +1113,7 @@ function renderMetricInput(m, metricNameById) {
             ? `<span class="metric-icon">${_escapeHtml(m.icon)}</span> ${_escapeHtml(m.name)}${slotBadge}`
             : `${_escapeHtml(m.name)}${slotBadge}`;
 
-        return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}" data-slot-id="${slot.slot_id}">
+        return `<div class="metric-card${hicCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}" data-slot-id="${slot.slot_id}">
             <div class="metric-header">
                 <label class="metric-label">${labelHtml}</label>
                 ${clearBtn}
@@ -1129,7 +1161,7 @@ function renderMetricInput(m, metricNameById) {
         slotsHtml += '</div>';
 
         const multiDescHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
-        return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="">
+        return `<div class="metric-card${hicCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="">
             <div class="metric-header">
                 <label class="metric-label">${metricLabelHtml(m)}</label>
             </div>
@@ -1159,7 +1191,7 @@ function renderMetricInput(m, metricNameById) {
         : '';
 
     const descHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
-    return `<div class="metric-card ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}">
+    return `<div class="metric-card${hicCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}">
         <div class="metric-header">
             <label class="metric-label">${metricLabelHtml(m)}</label>
             ${clearBtn}
@@ -5499,6 +5531,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     <input type="checkbox" id="nm-private" ${existingMetric?.private ? 'checked' : ''}> 🔒 Приватная метрика
                 </label>
 
+                <label class="enum-multi-select-label">
+                    <input type="checkbox" id="nm-hide-in-cards" ${existingMetric?.hide_in_cards ? 'checked' : ''}> 📋 Не показывать в карточках
+                </label>
+
                 ${isEdit ? `
                 <div class="form-section" id="nm-type-section">
                     ${typeHintHtml(currentType)}
@@ -6542,9 +6578,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             if (isEdit) {
                 const icon = existingMetric.type === 'integration' ? undefined : document.getElementById('nm-icon').value;
                 const privateCb = document.getElementById('nm-private');
+                const hideInCardsCb = document.getElementById('nm-hide-in-cards');
                 const descriptionEl = document.getElementById('nm-description');
                 const hasSlotConfigs = slotConfigs.length >= 2;
-                const updateData = { name, category_id: hasSlotConfigs ? 0 : (categoryIdVal ? parseInt(categoryIdVal) : 0), private: privateCb ? privateCb.checked : false, description: descriptionEl ? descriptionEl.value.trim() || null : null };
+                const updateData = { name, category_id: hasSlotConfigs ? 0 : (categoryIdVal ? parseInt(categoryIdVal) : 0), private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, description: descriptionEl ? descriptionEl.value.trim() || null : null };
                 if (icon !== undefined) updateData.icon = icon;
                 if (existingMetric.type === 'computed') {
                     if (formulaTokens.length === 0) {
@@ -6613,8 +6650,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
 
                 const icon = document.getElementById('nm-icon').value;
                 const privateCb = document.getElementById('nm-private');
+                const hideInCardsCb = document.getElementById('nm-hide-in-cards');
                 const descriptionEl = document.getElementById('nm-description');
-                const createData = { name, icon, type: selectedType, private: privateCb ? privateCb.checked : false, description: descriptionEl ? descriptionEl.value.trim() || null : null };
+                const createData = { name, icon, type: selectedType, private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, description: descriptionEl ? descriptionEl.value.trim() || null : null };
                 if (categoryIdVal) createData.category_id = parseInt(categoryIdVal);
 
                 if (selectedType === 'scale') {

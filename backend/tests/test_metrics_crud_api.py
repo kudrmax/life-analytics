@@ -1489,3 +1489,77 @@ class TestUpdateDescription:
         found = [m for m in resp.json()["metrics"] if m["name"] == "DailyDesc"]
         assert len(found) == 1
         assert found[0]["description"] == "Daily test"
+
+
+# ── hide_in_cards ────────────────────────────────────────────────────
+
+
+class TestHideInCardsCreate:
+    """POST /api/metrics — hide_in_cards flag."""
+
+    async def test_create_with_hide_in_cards_true(self, client: AsyncClient, user_a: dict) -> None:
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Hidden Card", "type": "bool", "hide_in_cards": True},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["hide_in_cards"] is True
+
+    async def test_create_default_hide_in_cards_false(self, client: AsyncClient, user_a: dict) -> None:
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Visible Card", "type": "bool"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["hide_in_cards"] is False
+
+
+class TestHideInCardsUpdate:
+    """PATCH /api/metrics/{id} — hide_in_cards flag."""
+
+    async def test_update_hide_in_cards(self, client: AsyncClient, user_a: dict) -> None:
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "ToggleCard", "type": "bool"},
+            headers=auth_headers(user_a["token"]),
+        )
+        metric_id = resp.json()["id"]
+
+        resp = await client.patch(
+            f"/api/metrics/{metric_id}",
+            json={"hide_in_cards": True},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["hide_in_cards"] is True
+
+        resp = await client.patch(
+            f"/api/metrics/{metric_id}",
+            json={"hide_in_cards": False},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["hide_in_cards"] is False
+
+
+class TestHideInCardsDaily:
+    """GET /api/daily/{date} — hide_in_cards in response."""
+
+    async def test_daily_includes_hide_in_cards(self, client: AsyncClient, user_a: dict) -> None:
+        from datetime import date
+
+        await client.post(
+            "/api/metrics",
+            json={"name": "DailyHidden", "type": "bool", "hide_in_cards": True},
+            headers=auth_headers(user_a["token"]),
+        )
+        today = date.today().isoformat()
+        resp = await client.get(f"/api/daily/{today}", headers=auth_headers(user_a["token"]))
+        assert resp.status_code == 200
+        found = [m for m in resp.json()["metrics"] if m["name"] == "DailyHidden"]
+        assert len(found) == 1
+        assert found[0]["hide_in_cards"] is True

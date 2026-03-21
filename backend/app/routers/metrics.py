@@ -262,8 +262,8 @@ async def create_metric(
 
     metric_id = await db.fetchval(
         """INSERT INTO metric_definitions
-           (user_id, slug, name, category_id, icon, type, enabled, sort_order, private, description)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           (user_id, slug, name, category_id, icon, type, enabled, sort_order, private, description, hide_in_cards)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
            RETURNING id""",
         current_user["id"],
         slug,
@@ -275,6 +275,7 @@ async def create_metric(
         data.sort_order,
         data.private,
         data.description,
+        data.hide_in_cards,
     )
 
     if data.type == MetricType.integration:
@@ -442,6 +443,8 @@ async def update_metric(
         updates["sort_order"] = data.sort_order
     if data.private is not None:
         updates["private"] = data.private
+    if data.hide_in_cards is not None:
+        updates["hide_in_cards"] = data.hide_in_cards
     if data.description is not None:
         updates["description"] = data.description or None
 

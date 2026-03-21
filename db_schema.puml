@@ -51,6 +51,7 @@ entity "metric_definitions" as md {
     * sort_order : INTEGER
     * icon : VARCHAR(600)
     * private : BOOLEAN
+    * hide_in_cards : BOOLEAN
     description : TEXT
     * created_at : TIMESTAMPTZ
     --
