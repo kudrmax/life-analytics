@@ -6,6 +6,7 @@ from app.source_key import (
     AUTO_DISPLAY_NAMES,
     AUTO_ICONS,
     CALENDAR_OPTION_LABELS,
+    ROLLING_AVG_WINDOWS,
     AutoSourceType,
     SourceKey,
     _CALENDAR_TYPES,
@@ -42,8 +43,11 @@ class TestAutoSourceType(unittest.TestCase):
     def test_slot_min_value(self) -> None:
         self.assertEqual(AutoSourceType.SLOT_MIN.value, "slot_min")
 
+    def test_rolling_avg_value(self) -> None:
+        self.assertEqual(AutoSourceType.ROLLING_AVG.value, "rolling_avg")
+
     def test_total_member_count(self) -> None:
-        self.assertEqual(len(AutoSourceType), 9)
+        self.assertEqual(len(AutoSourceType), 10)
 
     def test_is_str_subclass(self) -> None:
         self.assertIsInstance(AutoSourceType.NONZERO, str)
@@ -218,6 +222,30 @@ class TestSourceKeyToStr(unittest.TestCase):
         )
         self.assertEqual(sk.to_str(), "auto:slot_min:metric:42")
 
+    def test_auto_rolling_avg_with_parent_and_window(self) -> None:
+        sk = SourceKey(
+            auto_type=AutoSourceType.ROLLING_AVG,
+            auto_parent_metric_id=5,
+            auto_option_id=7,
+        )
+        self.assertEqual(sk.to_str(), "auto:rolling_avg:metric:5:opt:7")
+
+    def test_auto_rolling_avg_window_3(self) -> None:
+        sk = SourceKey(
+            auto_type=AutoSourceType.ROLLING_AVG,
+            auto_parent_metric_id=10,
+            auto_option_id=3,
+        )
+        self.assertEqual(sk.to_str(), "auto:rolling_avg:metric:10:opt:3")
+
+    def test_auto_rolling_avg_window_14(self) -> None:
+        sk = SourceKey(
+            auto_type=AutoSourceType.ROLLING_AVG,
+            auto_parent_metric_id=1,
+            auto_option_id=14,
+        )
+        self.assertEqual(sk.to_str(), "auto:rolling_avg:metric:1:opt:14")
+
 
 class TestSourceKeyParse(unittest.TestCase):
     """Tests for SourceKey.parse() deserialization."""
@@ -292,6 +320,24 @@ class TestSourceKeyParse(unittest.TestCase):
         self.assertEqual(sk.auto_parent_metric_id, 42)
         self.assertIsNone(sk.auto_option_id)
 
+    def test_parse_auto_rolling_avg(self) -> None:
+        sk = SourceKey.parse("auto:rolling_avg:metric:5:opt:7")
+        self.assertEqual(sk.auto_type, AutoSourceType.ROLLING_AVG)
+        self.assertEqual(sk.auto_parent_metric_id, 5)
+        self.assertEqual(sk.auto_option_id, 7)
+
+    def test_parse_auto_rolling_avg_window_3(self) -> None:
+        sk = SourceKey.parse("auto:rolling_avg:metric:10:opt:3")
+        self.assertEqual(sk.auto_type, AutoSourceType.ROLLING_AVG)
+        self.assertEqual(sk.auto_parent_metric_id, 10)
+        self.assertEqual(sk.auto_option_id, 3)
+
+    def test_parse_auto_rolling_avg_window_14(self) -> None:
+        sk = SourceKey.parse("auto:rolling_avg:metric:1:opt:14")
+        self.assertEqual(sk.auto_type, AutoSourceType.ROLLING_AVG)
+        self.assertEqual(sk.auto_parent_metric_id, 1)
+        self.assertEqual(sk.auto_option_id, 14)
+
     def test_parse_old_week_number_backward_compat(self) -> None:
         sk = SourceKey.parse("auto:week_number")
         self.assertEqual(sk.auto_type, AutoSourceType.WEEK_NUMBER)
@@ -350,6 +396,37 @@ class TestSourceKeyRoundTrip(unittest.TestCase):
         self._assert_round_trip(
             SourceKey(auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=10)
         )
+
+    def test_round_trip_auto_rolling_avg_window_3(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=5, auto_option_id=3)
+        )
+
+    def test_round_trip_auto_rolling_avg_window_7(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=5, auto_option_id=7)
+        )
+
+    def test_round_trip_auto_rolling_avg_window_14(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=5, auto_option_id=14)
+        )
+
+
+class TestRollingAvgWindows(unittest.TestCase):
+    """Tests for ROLLING_AVG_WINDOWS constant."""
+
+    def test_is_list_of_ints(self) -> None:
+        self.assertIsInstance(ROLLING_AVG_WINDOWS, list)
+        for w in ROLLING_AVG_WINDOWS:
+            self.assertIsInstance(w, int)
+
+    def test_default_values(self) -> None:
+        self.assertEqual(ROLLING_AVG_WINDOWS, [3, 7, 14])
+
+    def test_all_positive(self) -> None:
+        for w in ROLLING_AVG_WINDOWS:
+            self.assertGreater(w, 0)
 
 
 class TestSourceKeyIsAuto(unittest.TestCase):

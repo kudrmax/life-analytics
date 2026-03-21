@@ -9,6 +9,7 @@ SourceKey encodes which data source a correlation side refers to:
 - auto:note_count:metric:{id}                    — note count for text metric
 - auto:slot_max:metric:{id}                      — max across slots for a metric
 - auto:slot_min:metric:{id}                      — min across slots for a metric
+- auto:rolling_avg:metric:{id}:opt:{window}      — rolling average (window = days)
 - auto:day_of_week:opt:{N}                       — calendar (enum-like boolean per option)
 - auto:month:opt:{N}
 - auto:is_workday:opt:{N}
@@ -28,9 +29,13 @@ class AutoSourceType(str, Enum):
     MONTH = "month"
     SLOT_MAX = "slot_max"
     SLOT_MIN = "slot_min"
+    ROLLING_AVG = "rolling_avg"
     WEEK_NUMBER = "week_number"  # kept for backward compat parsing old reports
     AW_ACTIVE = "aw_active"
     IS_WORKDAY = "is_workday"
+
+
+ROLLING_AVG_WINDOWS: list[int] = [3, 7, 14]
 
 
 AUTO_DISPLAY_NAMES: dict[AutoSourceType, str] = {

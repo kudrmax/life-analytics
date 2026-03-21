@@ -18,6 +18,7 @@ from app.formula import convert_metric_value, evaluate_formula, get_referenced_m
 from app.correlation_blacklist import should_skip_pair
 from app.source_key import (
     AutoSourceType, SourceKey, AUTO_DISPLAY_NAMES, AUTO_ICONS, CALENDAR_OPTION_LABELS,
+    ROLLING_AVG_WINDOWS,
 )
 from app.timing import timed_fetch, QueryTimer
 
@@ -118,6 +119,26 @@ def _compute_slot_agg(
         vals = [source_data[si][d] for si in slot_indices if d in source_data.get(si, {})]
         if vals:
             result[d] = agg_fn(vals)
+    return result
+
+
+def _compute_rolling_avg(parent_data: dict[str, float], window: int) -> dict[str, float]:
+    """Compute rolling average over a window of days.
+
+    Only produces values for dates where the full window of data is present.
+    """
+    if not parent_data:
+        return {}
+    result: dict[str, float] = {}
+    for d_str in sorted(parent_data):
+        d = date_type.fromisoformat(d_str)
+        vals: list[float] = []
+        for offset in range(window):
+            wd = str(d - timedelta(days=offset))
+            if wd in parent_data:
+                vals.append(parent_data[wd])
+        if len(vals) == window:
+            result[d_str] = sum(vals) / window
     return result
 
 
@@ -1138,6 +1159,12 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 if sk.slot_id is None and mt != "computed" and sk.metric_id is not None:
                     aggregate_indices[sk.metric_id] = i
 
+            # Find computed metric source indices (for rolling avg)
+            computed_source_indices: dict[int, int] = {}
+            for i, (sk, mt) in enumerate(sources):
+                if mt == "computed" and sk.metric_id is not None and not sk.is_auto:
+                    computed_source_indices[sk.metric_id] = i
+
             # Map metric_id -> list of slot source indices (for slot_max/slot_min)
             slot_source_indices_by_metric: dict[int, list[int]] = defaultdict(list)
             for i, (sk, mt) in enumerate(sources):
@@ -1162,6 +1189,34 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
             for m in metrics_rows:
                 if m["type"] == "text":
                     sources.append((SourceKey(auto_type=AutoSourceType.NOTE_COUNT, auto_parent_metric_id=m["id"]), "number"))
+
+            # Rolling average auto sources for numeric-like metrics
+            _ROLLING_AVG_ELIGIBLE_TYPES = {"number", "scale", "duration", "time"}
+            for m in metrics_rows:
+                mid = m["id"]
+                mt = m["type"]
+                if mt == "computed":
+                    cfg = computed_cfgs.get(mid)
+                    if not cfg:
+                        continue
+                    rt = cfg["result_type"] or "float"
+                    if rt in ("float", "int"):
+                        resolved = "number"
+                    elif rt in ("time", "duration"):
+                        resolved = rt
+                    else:
+                        continue
+                    for w in ROLLING_AVG_WINDOWS:
+                        sources.append((
+                            SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=mid, auto_option_id=w),
+                            resolved,
+                        ))
+                elif mt in _ROLLING_AVG_ELIGIBLE_TYPES and mid in aggregate_indices:
+                    for w in ROLLING_AVG_WINDOWS:
+                        sources.append((
+                            SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=mid, auto_option_id=w),
+                            mt,
+                        ))
 
             # Calendar auto sources (enum-like boolean per option)
             for cal_type, options in CALENDAR_OPTION_LABELS.items():
@@ -1212,6 +1267,13 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     slot_indices = slot_source_indices_by_metric.get(sk.auto_parent_metric_id, [])
                     agg_fn = max if sk.auto_type == AutoSourceType.SLOT_MAX else min
                     source_data[idx] = _compute_slot_agg(slot_indices, source_data, agg_fn) if slot_indices else {}
+                elif sk.auto_type == AutoSourceType.ROLLING_AVG and sk.auto_option_id is not None:
+                    parent_idx = aggregate_indices.get(sk.auto_parent_metric_id)
+                    if parent_idx is None:
+                        parent_idx = computed_source_indices.get(sk.auto_parent_metric_id)
+                    source_data[idx] = _compute_rolling_avg(
+                        source_data.get(parent_idx, {}), sk.auto_option_id,
+                    ) if parent_idx is not None else {}
 
             # Pre-compute low-variance sources
             _BINARY_VAR_THRESHOLD = 0.10
@@ -1285,6 +1347,11 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     r, n, lag, p_val, qi,
                 )
 
+            # Pre-compute rolling avg source indices (lag=0 only for these)
+            rolling_avg_sources: set[int] = {
+                idx for idx, (sk, _) in enumerate(sources) if sk.auto_type == AutoSourceType.ROLLING_AVG
+            }
+
             # Compute all pairs (i < j, different metrics only)
             pairs_to_insert = []
             for i in range(len(sources)):
@@ -1299,11 +1366,13 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     data_j = source_data.get(j, {})
                     both_binary = mt_i in _BINARY_TYPES and mt_j in _BINARY_TYPES
 
-                    for data_a, data_b, sk_a, sk_b, mt_a, mt_b, idx_a, idx_b, lag in (
-                        (data_i, data_j, sk_i, sk_j, mt_i, mt_j, i, j, 0),
-                        (data_i, _shift_dates(data_j, 1), sk_i, sk_j, mt_i, mt_j, i, j, 1),
-                        (data_j, _shift_dates(data_i, 1), sk_j, sk_i, mt_j, mt_i, j, i, 1),
-                    ):
+                    has_rolling = i in rolling_avg_sources or j in rolling_avg_sources
+                    lag_variations: list[tuple] = [(data_i, data_j, sk_i, sk_j, mt_i, mt_j, i, j, 0)]
+                    if not has_rolling:
+                        lag_variations.append((data_i, _shift_dates(data_j, 1), sk_i, sk_j, mt_i, mt_j, i, j, 1))
+                        lag_variations.append((data_j, _shift_dates(data_i, 1), sk_j, sk_i, mt_j, mt_i, j, i, 1))
+
+                    for data_a, data_b, sk_a, sk_b, mt_a, mt_b, idx_a, idx_b, lag in lag_variations:
                         row = _eval_pair(data_a, data_b, sk_a, sk_b, mt_a, mt_b, idx_a, idx_b, lag, low_var, both_binary)
                         if row:
                             pairs_to_insert.append(row)
@@ -1441,6 +1510,8 @@ def _build_display_label(
             return f"{parent_metric_name}: максимум"
         if sk.auto_type == AutoSourceType.SLOT_MIN and parent_metric_name:
             return f"{parent_metric_name}: минимум"
+        if sk.auto_type == AutoSourceType.ROLLING_AVG and sk.auto_option_id and parent_metric_name:
+            return f"{parent_metric_name}: среднее {sk.auto_option_id} дн."
         return "Авто-источник"
     # Bool aggregate with slots — annotate "(хоть раз)"
     if metric_type == "bool" and has_slots and sk.slot_id is None:
@@ -1767,6 +1838,32 @@ async def _reconstruct_source_data(
                 if vals:
                     result[d] = agg_fn(vals)
             return result
+        if sk.auto_type == AutoSourceType.ROLLING_AVG and sk.auto_parent_metric_id is not None and sk.auto_option_id is not None:
+            parent = await conn.fetchrow(
+                "SELECT id, type FROM metric_definitions WHERE id = $1",
+                sk.auto_parent_metric_id,
+            )
+            if not parent:
+                return {}
+            parent_type = parent["type"]
+            if parent_type == "computed":
+                cfg = await conn.fetchrow(
+                    "SELECT formula, result_type FROM computed_config WHERE metric_id = $1",
+                    sk.auto_parent_metric_id,
+                )
+                if not cfg or not cfg["formula"]:
+                    return {}
+                formula = _parse_formula(cfg["formula"])
+                rt = cfg["result_type"] or "float"
+                ref_ids = get_referenced_metric_ids(formula)
+                parent_data = await _values_by_date_for_computed(
+                    conn, formula, rt, ref_ids, start_date, end_date, user_id,
+                )
+            else:
+                parent_data = await _values_by_date_for_slot(
+                    conn, parent["id"], parent_type, start_date, end_date, user_id,
+                )
+            return _compute_rolling_avg(parent_data, sk.auto_option_id)
         return {}
 
     # Enum option source

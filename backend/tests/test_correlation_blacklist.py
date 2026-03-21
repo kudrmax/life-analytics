@@ -149,6 +149,48 @@ class TestShouldSkipPair(unittest.TestCase):
         b = SourceKey(auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=2)
         self.assertFalse(should_skip_pair(a, b))
 
+    # ---- ROLLING_AVG blacklist coverage ----
+
+    def test_rolling_avg_with_parent_metric_skipped(self) -> None:
+        auto = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=3, auto_option_id=7)
+        regular = SourceKey(metric_id=3)
+        self.assertTrue(should_skip_pair(auto, regular))
+
+    def test_rolling_avg_with_parent_metric_reversed_skipped(self) -> None:
+        regular = SourceKey(metric_id=3)
+        auto = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=3, auto_option_id=7)
+        self.assertTrue(should_skip_pair(regular, auto))
+
+    def test_two_rolling_avg_same_parent_different_windows_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=5, auto_option_id=3)
+        b = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=5, auto_option_id=7)
+        self.assertTrue(should_skip_pair(a, b))
+
+    def test_rolling_avg_and_nonzero_same_parent_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=5, auto_option_id=7)
+        b = SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=5)
+        self.assertTrue(should_skip_pair(a, b))
+
+    def test_rolling_avg_and_slot_max_same_parent_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=5, auto_option_id=7)
+        b = SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=5)
+        self.assertTrue(should_skip_pair(a, b))
+
+    def test_rolling_avg_different_parents_not_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=1, auto_option_id=7)
+        b = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=2, auto_option_id=7)
+        self.assertFalse(should_skip_pair(a, b))
+
+    def test_rolling_avg_with_unrelated_metric_not_skipped(self) -> None:
+        auto = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=3, auto_option_id=7)
+        regular = SourceKey(metric_id=99)
+        self.assertFalse(should_skip_pair(auto, regular))
+
+    def test_rolling_avg_and_calendar_not_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=3, auto_option_id=7)
+        b = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=1)
+        self.assertFalse(should_skip_pair(a, b))
+
 
 if __name__ == "__main__":
     unittest.main()
