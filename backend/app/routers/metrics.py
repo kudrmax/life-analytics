@@ -2,6 +2,7 @@ import json
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 
 from app.database import get_db
 from app.schemas import (
@@ -37,6 +38,164 @@ async def _unique_slug(db, user_id: int, base_slug: str) -> str:
         slug = f"{base_slug}_{suffix}"
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
+
+
+_TYPE_LABELS: dict[str, str] = {
+    "bool": "Да/Нет",
+    "number": "Число",
+    "scale": "Шкала",
+    "enum": "Варианты",
+    "time": "Время",
+    "duration": "Длительность",
+    "computed": "Формула",
+    "integration": "Интеграция",
+    "text": "Заметка",
+}
+
+_RESULT_TYPE_LABELS: dict[str, str] = {
+    "float": "число",
+    "int": "целое",
+    "bool": "да/нет",
+    "time": "время",
+    "duration": "длительность",
+}
+
+
+def _esc_md(s: str) -> str:
+    """Escape pipe characters for Markdown table cells."""
+    return s.replace("|", "\\|")
+
+
+def _get_details(m: MetricDefinitionOut, metric_name_by_id: dict[int, str]) -> str:
+    if m.type == "scale":
+        smin = m.scale_min if m.scale_min is not None else 1
+        smax = m.scale_max if m.scale_max is not None else 10
+        sstep = m.scale_step if m.scale_step is not None else 1
+        return f"{smin}–{smax}, шаг {sstep}"
+    if m.type == "enum":
+        opts = ", ".join(
+            o["label"] for o in (m.enum_options or []) if o.get("enabled") is not False
+        )
+        return opts + (" (мультивыбор)" if m.multi_select else "")
+    if m.type == "computed" and m.formula:
+        parts: list[str] = []
+        for t in m.formula:
+            tt = t.get("type", "") if isinstance(t, dict) else ""
+            if tt == "metric":
+                parts.append(metric_name_by_id.get(t["id"], f"#{t['id']}"))
+            elif tt == "op":
+                parts.append(t["value"])
+            elif tt == "number":
+                parts.append(str(t["value"]))
+            elif tt == "lparen":
+                parts.append("(")
+            elif tt == "rparen":
+                parts.append(")")
+        rt = _RESULT_TYPE_LABELS.get(m.result_type or "", m.result_type or "число")
+        return f"{' '.join(parts)} → {rt}"
+    if m.type == "integration":
+        prov = "ActivityWatch" if m.provider == "activitywatch" else "Todoist"
+        detail = f"{prov}: {m.metric_key or '?'}"
+        if m.filter_name:
+            detail += f" ({m.filter_name})"
+        elif m.filter_query:
+            detail += f" ({m.filter_query})"
+        elif m.config_app_name:
+            detail += f" ({m.config_app_name})"
+        return detail
+    return ""
+
+
+def _get_cat_path(category_id: int | None, cat_by_id: dict[int, dict]) -> str:
+    if not category_id:
+        return ""
+    cat = cat_by_id.get(category_id)
+    if not cat:
+        return ""
+    parent_name = cat.get("_parent_name")
+    return f"{parent_name} / {cat['name']}" if parent_name else cat["name"]
+
+
+def _get_slots(m: MetricDefinitionOut) -> str:
+    return ", ".join(s.label for s in (m.slots or []))
+
+
+@router.get("/export/markdown")
+async def export_metrics_markdown(
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> Response:
+    """Return all user metrics as a Markdown table."""
+    # Load metrics (same query as list_metrics, no privacy masking for export)
+    query = """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step, sc.labels AS scale_labels,
+                      cc.formula, cc.result_type,
+                      ic.provider, ic.metric_key, ic.value_type,
+                      ifc.filter_name, iqc.filter_query,
+                      icatc.activitywatch_category_id, iapc.app_name AS config_app_name,
+                      ec.multi_select,
+                      mcond.depends_on_metric_id AS condition_metric_id,
+                      mcond.condition_type, mcond.condition_value
+               FROM metric_definitions md
+               LEFT JOIN scale_config sc ON sc.metric_id = md.id
+               LEFT JOIN computed_config cc ON cc.metric_id = md.id
+               LEFT JOIN integration_config ic ON ic.metric_id = md.id
+               LEFT JOIN integration_filter_config ifc ON ifc.metric_id = md.id
+               LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
+               LEFT JOIN integration_category_config icatc ON icatc.metric_id = md.id
+               LEFT JOIN integration_app_config iapc ON iapc.metric_id = md.id
+               LEFT JOIN enum_config ec ON ec.metric_id = md.id
+               LEFT JOIN metric_condition mcond ON mcond.metric_id = md.id
+               WHERE md.user_id = $1
+               ORDER BY md.sort_order, md.id"""
+    rows = await db.fetch(query, current_user["id"])
+    metric_ids = [r["id"] for r in rows]
+    slots_map = await get_metric_slots(db, metric_ids) if metric_ids else {}
+    enum_opts_map = await get_enum_options(db, metric_ids) if metric_ids else {}
+
+    metrics = [
+        await build_metric_out(r, slots_map.get(r["id"]), enum_opts_map.get(r["id"]), False)
+        for r in rows
+    ]
+
+    # Load categories for path building
+    cat_rows = await db.fetch(
+        """SELECT id, name, parent_id, sort_order
+           FROM categories WHERE user_id = $1
+           ORDER BY sort_order, id""",
+        current_user["id"],
+    )
+    cat_by_id: dict[int, dict] = {}
+    for cr in cat_rows:
+        cat_by_id[cr["id"]] = {"name": cr["name"], "parent_id": cr["parent_id"]}
+    # Add parent names for children
+    for cid, cat in cat_by_id.items():
+        pid = cat["parent_id"]
+        if pid and pid in cat_by_id:
+            cat["_parent_name"] = cat_by_id[pid]["name"]
+
+    # Build name lookup for computed formula rendering
+    metric_name_by_id = {m.id: m.name for m in metrics}
+
+    # Sort: enabled first, then disabled
+    sorted_metrics = [m for m in metrics if m.enabled] + [m for m in metrics if not m.enabled]
+
+    lines = [
+        "| Иконка | Название | Описание | Тип | Категория | Слоты | Детали | Статус |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for m in sorted_metrics:
+        icon = _esc_md(m.icon or "")
+        name = _esc_md(m.name)
+        desc = _esc_md(m.description or "")
+        type_label = _esc_md(_TYPE_LABELS.get(m.type, m.type))
+        cat = _esc_md(_get_cat_path(m.category_id, cat_by_id))
+        slots = _esc_md(_get_slots(m))
+        details = _esc_md(_get_details(m, metric_name_by_id))
+        status = "" if m.enabled else "❌ архив"
+        lines.append(f"| {icon} | {name} | {desc} | {type_label} | {cat} | {slots} | {details} | {status} |")
+
+    text = "\n".join(lines)
+    return Response(content=text, media_type="text/markdown")
 
 
 @router.get("", response_model=list[MetricDefinitionOut])
