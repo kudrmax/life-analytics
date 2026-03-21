@@ -18,7 +18,7 @@ from app.formula import convert_metric_value, evaluate_formula, get_referenced_m
 from app.correlation_blacklist import should_skip_pair
 from app.source_key import (
     AutoSourceType, SourceKey, AUTO_DISPLAY_NAMES, AUTO_ICONS, CALENDAR_OPTION_LABELS,
-    ROLLING_AVG_WINDOWS,
+    ROLLING_AVG_WINDOWS, STREAK_TYPES,
 )
 from app.timing import timed_fetch, QueryTimer
 
@@ -139,6 +139,31 @@ def _compute_rolling_avg(parent_data: dict[str, float], window: int) -> dict[str
                 vals.append(parent_data[wd])
         if len(vals) == window:
             result[d_str] = sum(vals) / window
+    return result
+
+
+def _compute_streak(
+    parent_data: dict[str, float],
+    all_dates: list[str],
+    target_value: bool,
+) -> dict[str, float]:
+    """Compute streak length for consecutive days with target_value (True=1.0 or False=0.0).
+
+    Missing days (no entry) reset the streak to 0.
+    Returns only dates where parent has data.
+    """
+    target = 1.0 if target_value else 0.0
+    result: dict[str, float] = {}
+    streak = 0
+    for d in all_dates:
+        if d not in parent_data:
+            streak = 0
+            continue
+        if parent_data[d] == target:
+            streak += 1
+        else:
+            streak = 0
+        result[d] = float(streak)
     return result
 
 
@@ -1218,6 +1243,25 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                             mt,
                         ))
 
+            # Streak auto sources: for every binary source (bool metrics + enum options)
+            for src_idx, (sk, mt) in list(enumerate(sources)):
+                if mt not in _BINARY_TYPES:
+                    continue
+                if sk.is_auto:
+                    continue
+                if sk.slot_id is not None:
+                    continue
+                parent_mid = sk.metric_id
+                opt_id = sk.enum_option_id
+                sources.append((
+                    SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=parent_mid, auto_option_id=opt_id),
+                    "number",
+                ))
+                sources.append((
+                    SourceKey(auto_type=AutoSourceType.STREAK_FALSE, auto_parent_metric_id=parent_mid, auto_option_id=opt_id),
+                    "number",
+                ))
+
             # Calendar auto sources (enum-like boolean per option)
             for cal_type, options in CALENDAR_OPTION_LABELS.items():
                 for opt_id in options:
@@ -1274,6 +1318,26 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                     source_data[idx] = _compute_rolling_avg(
                         source_data.get(parent_idx, {}), sk.auto_option_id,
                     ) if parent_idx is not None else {}
+                elif sk.auto_type in STREAK_TYPES:
+                    if sk.auto_option_id is not None:
+                        # Enum option streak — find parent enum option source
+                        parent_idx = None
+                        for pi, (psk, pmt) in enumerate(sources):
+                            if (psk.metric_id == sk.auto_parent_metric_id
+                                    and psk.enum_option_id == sk.auto_option_id
+                                    and psk.slot_id is None
+                                    and not psk.is_auto):
+                                parent_idx = pi
+                                break
+                    else:
+                        # Bool metric streak — find aggregate
+                        parent_idx = aggregate_indices.get(sk.auto_parent_metric_id)
+                    if parent_idx is not None:
+                        parent_data = source_data.get(parent_idx, {})
+                        target = sk.auto_type == AutoSourceType.STREAK_TRUE
+                        source_data[idx] = _compute_streak(parent_data, all_dates, target)
+                    else:
+                        source_data[idx] = {}
 
             # Pre-compute low-variance sources
             _BINARY_VAR_THRESHOLD = 0.10
@@ -1512,6 +1576,10 @@ def _build_display_label(
             return f"{parent_metric_name}: минимум"
         if sk.auto_type == AutoSourceType.ROLLING_AVG and sk.auto_option_id and parent_metric_name:
             return f"{parent_metric_name}: среднее {sk.auto_option_id} дн."
+        if sk.auto_type == AutoSourceType.STREAK_TRUE and parent_metric_name:
+            return f"{parent_metric_name}: серия подряд (да)"
+        if sk.auto_type == AutoSourceType.STREAK_FALSE and parent_metric_name:
+            return f"{parent_metric_name}: серия подряд (нет)"
         return "Авто-источник"
     # Bool aggregate with slots — annotate "(хоть раз)"
     if metric_type == "bool" and has_slots and sk.slot_id is None:
@@ -1578,6 +1646,8 @@ def _format_pair(
         if blocked:
             return ""
         if sk.auto_option_id is not None:
+            if sk.auto_type in STREAK_TYPES:
+                return enum_labels.get(sk.auto_option_id, "")
             return CALENDAR_OPTION_LABELS.get(sk.auto_type, {}).get(sk.auto_option_id, "")  # type: ignore[arg-type]
         if sk.enum_option_id:
             return enum_labels.get(sk.enum_option_id, "")
@@ -1703,6 +1773,8 @@ async def get_correlation_pairs(
                 all_parent_metric_ids.add(sk.auto_parent_metric_id)
             if sk.enum_option_id is not None:
                 all_enum_option_ids.add(sk.enum_option_id)
+            if sk.auto_type in STREAK_TYPES and sk.auto_option_id is not None:
+                all_enum_option_ids.add(sk.auto_option_id)
 
     # Batch: metric icons and names by id (for auto parents + all referenced metrics)
     metric_icons_by_id: dict[int, str] = {}
@@ -1864,6 +1936,23 @@ async def _reconstruct_source_data(
                     conn, parent["id"], parent_type, start_date, end_date, user_id,
                 )
             return _compute_rolling_avg(parent_data, sk.auto_option_id)
+        if sk.auto_type in STREAK_TYPES and sk.auto_parent_metric_id is not None:
+            parent = await conn.fetchrow(
+                "SELECT id, type FROM metric_definitions WHERE id = $1",
+                sk.auto_parent_metric_id,
+            )
+            if not parent:
+                return {}
+            if sk.auto_option_id is not None:
+                parent_data = await _values_by_date_for_enum_option(
+                    conn, parent["id"], sk.auto_option_id, start_date, end_date, user_id,
+                )
+            else:
+                parent_data = await _values_by_date_for_slot(
+                    conn, parent["id"], parent["type"], start_date, end_date, user_id,
+                )
+            target = sk.auto_type == AutoSourceType.STREAK_TRUE
+            return _compute_streak(parent_data, all_dates, target)
         return {}
 
     # Enum option source

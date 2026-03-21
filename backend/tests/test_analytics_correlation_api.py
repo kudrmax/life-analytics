@@ -1925,3 +1925,58 @@ class TestFisherExactQualityIssue:
                 f"for pair {p['label_a']} vs {p['label_b']}"
             )
             assert p["quality_severity"] == "maybe"
+
+
+# ---------------------------------------------------------------------------
+# Streak sources
+# ---------------------------------------------------------------------------
+
+class TestStreakSources:
+    """Verify streak auto-sources appear in correlation report for bool metrics."""
+
+    async def test_streak_labels_present_in_report(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """A bool metric with 15 entries should produce streak_true and streak_false pairs."""
+        token = user_a["token"]
+        bool_m = await create_metric(
+            client, token, name="StreakTest", metric_type="bool", slug="streak_test_bool",
+        )
+        # Pattern: T F T T T F F T T T T T F T T
+        pattern = [True, False, True, True, True, False, False, True, True, True, True, True, False, True, True]
+        for day, val in enumerate(pattern, start=1):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, bool_m["id"], date_str, val)
+
+        # Also create a number metric so there are pairs to correlate with
+        num_m = await create_metric(
+            client, token, name="StreakNum", metric_type="number", slug="streak_test_num",
+        )
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, num_m["id"], date_str, day * 10)
+
+        await _start_report(client, token, start="2026-01-01", end="2026-01-15")
+        data = await _wait_for_report_done(client, token)
+        assert data.get("report") is not None, "Report did not finish"
+        report_id = data["report"]["id"]
+
+        # Fetch all pairs (large limit to get them all)
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            params={"limit": 500},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        pairs_data = resp.json()
+        all_labels = set()
+        for p in pairs_data["pairs"]:
+            all_labels.add(p["label_a"])
+            all_labels.add(p["label_b"])
+
+        assert "StreakTest: серия подряд (да)" in all_labels, (
+            f"Expected streak_true label, got labels: {all_labels}"
+        )
+        assert "StreakTest: серия подряд (нет)" in all_labels, (
+            f"Expected streak_false label, got labels: {all_labels}"
+        )

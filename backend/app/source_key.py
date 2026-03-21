@@ -10,6 +10,10 @@ SourceKey encodes which data source a correlation side refers to:
 - auto:slot_max:metric:{id}                      — max across slots for a metric
 - auto:slot_min:metric:{id}                      — min across slots for a metric
 - auto:rolling_avg:metric:{id}:opt:{window}      — rolling average (window = days)
+- auto:streak_true:metric:{id}                   — streak (consecutive True days)
+- auto:streak_false:metric:{id}                  — streak (consecutive False days)
+- auto:streak_true:metric:{id}:opt:{oid}         — streak for enum option (True)
+- auto:streak_false:metric:{id}:opt:{oid}        — streak for enum option (False)
 - auto:day_of_week:opt:{N}                       — calendar (enum-like boolean per option)
 - auto:month:opt:{N}
 - auto:is_workday:opt:{N}
@@ -30,12 +34,19 @@ class AutoSourceType(str, Enum):
     SLOT_MAX = "slot_max"
     SLOT_MIN = "slot_min"
     ROLLING_AVG = "rolling_avg"
+    STREAK_TRUE = "streak_true"
+    STREAK_FALSE = "streak_false"
     WEEK_NUMBER = "week_number"  # kept for backward compat parsing old reports
     AW_ACTIVE = "aw_active"
     IS_WORKDAY = "is_workday"
 
 
 ROLLING_AVG_WINDOWS: list[int] = [3, 7, 14]
+
+STREAK_TYPES: frozenset[AutoSourceType] = frozenset({
+    AutoSourceType.STREAK_TRUE,
+    AutoSourceType.STREAK_FALSE,
+})
 
 
 AUTO_DISPLAY_NAMES: dict[AutoSourceType, str] = {

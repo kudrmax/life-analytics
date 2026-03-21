@@ -1,6 +1,6 @@
 """Blacklist for correlation pairs that should be skipped."""
 
-from app.source_key import AutoSourceType, SourceKey, _CALENDAR_TYPES
+from app.source_key import AutoSourceType, SourceKey, _CALENDAR_TYPES, STREAK_TYPES
 
 
 def should_skip_pair(
@@ -47,6 +47,9 @@ def should_skip_pair(
     # One auto, one regular — skip if regular is auto's parent
     auto, regular = (a, b) if a.is_auto else (b, a)
     if auto.auto_parent_metric_id is not None and regular.metric_id == auto.auto_parent_metric_id:
+        # Streak for specific enum option → only skip if same option
+        if auto.auto_type in STREAK_TYPES and auto.auto_option_id is not None:
+            return regular.enum_option_id == auto.auto_option_id
         return True
 
     return False

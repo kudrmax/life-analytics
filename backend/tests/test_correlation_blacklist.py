@@ -191,6 +191,55 @@ class TestShouldSkipPair(unittest.TestCase):
         b = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=1)
         self.assertFalse(should_skip_pair(a, b))
 
+    # ---- STREAK blacklist coverage ----
+
+    def test_streak_true_with_parent_metric_skipped(self) -> None:
+        auto = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=3)
+        regular = SourceKey(metric_id=3)
+        self.assertTrue(should_skip_pair(auto, regular))
+
+    def test_streak_false_with_parent_metric_skipped(self) -> None:
+        auto = SourceKey(auto_type=AutoSourceType.STREAK_FALSE, auto_parent_metric_id=3)
+        regular = SourceKey(metric_id=3)
+        self.assertTrue(should_skip_pair(auto, regular))
+
+    def test_streak_true_and_streak_false_same_parent_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=5)
+        b = SourceKey(auto_type=AutoSourceType.STREAK_FALSE, auto_parent_metric_id=5)
+        self.assertTrue(should_skip_pair(a, b))
+
+    def test_streak_and_nonzero_same_parent_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=5)
+        b = SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=5)
+        self.assertTrue(should_skip_pair(a, b))
+
+    def test_streak_with_unrelated_metric_not_skipped(self) -> None:
+        auto = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=3)
+        regular = SourceKey(metric_id=99)
+        self.assertFalse(should_skip_pair(auto, regular))
+
+    def test_streak_true_and_streak_false_different_parents_not_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=1)
+        b = SourceKey(auto_type=AutoSourceType.STREAK_FALSE, auto_parent_metric_id=2)
+        self.assertFalse(should_skip_pair(a, b))
+
+    def test_streak_enum_option_same_option_skipped(self) -> None:
+        """streak(metric=5, opt=100) vs enum_option(metric=5, opt=100) → skip."""
+        auto = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=5, auto_option_id=100)
+        regular = SourceKey(metric_id=5, enum_option_id=100)
+        self.assertTrue(should_skip_pair(auto, regular))
+
+    def test_streak_enum_option_different_option_not_skipped(self) -> None:
+        """streak(metric=5, opt=100) vs enum_option(metric=5, opt=200) → not skip."""
+        auto = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=5, auto_option_id=100)
+        regular = SourceKey(metric_id=5, enum_option_id=200)
+        self.assertFalse(should_skip_pair(auto, regular))
+
+    def test_streak_and_calendar_not_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=3)
+        b = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=1)
+        self.assertFalse(should_skip_pair(a, b))
+
 
 if __name__ == "__main__":
     unittest.main()
