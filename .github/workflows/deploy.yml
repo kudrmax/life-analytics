@@ -50,8 +50,18 @@ jobs:
         working-directory: backend
         run: python -m pytest -v
 
+  lint-js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check JS syntax
+        run: |
+          for f in frontend/js/*.js; do
+            node --check "$f"
+          done
+
   deploy:
-    needs: [changes, test]
+    needs: [changes, test, lint-js]
     if: always() && !failure() && !cancelled()
     runs-on: ubuntu-latest
     steps:

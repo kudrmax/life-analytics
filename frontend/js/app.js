@@ -3131,6 +3131,7 @@ function renderCorrPairChart(pairId, data) {
 // ─── Charts ───
 let trendChartInstances = [];
 let detailChartInstance = null;
+let distributionChartInstance = null;
 
 function formatShortDate(dateStr) {
     const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
@@ -3376,6 +3377,11 @@ async function renderMetricDetail(container, metricId) {
         </div>
         <div class="detail-chart-container"><canvas id="detail-chart"></canvas></div>
         <div id="detail-stats"></div>
+        <div id="detail-distribution" style="display:none">
+            <h3>Распределение</h3>
+            <div class="detail-chart-container"><canvas id="distribution-chart"></canvas></div>
+            <div id="detail-distribution-stats"></div>
+        </div>
         ${metric.type === 'text' ? '<div id="detail-notes-table"></div>' : ''}
     `;
 
@@ -3396,17 +3402,33 @@ async function renderMetricDetail(container, metricId) {
     await loadMetricDetail(metricId, metric, start, end);
 }
 
+const _DISTRIBUTABLE_TYPES = new Set(['number', 'duration', 'scale', 'time', 'int', 'float']);
+
 async function loadMetricDetail(metricId, metric, start, end) {
     const _t0 = performance.now();
-    const [trend, stats] = await Promise.all([
+    const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type === 'text' ? 'number' : metric.type;
+    const isDistributable = metric.type !== 'text' && _DISTRIBUTABLE_TYPES.has(mt);
+
+    const promises = [
         api.getTrends(metricId, start, end),
         api.getMetricStats(metricId, start, end),
-    ]);
+    ];
+    if (isDistributable) {
+        promises.push(api.getMetricDistribution(metricId, start, end));
+    }
+    const results = await Promise.all(promises);
+    const trend = results[0];
+    const stats = results[1];
+    const distribution = isDistributable ? results[2] : null;
 
-    // Destroy previous chart
+    // Destroy previous charts
     if (detailChartInstance) {
         detailChartInstance.destroy();
         detailChartInstance = null;
+    }
+    if (distributionChartInstance) {
+        distributionChartInstance.destroy();
+        distributionChartInstance = null;
     }
 
     const canvas = document.getElementById('detail-chart');
@@ -3417,8 +3439,6 @@ async function loadMetricDetail(metricId, metric, start, end) {
         green: style.getPropertyValue('--green').trim(),
         red: style.getPropertyValue('--red').trim(),
     };
-
-    const mt = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type === 'text' ? 'number' : metric.type;
 
     if (mt === 'enum' && trend.option_series) {
         // Enum: stacked bar chart with per-option datasets
@@ -3452,6 +3472,9 @@ async function loadMetricDetail(metricId, metric, start, end) {
     // Render stats (use result_type for computed)
     const statsType = metric.type === 'computed' ? (metric.result_type || 'float') : metric.type === 'integration' ? (metric.value_type || 'number') : metric.type;
     renderDetailStats(stats, statsType);
+
+    // Render distribution chart
+    renderDistribution(distribution);
 
     // Notes table for text metrics
     if (metric.type === 'text') {
@@ -3503,6 +3526,117 @@ async function loadMetricDetail(metricId, metric, start, end) {
     }
 
     console.debug(`[render] metric-detail(${metricId})  ${(performance.now() - _t0).toFixed(0)}ms`);
+}
+
+function renderDistribution(data) {
+    const container = document.getElementById('detail-distribution');
+    if (!container) return;
+
+    if (!data || data.not_applicable || data.insufficient_data || data.blocked || data.error) {
+        container.style.display = 'none';
+        return;
+    }
+
+    container.style.display = '';
+    const canvas = document.getElementById('distribution-chart');
+    if (!canvas) return;
+
+    const style = getComputedStyle(document.documentElement);
+    const accent = style.getPropertyValue('--accent').trim();
+    const bins = data.bins || [];
+    const kdeX = data.kde_x || [];
+    const kdeY = data.kde_y || [];
+
+    // Map KDE values to bin centers via linear interpolation
+    const kdeMapped = [];
+    if (kdeX.length > 1 && bins.length > 0) {
+        const binWidth = bins.length > 1 ? bins[0].bin_end - bins[0].bin_start : 1;
+        for (const bin of bins) {
+            const center = (bin.bin_start + bin.bin_end) / 2;
+            // Find surrounding KDE points and interpolate
+            let density = 0;
+            if (center <= kdeX[0]) {
+                density = kdeY[0];
+            } else if (center >= kdeX[kdeX.length - 1]) {
+                density = kdeY[kdeY.length - 1];
+            } else {
+                for (let i = 0; i < kdeX.length - 1; i++) {
+                    if (kdeX[i] <= center && center <= kdeX[i + 1]) {
+                        const t = (center - kdeX[i]) / (kdeX[i + 1] - kdeX[i]);
+                        density = kdeY[i] + t * (kdeY[i + 1] - kdeY[i]);
+                        break;
+                    }
+                }
+            }
+            // Scale KDE density to match histogram counts: count ≈ density * n * binWidth
+            kdeMapped.push(density * data.n * binWidth);
+        }
+    }
+
+    const datasets = [
+        {
+            type: 'bar',
+            label: 'Частота',
+            data: bins.map(b => b.count),
+            backgroundColor: accent + '66',
+            borderColor: accent,
+            borderWidth: 1,
+            borderRadius: 3,
+            yAxisID: 'y',
+        },
+    ];
+
+    if (kdeMapped.length > 0) {
+        datasets.push({
+            type: 'line',
+            label: 'Плотность',
+            data: kdeMapped,
+            borderColor: accent,
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.4,
+            fill: false,
+            yAxisID: 'y',
+        });
+    }
+
+    distributionChartInstance = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: bins.map(b => b.label),
+            datasets,
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+            },
+            scales: {
+                x: {
+                    ticks: { maxRotation: 45, font: { size: 11 } },
+                    grid: { display: false },
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: { stepSize: 1 },
+                    title: { display: true, text: 'Количество', font: { size: 12 } },
+                },
+            },
+        },
+    });
+
+    // Render distribution stats
+    const statsEl = document.getElementById('detail-distribution-stats');
+    if (statsEl && data.stats) {
+        const s = data.stats;
+        let cards = '';
+        if (s.variance != null) cards += `<div class="stat-card"><div class="stat-value">${Number(s.variance).toFixed(2)}</div><div class="stat-label">Дисперсия</div></div>`;
+        if (s.std_dev != null) cards += `<div class="stat-card"><div class="stat-value">${Number(s.std_dev).toFixed(2)}</div><div class="stat-label">Ст. отклонение</div></div>`;
+        if (s.skewness != null) cards += `<div class="stat-card"><div class="stat-value">${Number(s.skewness).toFixed(2)}</div><div class="stat-label">Асимметрия</div></div>`;
+        if (s.kurtosis != null) cards += `<div class="stat-card"><div class="stat-value">${Number(s.kurtosis).toFixed(2)}</div><div class="stat-label">Эксцесс</div></div>`;
+        statsEl.innerHTML = cards ? `<div class="detail-stats-grid">${cards}</div>` : '';
+    }
 }
 
 function renderDetailStats(stats, metricType) {

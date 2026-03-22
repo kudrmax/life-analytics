@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up build-up down logs logs-backend test test-user migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db
+.PHONY: help up build-up down logs logs-backend test test-user migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db lint-js
 
 .DEFAULT_GOAL := help
 
@@ -18,7 +18,8 @@ help: ## Показать эту справку
 	@echo "    make logs-backend    Логи только backend"
 	@echo "    make status          Статус контейнеров"
 	@echo ""
-	@echo "  Тесты и данные:"
+	@echo "  Lint и тесты:"
+	@echo "    make lint-js         Проверить синтаксис JS файлов"
 	@echo "    make test            Запустить тесты (нужен PostgreSQL)"
 	@echo "    make test-user       Создать тестового пользователя с данными за 15 дней"
 	@echo ""
@@ -41,12 +42,26 @@ help: ## Показать эту справку
 	@echo "    make backup-restore  Восстановить БД из бэкапа (FILE=path.sql.gz)"
 	@echo ""
 
+# ─── Lint ───
+
+lint-js: ## Проверить синтаксис JS файлов
+	@if command -v node >/dev/null 2>&1; then \
+		echo "Checking JS syntax..."; \
+		fail=0; \
+		for f in frontend/js/*.js; do \
+			node --check "$$f" || fail=1; \
+		done; \
+		[ $$fail -eq 0 ] && echo "JS syntax OK" || exit 1; \
+	else \
+		echo "Warning: node not found, skipping JS syntax check"; \
+	fi
+
 # ─── Docker ───
 
-up:
+up: lint-js
 	docker compose up -d
 
-build-up:
+build-up: lint-js
 	docker compose up -d --build
 
 down:
@@ -72,7 +87,7 @@ test-user: ## Создать тестового пользователя с да
 
 # ─── Production ───
 
-update:
+update: lint-js
 	@echo "Updating Life Analytics..."
 	git pull origin master
 	docker compose up -d --build

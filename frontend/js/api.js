@@ -185,6 +185,9 @@ const api = {
     getMetricStats(metricId, start, end) {
         return this.request('GET', `/api/analytics/metric-stats?metric_id=${metricId}&start=${start}&end=${end}`);
     },
+    getMetricDistribution(metricId, start, end) {
+        return this.request('GET', `/api/analytics/metric-distribution?metric_id=${metricId}&start=${start}&end=${end}`);
+    },
 
     // Correlation reports
     createCorrelationReport(start, end) {

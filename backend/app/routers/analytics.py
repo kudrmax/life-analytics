@@ -1034,6 +1034,96 @@ def _build_display_stats(stats: dict, mt: str) -> list[dict]:
     return rows
 
 
+# ─── Distribution ─────────────────────────────────────────────
+
+_DISTRIBUTABLE_TYPES = {"number", "duration", "scale", "time", "int", "float"}
+
+
+@router.get("/metric-distribution")
+async def metric_distribution(
+    metric_id: int = Query(...),
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    privacy_mode: bool = Depends(get_privacy_mode),
+):
+    from app.distribution import compute_distribution, format_value
+
+    qt = QueryTimer(f"distribution/{metric_id}")
+    metric = await db.fetchrow(
+        """SELECT md.*, cc.formula, cc.result_type, ic.value_type AS ic_value_type
+           FROM metric_definitions md
+           LEFT JOIN computed_config cc ON cc.metric_id = md.id
+           LEFT JOIN integration_config ic ON ic.metric_id = md.id
+           WHERE md.id = $1 AND md.user_id = $2""",
+        metric_id, current_user["id"],
+    )
+    if not metric:
+        return {"error": "Metric not found"}
+    if is_blocked(metric.get("private", False), privacy_mode):
+        return {"blocked": True}
+    qt.mark("metric")
+
+    mt = metric["type"]
+    if mt == "integration":
+        mt = metric["ic_value_type"] or "number"
+    if mt == "computed":
+        mt = metric.get("result_type") or "float"
+
+    if mt not in _DISTRIBUTABLE_TYPES:
+        return {"not_applicable": True, "reason": f"Type '{mt}' does not support distribution"}
+
+    start_date = date_type.fromisoformat(start)
+    end_date = date_type.fromisoformat(end)
+
+    if metric["type"] == "computed":
+        formula = _parse_formula(metric.get("formula"))
+        ref_ids = get_referenced_metric_ids(formula)
+        rt = metric.get("result_type") or "float"
+        aggregated = await _values_by_date_for_computed(
+            db, formula, rt, ref_ids, start_date, end_date, current_user["id"],
+        )
+    else:
+        aggregated = await _values_by_date_for_slot(
+            db, metric_id, mt, start_date, end_date, current_user["id"],
+        )
+    qt.mark("values")
+
+    values = list(aggregated.values())
+    if len(values) < 3:
+        qt.log()
+        return {"insufficient_data": True, "n": len(values)}
+
+    result = compute_distribution(values, mt)
+    qt.log()
+
+    return {
+        "metric_id": metric_id,
+        "metric_type": mt,
+        "n": result.n,
+        "bins": [
+            {
+                "bin_start": b.bin_start,
+                "bin_end": b.bin_end,
+                "count": b.count,
+                "label": b.label,
+            }
+            for b in result.bins
+        ],
+        "kde_x": result.kde_x,
+        "kde_y": result.kde_y,
+        "stats": {
+            "mean": result.stats.mean,
+            "median": result.stats.median,
+            "variance": result.stats.variance,
+            "std_dev": result.stats.std_dev,
+            "skewness": result.stats.skewness,
+            "kurtosis": result.stats.kurtosis,
+        },
+    }
+
+
 class CorrelationReportRequest(BaseModel):
     start: str
     end: str
