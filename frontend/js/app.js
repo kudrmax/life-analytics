@@ -3628,14 +3628,11 @@ function renderDistribution(data) {
 
     // Render distribution stats
     const statsEl = document.getElementById('detail-distribution-stats');
-    if (statsEl && data.stats) {
-        const s = data.stats;
-        let cards = '';
-        if (s.variance != null) cards += `<div class="stat-card"><div class="stat-value">${Number(s.variance).toFixed(2)}</div><div class="stat-label">Дисперсия</div></div>`;
-        if (s.std_dev != null) cards += `<div class="stat-card"><div class="stat-value">${Number(s.std_dev).toFixed(2)}</div><div class="stat-label">Ст. отклонение</div></div>`;
-        if (s.skewness != null) cards += `<div class="stat-card"><div class="stat-value">${Number(s.skewness).toFixed(2)}</div><div class="stat-label">Асимметрия</div></div>`;
-        if (s.kurtosis != null) cards += `<div class="stat-card"><div class="stat-value">${Number(s.kurtosis).toFixed(2)}</div><div class="stat-label">Эксцесс</div></div>`;
-        statsEl.innerHTML = cards ? `<div class="detail-stats-grid">${cards}</div>` : '';
+    if (statsEl && data.display_stats && data.display_stats.length > 0) {
+        const cards = data.display_stats.map(ds =>
+            `<div class="stat-card"><div class="stat-value">${ds.value}</div><div class="stat-label">${ds.label}</div></div>`
+        ).join('');
+        statsEl.innerHTML = `<div class="detail-stats-grid">${cards}</div>`;
     }
 }
 

@@ -1121,6 +1121,10 @@ async def metric_distribution(
             "skewness": result.stats.skewness,
             "kurtosis": result.stats.kurtosis,
         },
+        "display_stats": [
+            {"label": ds.label, "value": ds.value}
+            for ds in result.display_stats
+        ],
     }
 
 

@@ -26,11 +26,18 @@ class DistributionStats:
 
 
 @dataclass
+class DisplayStat:
+    label: str
+    value: str
+
+
+@dataclass
 class DistributionResult:
     bins: list[HistogramBin]
     kde_x: list[float]
     kde_y: list[float]
     stats: DistributionStats
+    display_stats: list[DisplayStat]
     n: int
 
 
@@ -186,6 +193,62 @@ def compute_stats(values: list[float]) -> DistributionStats:
     )
 
 
+def _format_stat(value: float, metric_type: str, is_variance: bool = False) -> str:
+    """Format a stat value according to metric type.
+
+    For time: variance is in min², std_dev in min → format as HH:MM.
+    For duration: same logic.
+    For scale: append %.
+    """
+    if metric_type == "time":
+        if is_variance:
+            # Variance is in min² — take sqrt to show as time spread
+            minutes = int(round(math.sqrt(value)))
+        else:
+            minutes = int(round(value))
+        h = minutes // 60
+        m = minutes % 60
+        return f"{h:02d}:{m:02d}"
+    elif metric_type == "duration":
+        if is_variance:
+            minutes = int(round(math.sqrt(value)))
+        else:
+            minutes = int(round(value))
+        h = minutes // 60
+        m = minutes % 60
+        return f"{h}ч {m}м"
+    elif metric_type == "scale":
+        return f"{value:.1f}%"
+    else:
+        return f"{value:.2f}"
+
+
+def _build_display_stats(
+    stats: DistributionStats, metric_type: str,
+) -> list[DisplayStat]:
+    """Build formatted display stats for the frontend."""
+    result: list[DisplayStat] = []
+    result.append(DisplayStat(
+        label="Дисперсия",
+        value=_format_stat(stats.variance, metric_type, is_variance=True),
+    ))
+    result.append(DisplayStat(
+        label="Ст. отклонение",
+        value=_format_stat(stats.std_dev, metric_type),
+    ))
+    if stats.skewness is not None:
+        result.append(DisplayStat(
+            label="Асимметрия",
+            value=f"{stats.skewness:.2f}",
+        ))
+    if stats.kurtosis is not None:
+        result.append(DisplayStat(
+            label="Эксцесс",
+            value=f"{stats.kurtosis:.2f}",
+        ))
+    return result
+
+
 def compute_distribution(
     values: list[float], metric_type: str,
 ) -> DistributionResult:
@@ -193,10 +256,12 @@ def compute_distribution(
     bins = compute_histogram(values, metric_type)
     kde_x, kde_y = compute_kde(values)
     stats = compute_stats(values)
+    display = _build_display_stats(stats, metric_type)
     return DistributionResult(
         bins=bins,
         kde_x=kde_x,
         kde_y=kde_y,
         stats=stats,
+        display_stats=display,
         n=len(values),
     )
