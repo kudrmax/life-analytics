@@ -24,7 +24,7 @@ windows = [3, 7, 14]
 description = "Скользящее среднее за N дней (для числовых метрик)"
 
 [prod.auto_sources.streak]
-enabled = true
+enabled = false
 description = "Длина текущей серии подряд — да/нет (для бинарных источников). Генерирует streak_true и streak_false"
 
 [prod.auto_sources.day_of_week]
