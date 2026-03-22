@@ -1360,7 +1360,6 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                         source_data[idx] = {}
 
             # Pre-compute which sources are streaks (for pair-level reset check)
-            _MIN_STREAK_RESETS = 2
             streak_sources: set[int] = {
                 idx for idx, (sk, _) in enumerate(sources) if sk.auto_type in STREAK_TYPES
             }
@@ -1419,17 +1418,23 @@ async def _compute_report(report_id: int, user_id: int, start: str, end: str):
                 data_a: dict[str, float], data_b: dict[str, float],
                 idx_a: int, idx_b: int,
             ) -> bool:
-                """Check if a streak source is monotonically non-decreasing on common dates."""
+                """Check if a streak source has too few drops on common dates.
+
+                A drop is vals[i] > vals[i+1] — indicates a streak reset.
+                Fewer than min_resets drops means the streak is strongly trending.
+                """
                 if idx_a not in streak_sources and idx_b not in streak_sources:
                     return False
                 common = sorted(set(data_a) & set(data_b))
                 if len(common) < 2:
                     return False
+                min_resets = correlation_config.quality_filters.low_streak_resets_min_resets
                 for idx, data in ((idx_a, data_a), (idx_b, data_b)):
                     if idx not in streak_sources:
                         continue
                     vals = [data[d] for d in common]
-                    if all(vals[i] <= vals[i + 1] for i in range(len(vals) - 1)):
+                    drops = sum(1 for i in range(len(vals) - 1) if vals[i] > vals[i + 1])
+                    if drops < min_resets:
                         return True
                 return False
 

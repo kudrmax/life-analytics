@@ -65,7 +65,8 @@ description = "Совпадение бинарных значений может
 
 [prod.quality_filters.low_streak_resets]
 enabled = true
-description = "Серия сбрасывалась слишком редко (< 2 раз за период)"
+min_resets = 2
+description = "Серия сбрасывалась слишком редко — монотонный тренд создаёт ложные корреляции"
 
 [prod.quality_filters.wide_ci]
 enabled = true

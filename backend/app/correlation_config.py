@@ -34,6 +34,7 @@ class QualityFiltersConfig:
     fisher_exact_high_p: bool = True
     wide_ci: bool = True
     low_streak_resets: bool = True
+    low_streak_resets_min_resets: int = 2
 
 
 @dataclass(frozen=True)
@@ -61,12 +62,18 @@ def _parse_auto_sources(tables: dict[str, dict[str, object]]) -> AutoSourcesConf
 
 
 def _parse_quality_filters(tables: dict[str, dict[str, object]]) -> QualityFiltersConfig:
-    """Extract enabled flags from quality_filters tables."""
-    kwargs: dict[str, bool] = {}
+    """Extract enabled flags and extra fields from quality_filters tables."""
+    kwargs: dict[str, object] = {}
     for name, obj in tables.items():
-        if name in QualityFiltersConfig.__dataclass_fields__:
-            kwargs[name] = obj.get("enabled", True)  # type: ignore[assignment]
-    return QualityFiltersConfig(**kwargs)
+        if name not in QualityFiltersConfig.__dataclass_fields__:
+            continue
+        if name == "low_streak_resets":
+            kwargs["low_streak_resets"] = obj.get("enabled", True)
+            if "min_resets" in obj:
+                kwargs["low_streak_resets_min_resets"] = obj["min_resets"]
+        else:
+            kwargs[name] = obj.get("enabled", True)
+    return QualityFiltersConfig(**kwargs)  # type: ignore[arg-type]
 
 
 def load_config(env: str | None = None, path: Path | None = None) -> CorrelationConfig:

@@ -105,8 +105,8 @@ class TestComputeStreak(unittest.TestCase):
         self.assertEqual(set(result.keys()), {dates[1], dates[3]})
 
 
-class TestStreakMonotonicity(unittest.TestCase):
-    """Tests for monotonicity check — used by low_streak_resets quality filter."""
+class TestStreakDrops(unittest.TestCase):
+    """Tests for drop counting — used by low_streak_resets quality filter."""
 
     def _make_dates(self, start: str, count: int) -> list[str]:
         from datetime import date, timedelta
@@ -114,40 +114,39 @@ class TestStreakMonotonicity(unittest.TestCase):
         return [str(d + timedelta(days=i)) for i in range(count)]
 
     @staticmethod
-    def _is_monotonic(vals: list[float]) -> bool:
-        return all(vals[i] <= vals[i + 1] for i in range(len(vals) - 1))
+    def _count_drops(vals: list[float]) -> int:
+        return sum(1 for i in range(len(vals) - 1) if vals[i] > vals[i + 1])
 
-    def test_monotonic_streak_all_true(self) -> None:
-        """[1, 2, 3, ..., 14] → monotonic."""
+    def test_monotonic_zero_drops(self) -> None:
+        """[1, 2, 3, ..., 14] → 0 drops < 2 → should flag."""
         dates = self._make_dates("2026-01-01", 14)
         parent = {d: 1.0 for d in dates}
         streak = _compute_streak(parent, dates, target_value=True)
         vals = [streak[d] for d in dates]
-        self.assertTrue(self._is_monotonic(vals))
+        self.assertEqual(self._count_drops(vals), 0)
 
-    def test_streak_with_reset_not_monotonic(self) -> None:
-        """[T, T, F, T, T, T] → streak_true = [1, 2, 0, 1, 2, 3] → not monotonic."""
-        dates = self._make_dates("2026-01-01", 6)
-        parent = {dates[0]: 1.0, dates[1]: 1.0, dates[2]: 0.0,
-                  dates[3]: 1.0, dates[4]: 1.0, dates[5]: 1.0}
-        streak = _compute_streak(parent, dates, target_value=True)
-        vals = [streak[d] for d in dates]
-        self.assertFalse(self._is_monotonic(vals))
+    def test_one_reset_one_drop(self) -> None:
+        """[2,3,4,5,0,1,3,4,5,6,7,8,9,10] → 1 drop (5→0) < 2 → should flag."""
+        vals = [2.0, 3.0, 4.0, 5.0, 0.0, 1.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+        self.assertEqual(self._count_drops(vals), 1)
 
-    def test_reset_hidden_by_common_dates(self) -> None:
-        """Streak [1, 2, 3, 0, 1] but common dates skip d4 → [1, 2, 3, 1] → not monotonic."""
+    def test_hidden_reset_one_drop(self) -> None:
+        """Streak [1,2,3,0,1], common skips d4 → [1,2,3,1] → 1 drop (3→1)."""
         dates = self._make_dates("2026-01-01", 5)
         parent = {dates[0]: 1.0, dates[1]: 1.0, dates[2]: 1.0,
                   dates[3]: 0.0, dates[4]: 1.0}
         streak = _compute_streak(parent, dates, target_value=True)
-        # Simulate common dates without d4
         common = [dates[0], dates[1], dates[2], dates[4]]
         vals = [streak[d] for d in common]
-        self.assertEqual(vals, [1.0, 2.0, 3.0, 1.0])
-        self.assertFalse(self._is_monotonic(vals))
+        self.assertEqual(self._count_drops(vals), 1)
 
-    def test_monotonic_on_common_dates(self) -> None:
-        """Streak [1, 0, 0, 0, 0, 0, 1, 2, ..., 9], common=last 10 → [0,1,...,9] → monotonic."""
+    def test_multiple_resets_enough_drops(self) -> None:
+        """[1,0,1,2,0,1,2,3,0,1] → 3 drops ≥ 2 → should not flag."""
+        vals = [1.0, 0.0, 1.0, 2.0, 0.0, 1.0, 2.0, 3.0, 0.0, 1.0]
+        self.assertEqual(self._count_drops(vals), 3)
+
+    def test_monotonic_on_common_dates_zero_drops(self) -> None:
+        """Streak resets early but common dates see only monotonic part → 0 drops."""
         dates = self._make_dates("2026-01-01", 15)
         parent = {dates[0]: 1.0}
         for i in range(1, 6):
@@ -155,9 +154,9 @@ class TestStreakMonotonicity(unittest.TestCase):
         for i in range(6, 15):
             parent[dates[i]] = 1.0
         streak = _compute_streak(parent, dates, target_value=True)
-        common = dates[5:]  # last 10 dates
+        common = dates[5:]  # last 10 dates — monotonic part
         vals = [streak[d] for d in common]
-        self.assertTrue(self._is_monotonic(vals))
+        self.assertEqual(self._count_drops(vals), 0)
 
 
 if __name__ == "__main__":
