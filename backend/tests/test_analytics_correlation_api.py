@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from httpx import AsyncClient
 
 from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_slot
@@ -1933,6 +1935,12 @@ class TestFisherExactQualityIssue:
 
 class TestStreakSources:
     """Verify streak auto-sources appear in correlation report for bool metrics."""
+
+    @pytest.fixture(autouse=True)
+    def _enable_streaks(self, monkeypatch):  # type: ignore[no-untyped-def]
+        from app.correlation_config import AutoSourcesConfig, CorrelationConfig
+        cfg = CorrelationConfig(auto_sources=AutoSourcesConfig(streak=True))
+        monkeypatch.setattr("app.routers.analytics.correlation_config", cfg)
 
     async def test_streak_labels_present_in_report(
         self, client: AsyncClient, user_a: dict,
