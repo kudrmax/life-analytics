@@ -218,9 +218,31 @@ class TestShouldSkipPair(unittest.TestCase):
         regular = SourceKey(metric_id=99)
         self.assertFalse(should_skip_pair(auto, regular))
 
-    def test_streak_true_and_streak_false_different_parents_not_skipped(self) -> None:
+    def test_streak_true_and_streak_false_different_parents_skipped(self) -> None:
+        """streak × streak — always skip, even different parents."""
         a = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=1)
         b = SourceKey(auto_type=AutoSourceType.STREAK_FALSE, auto_parent_metric_id=2)
+        self.assertTrue(should_skip_pair(a, b))
+
+    def test_streak_true_x_streak_true_different_parents_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=1)
+        b = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=2)
+        self.assertTrue(should_skip_pair(a, b))
+
+    def test_streak_x_rolling_avg_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=1)
+        b = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=2, auto_option_id=7)
+        self.assertTrue(should_skip_pair(a, b))
+
+    def test_streak_x_rolling_avg_reversed_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=2, auto_option_id=7)
+        b = SourceKey(auto_type=AutoSourceType.STREAK_FALSE, auto_parent_metric_id=1)
+        self.assertTrue(should_skip_pair(a, b))
+
+    def test_rolling_avg_x_rolling_avg_different_parents_not_skipped(self) -> None:
+        """rolling_avg × rolling_avg (different parents) — no rule, don't skip."""
+        a = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=1, auto_option_id=7)
+        b = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=2, auto_option_id=7)
         self.assertFalse(should_skip_pair(a, b))
 
     def test_streak_enum_option_same_option_skipped(self) -> None:

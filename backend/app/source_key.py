@@ -82,6 +82,8 @@ _CALENDAR_TYPES: frozenset[AutoSourceType] = frozenset({
     AutoSourceType.IS_WORKDAY,
 })
 
+_ROLLING_AVG_TYPES: frozenset[AutoSourceType] = frozenset({AutoSourceType.ROLLING_AVG})
+
 
 @dataclass(frozen=True, slots=True)
 class SourceKey:
