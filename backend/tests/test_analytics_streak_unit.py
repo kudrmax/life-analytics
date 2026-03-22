@@ -2,7 +2,9 @@
 
 import unittest
 
-from app.routers.analytics import _compute_streak
+from app.analytics.time_series import TimeSeriesTransform
+
+_compute_streak = TimeSeriesTransform.streak
 
 
 class TestComputeStreak(unittest.TestCase):

@@ -1,0 +1,205 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import date as date_type
+from statistics import mean
+
+from app.analytics.value_converter import ValueConverter
+from app.formula import evaluate_formula
+
+
+class ValueFetcher:
+    """Извлекает значения метрик из БД, возвращает dict[str, float] (date->value)."""
+
+    def __init__(self, conn) -> None:  # asyncpg.Connection
+        self._conn = conn
+
+    async def values_by_date_for_slot(
+        self,
+        metric_id: int,
+        metric_type: str,
+        start_date: date_type,
+        end_date: date_type,
+        user_id: int,
+        slot_id: int | None = None,
+    ) -> dict[str, float]:
+        """Get values by date for a metric, optionally filtered by slot."""
+        value_table, extra_cols = ValueConverter.get_value_table(metric_type)
+        slot_filter = ""
+        params: list = [metric_id, start_date, end_date, user_id]
+        if slot_id is not None:
+            slot_filter = " AND e.slot_id = $5"
+            params.append(slot_id)
+
+        rows = await self._conn.fetch(
+            f"""SELECT e.date, v.value{extra_cols}
+                FROM entries e
+                JOIN {value_table} v ON v.entry_id = e.id
+                WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
+                  AND e.user_id = $4{slot_filter}
+                ORDER BY e.date""",
+            *params,
+        )
+        return ValueConverter.aggregate_by_date(rows, metric_type)
+
+    async def raw_values_by_date(
+        self,
+        metric_id: int,
+        metric_type: str,
+        start_date: date_type,
+        end_date: date_type,
+        user_id: int,
+    ) -> dict[str, float]:
+        """Get values by date using scale→0..1 normalization (for computed metric evaluation)."""
+        value_table, extra_cols = ValueConverter.get_value_table(metric_type)
+
+        scale_min, scale_max = None, None
+        if metric_type == "scale":
+            cfg = await self._conn.fetchrow(
+                "SELECT scale_min, scale_max FROM scale_config WHERE metric_id = $1",
+                metric_id,
+            )
+            if cfg:
+                scale_min, scale_max = cfg["scale_min"], cfg["scale_max"]
+
+        rows = await self._conn.fetch(
+            f"""SELECT e.date, v.value{extra_cols}
+                FROM entries e
+                JOIN {value_table} v ON v.entry_id = e.id
+                WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
+                  AND e.user_id = $4
+                ORDER BY e.date""",
+            metric_id, start_date, end_date, user_id,
+        )
+
+        day_values: dict[str, list[float]] = defaultdict(list)
+        for r in rows:
+            raw = r["value"]
+            if metric_type == "time":
+                cv = raw.hour * 60 + raw.minute if raw else None
+            elif metric_type == "bool":
+                cv = 1.0 if raw else 0.0
+            elif metric_type == "scale":
+                s_min = r.get("scale_min", scale_min) if r.get("scale_min") is not None else scale_min
+                s_max = r.get("scale_max", scale_max) if r.get("scale_max") is not None else scale_max
+                s_min_f = float(s_min) if s_min is not None else 1.0
+                s_max_f = float(s_max) if s_max is not None else 5.0
+                cv = (float(raw) - s_min_f) / (s_max_f - s_min_f) if s_max_f != s_min_f else 0.0
+            else:
+                cv = float(raw) if raw is not None else None
+            if cv is not None:
+                day_values[str(r["date"])].append(cv)
+
+        result: dict[str, float] = {}
+        for d, vals in day_values.items():
+            if metric_type == "bool":
+                result[d] = 1.0 if any(v == 1.0 for v in vals) else 0.0
+            else:
+                result[d] = mean(vals) if vals else 0.0
+        return result
+
+    async def values_by_date_for_computed(
+        self,
+        formula: list,
+        result_type: str,
+        ref_ids: list[int],
+        start_date: date_type,
+        end_date: date_type,
+        user_id: int,
+    ) -> dict[str, float]:
+        """Evaluate a computed metric for each date in range."""
+        if not ref_ids:
+            return {}
+
+        source_rows = await self._conn.fetch(
+            "SELECT id, type FROM metric_definitions WHERE id = ANY($1) AND user_id = $2",
+            ref_ids, user_id,
+        )
+        source_types = {r["id"]: r["type"] for r in source_rows}
+
+        source_data: dict[int, dict[str, float]] = {}
+        for mid in ref_ids:
+            mt = source_types.get(mid)
+            if not mt:
+                continue
+            source_data[mid] = await self.raw_values_by_date(
+                mid, mt, start_date, end_date, user_id,
+            )
+
+        all_dates: set[str] = set()
+        for d in source_data.values():
+            all_dates.update(d.keys())
+
+        result: dict[str, float] = {}
+        for d in sorted(all_dates):
+            values_for_day = {mid: source_data.get(mid, {}).get(d) for mid in ref_ids}
+            raw = evaluate_formula(formula, values_for_day, result_type)
+            if raw is not None:
+                if result_type == "bool":
+                    result[d] = 1.0 if raw else 0.0
+                elif result_type == "time":
+                    if isinstance(raw, str) and ":" in raw:
+                        h, m = map(int, raw.split(":"))
+                        result[d] = float(h * 60 + m)
+                    else:
+                        result[d] = float(raw)
+                elif result_type == "duration":
+                    if isinstance(raw, str) and "ч" in raw:
+                        parts = raw.replace("м", "").split("ч")
+                        result[d] = float(int(parts[0].strip()) * 60 + int(parts[1].strip()))
+                    else:
+                        result[d] = float(raw)
+                else:
+                    result[d] = float(raw)
+        return result
+
+    async def values_by_date_for_enum_option(
+        self,
+        metric_id: int,
+        option_id: int,
+        start_date: date_type,
+        end_date: date_type,
+        user_id: int,
+        slot_id: int | None = None,
+    ) -> dict[str, float]:
+        """For a single enum option, return 1.0 if selected, 0.0 if entry exists but not selected."""
+        slot_filter = ""
+        params: list = [metric_id, start_date, end_date, user_id]
+        if slot_id is not None:
+            slot_filter = " AND e.slot_id = $5"
+            params.append(slot_id)
+
+        rows = await self._conn.fetch(
+            f"""SELECT e.date, ve.selected_option_ids
+                FROM entries e
+                JOIN values_enum ve ON ve.entry_id = e.id
+                WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
+                  AND e.user_id = $4{slot_filter}
+                ORDER BY e.date""",
+            *params,
+        )
+
+        day_values: dict[str, list[bool]] = defaultdict(list)
+        for r in rows:
+            day_values[str(r["date"])].append(option_id in r["selected_option_ids"])
+
+        result: dict[str, float] = {}
+        for d, bools in day_values.items():
+            result[d] = 1.0 if any(bools) else 0.0
+        return result
+
+    async def fetch_note_counts(
+        self,
+        metric_id: int,
+        user_id: int,
+        start_date: date_type,
+        end_date: date_type,
+    ) -> dict[str, float]:
+        """Count notes per day for a text metric."""
+        rows = await self._conn.fetch(
+            """SELECT date, COUNT(*) as cnt FROM notes
+               WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4
+               GROUP BY date""",
+            metric_id, user_id, start_date, end_date,
+        )
+        return {str(r["date"]): float(r["cnt"]) for r in rows}

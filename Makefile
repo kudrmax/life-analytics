@@ -58,11 +58,27 @@ lint-js: ## Проверить синтаксис JS файлов
 
 # ─── Docker ───
 
+define check_backend_health
+	@echo "Waiting for backend health check..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if curl -sf --noproxy localhost http://localhost:8000/api/health > /dev/null 2>&1; then \
+			echo "Backend is healthy!"; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "ERROR: Backend failed to start!"; \
+	docker compose logs --tail=30 backend; \
+	exit 1
+endef
+
 up: lint-js
 	docker compose up -d
+	$(check_backend_health)
 
 build-up: lint-js
 	docker compose up -d --build
+	$(check_backend_health)
 
 down:
 	docker compose down

@@ -6,15 +6,26 @@ Tests: _confidence_interval, _determine_quality_issue, QualityIssue,
 """
 from __future__ import annotations
 
-from app.routers.analytics import (
-    QualityIssue,
-    QUALITY_ISSUE_LABELS,
-    QUALITY_SEVERITY,
-    _build_contingency_table,
-    _confidence_interval,
-    _determine_quality_issue,
-    _fisher_exact_p,
+from app.analytics.quality import QualityIssue, QualityAssessor
+from app.analytics.correlation_math import (
+    build_contingency_table as _build_contingency_table,
+    confidence_interval_from_r as _confidence_interval,
+    fisher_exact_p as _fisher_exact_p,
 )
+
+QUALITY_ISSUE_LABELS = QualityAssessor.LABELS
+QUALITY_SEVERITY = QualityAssessor.SEVERITY
+
+
+def _determine_quality_issue(
+    n, p_value, low_variance=False, small_binary_group=False,
+    wide_ci=False, fisher_high_p=False, low_streak_resets=False,
+):
+    from app.correlation_config import correlation_config
+    return QualityAssessor(config=correlation_config).determine_issue(
+        n, p_value, low_variance=low_variance, small_binary_group=small_binary_group,
+        wide_ci=wide_ci, fisher_high_p=fisher_high_p, low_streak_resets=low_streak_resets,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -125,12 +136,13 @@ class TestDetermineQualityIssue:
 
     def test_low_streak_resets_disabled(self) -> None:
         """When filter is disabled via config, issue should not be returned."""
-        from unittest.mock import patch, PropertyMock
-        from app.correlation_config import QualityFiltersConfig
-        disabled = QualityFiltersConfig(low_streak_resets=False)
-        with patch("app.routers.analytics.correlation_config") as mock_cfg:
-            type(mock_cfg).quality_filters = PropertyMock(return_value=disabled)
-            result = _determine_quality_issue(n=30, p_value=0.01, low_streak_resets=True)
+        from app.correlation_config import QualityFiltersConfig, CorrelationConfig
+        disabled_cfg = CorrelationConfig(
+            quality_filters=QualityFiltersConfig(low_streak_resets=False),
+        )
+        result = QualityAssessor(config=disabled_cfg).determine_issue(
+            n=30, p_value=0.01, low_streak_resets=True,
+        )
         assert result is None
 
     def test_low_streak_resets_priority_over_variance(self) -> None:
