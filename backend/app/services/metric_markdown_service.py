@@ -1,5 +1,6 @@
 """Markdown export formatting for metrics — extracted for 300-line rule."""
 
+from app.domain.enums import MetricType
 from app.schemas import MetricDefinitionOut
 
 _TYPE_LABELS: dict[str, str] = {
@@ -59,15 +60,15 @@ def _get_cat_path(category_id: int | None, cat_by_id: dict[int, dict]) -> str:
 
 
 def _get_details(m: MetricDefinitionOut, metric_name_by_id: dict[int, str]) -> str:
-    if m.type == "scale":
+    if m.type == MetricType.scale:
         smin = m.scale_min if m.scale_min is not None else 1
         smax = m.scale_max if m.scale_max is not None else 10
         sstep = m.scale_step if m.scale_step is not None else 1
         return f"{smin}–{smax}, шаг {sstep}"
-    if m.type == "enum":
+    if m.type == MetricType.enum:
         opts = ", ".join(o["label"] for o in (m.enum_options or []) if o.get("enabled") is not False)
         return opts + (" (мультивыбор)" if m.multi_select else "")
-    if m.type == "computed" and m.formula:
+    if m.type == MetricType.computed and m.formula:
         parts: list[str] = []
         for t in m.formula:
             tt = t.get("type", "") if isinstance(t, dict) else ""
@@ -83,7 +84,7 @@ def _get_details(m: MetricDefinitionOut, metric_name_by_id: dict[int, str]) -> s
                 parts.append(")")
         rt = _RESULT_TYPE_LABELS.get(m.result_type or "", m.result_type or "число")
         return f"{' '.join(parts)} → {rt}"
-    if m.type == "integration":
+    if m.type == MetricType.integration:
         prov = "ActivityWatch" if m.provider == "activitywatch" else "Todoist"
         detail = f"{prov}: {m.metric_key or '?'}"
         if m.filter_name:

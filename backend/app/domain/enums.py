@@ -2,8 +2,18 @@
 
 from enum import Enum
 
-# Re-export MetricType из schemas (каноническое определение)
-from app.schemas import MetricType
+
+class MetricType(str, Enum):
+    """Тип метрики (metric_definitions.type)."""
+    bool = "bool"
+    enum = "enum"
+    time = "time"
+    number = "number"
+    scale = "scale"
+    computed = "computed"
+    integration = "integration"
+    duration = "duration"
+    text = "text"
 
 __all__ = [
     "MetricType",

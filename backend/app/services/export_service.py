@@ -6,7 +6,8 @@ import zipfile
 from collections import defaultdict
 from io import StringIO, BytesIO
 
-from app.metric_helpers import get_entry_value
+from app.domain.enums import MetricType
+from app.repositories.entry_repository import EntryRepository
 from app.repositories.export_repository import ExportRepository
 
 
@@ -93,8 +94,8 @@ class ExportService:
                 formula_export, result_type_export,
                 m.get("provider") or '', m.get("metric_key") or '', m.get("value_type") or '',
                 m.get("filter_name") or '', m.get("filter_query") or '',
-                json.dumps(enum_opts_by_metric.get(m["id"], [])) if m["type"] == "enum" else '',
-                1 if m.get("multi_select") else '' if m["type"] != "enum" else 0,
+                json.dumps(enum_opts_by_metric.get(m["id"], [])) if m["type"] == MetricType.enum else '',
+                1 if m.get("multi_select") else '' if m["type"] != MetricType.enum else 0,
                 1 if m.get("private") else 0,
                 cond["depends_on_slug"] if cond else '',
                 cond["condition_type"] if cond else '',
@@ -109,7 +110,7 @@ class ExportService:
     async def _export_entries(self, zip_file: zipfile.ZipFile, metrics: list) -> None:
         slug_lookup = {m["id"]: m["slug"] for m in metrics}
         type_lookup = {
-            m["id"]: (m.get("value_type") or "number") if m["type"] == "integration" else m["type"]
+            m["id"]: (m.get("value_type") or MetricType.number) if m["type"] == MetricType.integration else m["type"]
             for m in metrics
         }
         enum_id_to_label = await self.repo.get_all_enum_options_by_id([m["id"] for m in metrics])
@@ -118,16 +119,17 @@ class ExportService:
         writer = csv.writer(entries_csv)
         writer.writerow(['date', 'metric_slug', 'value', 'slot_sort_order', 'slot_label'])
 
+        entry_repo = EntryRepository(self.conn, self.repo.user_id)
         entries = await self.repo.get_entries_for_export()
         for e in entries:
             slug = slug_lookup.get(e["metric_id"])
             if not slug:
                 continue
-            mt = type_lookup.get(e["metric_id"], "bool")
-            if mt in ("computed", "text"):
+            mt = type_lookup.get(e["metric_id"], MetricType.bool)
+            if mt in (MetricType.computed, MetricType.text):
                 continue
-            value = await get_entry_value(self.conn, e["id"], mt)
-            if mt == "enum" and isinstance(value, list):
+            value = await entry_repo.get_entry_value(e["id"], mt)
+            if mt == MetricType.enum and isinstance(value, list):
                 id_map = enum_id_to_label.get(e["metric_id"], {})
                 value = [id_map.get(oid, str(oid)) for oid in value]
             writer.writerow([

@@ -1,5 +1,6 @@
 """Repository for metric definitions — core CRUD operations."""
 
+from collections import defaultdict
 from typing import Any
 
 import asyncpg
@@ -78,6 +79,49 @@ class MetricRepository(BaseRepository):
             "SELECT id, type FROM metric_definitions WHERE id = ANY($1) AND user_id = $2",
             ids, self.user_id,
         )
+
+    # ── Batch lookups ─────────────────────────────────────────────────
+
+    async def get_slots_for_metrics(
+        self, metric_ids: list[int], enabled_only: bool = True,
+    ) -> dict[int, list[dict]]:
+        """Return {metric_id: [{id, label, sort_order, category_id}, ...]}."""
+        condition = "AND msl.enabled = TRUE" if enabled_only else ""
+        rows = await self.conn.fetch(
+            f"""SELECT msl.metric_id, ms.id, ms.label, ms.sort_order, msl.category_id
+                FROM metric_slots msl
+                JOIN measurement_slots ms ON ms.id = msl.slot_id
+                WHERE msl.metric_id = ANY($1) {condition}
+                ORDER BY msl.metric_id, ms.sort_order""",
+            metric_ids,
+        )
+        result: dict[int, list[dict]] = defaultdict(list)
+        for r in rows:
+            result[r["metric_id"]].append({
+                "id": r["id"], "label": r["label"],
+                "sort_order": r["sort_order"], "category_id": r["category_id"],
+            })
+        return result
+
+    async def get_enum_options_for_metrics(
+        self, metric_ids: list[int], enabled_only: bool = True,
+    ) -> dict[int, list[dict]]:
+        """Return {metric_id: [{id, label, sort_order, enabled}, ...]}."""
+        condition = "AND eo.enabled = TRUE" if enabled_only else ""
+        rows = await self.conn.fetch(
+            f"""SELECT eo.id, eo.metric_id, eo.label, eo.sort_order, eo.enabled
+                FROM enum_options eo
+                WHERE eo.metric_id = ANY($1) {condition}
+                ORDER BY eo.metric_id, eo.sort_order""",
+            metric_ids,
+        )
+        result: dict[int, list[dict]] = defaultdict(list)
+        for r in rows:
+            result[r["metric_id"]].append({
+                "id": r["id"], "label": r["label"],
+                "sort_order": r["sort_order"], "enabled": r["enabled"],
+            })
+        return result
 
     # ── Slug ───────────────────────────────────────────────────────────
 

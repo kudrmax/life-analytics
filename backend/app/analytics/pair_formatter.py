@@ -4,7 +4,7 @@ from typing import Any, ClassVar
 
 from app.analytics.correlation_math import confidence_interval_from_r, p_value_from_r
 from app.analytics.quality import QualityAssessor
-from app.metric_helpers import is_blocked, PRIVATE_MASK, PRIVATE_ICON
+from app.domain.privacy import is_blocked, PRIVATE_MASK, PRIVATE_ICON
 from app.source_key import (
     AutoSourceType, SourceKey, AUTO_DISPLAY_NAMES, AUTO_ICONS,
     CALENDAR_OPTION_LABELS, STREAK_TYPES,

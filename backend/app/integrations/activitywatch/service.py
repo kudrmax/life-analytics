@@ -260,7 +260,8 @@ async def compute_integration_metrics(
     for_date: date_type,
 ):
     """Compute values for all AW integration metrics for this user/date."""
-    from app.metric_helpers import insert_value, update_value
+    from app.repositories.entry_repository import EntryRepository
+    entry_repo = EntryRepository(conn, user_id)
 
     rows = await conn.fetch(
         """SELECT md.id AS metric_id, ic.metric_key, ic.value_type,
@@ -363,11 +364,11 @@ async def compute_integration_metrics(
             metric_id, user_id, for_date,
         )
         if existing:
-            await update_value(conn, existing["id"], value, value_type, entry_date=for_date, metric_id=metric_id)
+            await entry_repo.update_value(existing["id"], value, value_type, entry_date=for_date, metric_id=metric_id)
         else:
             entry_id = await conn.fetchval(
                 """INSERT INTO entries (metric_id, user_id, date)
                    VALUES ($1, $2, $3) RETURNING id""",
                 metric_id, user_id, for_date,
             )
-            await insert_value(conn, entry_id, value, value_type, entry_date=for_date, metric_id=metric_id)
+            await entry_repo.insert_value(entry_id, value, value_type, entry_date=for_date, metric_id=metric_id)

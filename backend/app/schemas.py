@@ -1,17 +1,6 @@
 from pydantic import BaseModel
-from enum import Enum
 
-
-class MetricType(str, Enum):
-    bool = "bool"
-    enum = "enum"
-    time = "time"
-    number = "number"
-    scale = "scale"
-    computed = "computed"
-    integration = "integration"
-    duration = "duration"
-    text = "text"
+from app.domain.enums import MetricType
 
 
 class MeasurementSlotOut(BaseModel):

@@ -2,8 +2,9 @@
 
 from datetime import date as date_type
 
+from app.domain.enums import MetricType
 from app.formula import convert_metric_value, evaluate_formula
-from app.metric_helpers import format_display_value
+from app.domain.formatters import format_display_value
 from app.analytics.value_converter import ValueConverter
 
 _parse_formula = ValueConverter.parse_formula
@@ -60,7 +61,7 @@ def compute_formulas(result: list[dict], metrics_by_id: dict) -> None:
     numeric_by_id: dict[int, float | None] = {}
     for item in result:
         m = metrics_by_id.get(item["metric_id"])
-        if not m or m["type"] == "computed":
+        if not m or m["type"] == MetricType.computed:
             continue
         mt = m["type"]
         if item["slots"]:
@@ -76,7 +77,7 @@ def compute_formulas(result: list[dict], metrics_by_id: dict) -> None:
 
     for item in result:
         m = metrics_by_id.get(item["metric_id"])
-        if not m or m["type"] != "computed":
+        if not m or m["type"] != MetricType.computed:
             continue
         formula = _parse_formula(m.get("formula"))
         rt = m.get("result_type") or "float"
@@ -95,14 +96,14 @@ def build_auto_metrics(
     auto: list[dict] = []
     for item in result:
         m = metrics_by_id.get(item["metric_id"])
-        if not m or m["type"] == "computed":
+        if not m or m["type"] == MetricType.computed:
             continue
         name = item["name"]
-        if m["type"] == "text":
+        if m["type"] == MetricType.text:
             auto.append({"name": f"{name}: кол-во заметок", "auto_type": "note_count",
                          "source_metric_id": item["metric_id"], "source_metric_name": name,
                          "value": notes_count_map.get(item["metric_id"], 0)})
-        if m["type"] in ("number", "duration"):
+        if m["type"] in (MetricType.number, MetricType.duration):
             if item["slots"]:
                 vals = [s["entry"]["value"] for s in item["slots"] if s["entry"] is not None]
                 nz = any(v != 0 for v in vals) if vals else False
@@ -123,9 +124,9 @@ def calculate_progress(result: list[dict]) -> dict:
     filled = total = 0
     for item in result:
         mt = item["type"]
-        if mt in ("computed", "integration") or not item.get("condition_met", True):
+        if mt in (MetricType.computed, MetricType.integration) or not item.get("condition_met", True):
             continue
-        if mt == "text":
+        if mt == MetricType.text:
             total += 1
             if item.get("note_count", 0) > 0:
                 filled += 1

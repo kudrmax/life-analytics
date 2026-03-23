@@ -4,7 +4,7 @@ import asyncpg
 
 from app.encryption import decrypt_token
 from app.integrations.todoist.client import TodoistClient
-from app.metric_helpers import insert_value, update_value, resolve_storage_type
+from app.repositories.entry_repository import EntryRepository
 
 
 async def fetch_and_store(conn: asyncpg.Connection, user_id: int, for_date: date_type, metric_id: int | None = None) -> dict:
@@ -21,6 +21,7 @@ async def fetch_and_store(conn: asyncpg.Connection, user_id: int, for_date: date
         raise ValueError("Todoist not connected")
 
     access_token = decrypt_token(row["encrypted_token"])
+    entry_repo = EntryRepository(conn, user_id)
 
     query = """SELECT md.id, ic.metric_key, ic.value_type,
                   ifc.filter_name, iqc.filter_query
@@ -89,13 +90,13 @@ async def fetch_and_store(conn: asyncpg.Connection, user_id: int, for_date: date
                 metric_id, user_id, for_date,
             )
             if existing:
-                await update_value(conn, existing["id"], value, storage_type, metric_id=metric_id)
+                await entry_repo.update_value(existing["id"], value, storage_type, metric_id=metric_id)
             else:
                 entry_id = await conn.fetchval(
                     "INSERT INTO entries (metric_id, user_id, date) VALUES ($1, $2, $3) RETURNING id",
                     metric_id, user_id, for_date,
                 )
-                await insert_value(conn, entry_id, value, storage_type, entry_date=for_date, metric_id=metric_id)
+                await entry_repo.insert_value(entry_id, value, storage_type, entry_date=for_date, metric_id=metric_id)
 
         results.append({"metric_id": metric_id, "value": value})
 

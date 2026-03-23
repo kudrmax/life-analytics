@@ -5,7 +5,8 @@ import json
 from datetime import date as date_type
 from io import StringIO
 
-from app.metric_helpers import insert_value
+from app.domain.enums import MetricType
+from app.repositories.entry_repository import EntryRepository
 
 
 class EntryImporter:
@@ -14,6 +15,7 @@ class EntryImporter:
     def __init__(self, repo, conn) -> None:
         self.repo = repo
         self.conn = conn
+        self.entry_repo = EntryRepository(conn, repo.user_id)
 
     async def import_entries(
         self, zip_file, slug_to_id: dict, slug_to_type: dict,
@@ -32,7 +34,7 @@ class EntryImporter:
             try:
                 slug = row.get('metric_slug', '')
                 metric_id = slug_to_id.get(slug)
-                if not metric_id or slug_to_type.get(slug) in ("computed", "text"):
+                if not metric_id or slug_to_type.get(slug) in (MetricType.computed, MetricType.text):
                     skipped += 1
                     continue
 
@@ -53,7 +55,7 @@ class EntryImporter:
                     skipped += 1
                     continue
 
-                mt = slug_to_type.get(slug, "bool")
+                mt = slug_to_type.get(slug, MetricType.bool)
                 value = json.loads(row.get('value', 'false'))
                 value = await self._coerce_value(value, mt, metric_id)
                 if value is None:
@@ -62,7 +64,7 @@ class EntryImporter:
 
                 async with self.conn.transaction():
                     entry_id = await self.repo.create_entry(metric_id, d, slot_id)
-                    await insert_value(self.conn, entry_id, value, mt, entry_date=d, metric_id=metric_id)
+                    await self.entry_repo.insert_value(entry_id, value, mt, entry_date=d, metric_id=metric_id)
                 imported += 1
             except Exception as e:
                 errors.append(f"Row {row_num}: {str(e)}")
@@ -109,15 +111,15 @@ class EntryImporter:
         return None
 
     async def _coerce_value(self, value, mt: str, metric_id: int):
-        if mt == "enum":
+        if mt == MetricType.enum:
             if not isinstance(value, list):
                 return None
             label_to_id = await self.repo.get_enum_option_labels(metric_id)
             ids = [label_to_id[lbl] for lbl in value if lbl in label_to_id]
             return ids if ids else None
-        if mt == "time":
+        if mt == MetricType.time:
             return value if isinstance(value, str) else None
-        if mt in ("number", "duration", "scale"):
+        if mt in (MetricType.number, MetricType.duration, MetricType.scale):
             try:
                 return int(value)
             except (ValueError, TypeError):

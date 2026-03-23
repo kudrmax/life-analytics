@@ -9,6 +9,7 @@ from app.auth import SECRET_KEY, ALGORITHM
 from app.domain.exceptions import InvalidOperationError, EntityNotFoundError
 from app.encryption import encrypt_token
 from app.integrations.todoist.client import TodoistClient
+from app.domain.constants import SECONDS_PER_HOUR
 from app.integrations.todoist.registry import TODOIST_METRICS
 from app.integrations.todoist.service import fetch_and_store
 from app.integrations.activitywatch.registry import ACTIVITYWATCH_METRICS
@@ -192,8 +193,8 @@ class IntegrationService:
         rows = await self.repo.get_aw_trends(start_d, end_d)
         points = []
         for r in rows:
-            total_h = round(r["total_seconds"] / 3600, 2)
-            active_h = round(r["active_seconds"] / 3600, 2)
+            total_h = round(r["total_seconds"] / SECONDS_PER_HOUR, 2)
+            active_h = round(r["active_seconds"] / SECONDS_PER_HOUR, 2)
             points.append({
                 "date": str(r["date"]), "total_hours": total_h,
                 "active_hours": active_h, "afk_hours": round(max(0, total_h - active_h), 2),

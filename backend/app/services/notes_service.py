@@ -2,6 +2,7 @@
 
 from datetime import date as date_type
 
+from app.domain.enums import MetricType
 from app.domain.exceptions import InvalidOperationError
 from app.repositories.notes_repository import NotesRepository
 from app.schemas import NoteOut
@@ -24,7 +25,7 @@ class NotesService:
     async def create(self, metric_id: int, date_str: str, text: str) -> NoteOut:
         """Create a note for a text metric."""
         metric = await self.repo.get_metric_type(metric_id)
-        if metric["type"] != "text":
+        if metric["type"] != MetricType.text:
             raise InvalidOperationError("Only text metrics support notes")
 
         text = text.strip()

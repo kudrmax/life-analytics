@@ -2,14 +2,15 @@
 
 from datetime import date as date_type
 
+from app.domain.enums import MetricType
 from app.domain.exceptions import ConflictError
 from app.repositories.entry_repository import EntryRepository
 from app.schemas import EntryOut
 
 
-async def _entry_to_out(repo: EntryRepository, entry_row, metric_type: str = "bool") -> EntryOut:
+async def _entry_to_out(repo: EntryRepository, entry_row, metric_type: str = MetricType.bool) -> EntryOut:
     value = await repo.get_entry_value(entry_row["id"], metric_type)
-    default = False if metric_type == "bool" else None
+    default = False if metric_type == MetricType.bool else None
     return EntryOut(
         id=entry_row["id"],
         metric_id=entry_row["metric_id"],
@@ -36,7 +37,7 @@ class EntriesService:
             for mid, mtype in raw_types.items():
                 type_lookup[mid] = await self.repo.resolve_storage_type(mid, mtype)
 
-        return [await _entry_to_out(self.repo, r, type_lookup.get(r["metric_id"], "bool")) for r in rows]
+        return [await _entry_to_out(self.repo, r, type_lookup.get(r["metric_id"], MetricType.bool)) for r in rows]
 
     async def create(self, metric_id: int, date_str: str, value, slot_id: int | None) -> EntryOut:
         metric = await self.repo.get_metric(metric_id)
@@ -55,7 +56,7 @@ class EntriesService:
 
     async def update(self, entry_id: int, value) -> EntryOut:
         row = await self.repo.get_owned_with_slot(entry_id)
-        raw_mt = await self.repo.get_metric_type(row["metric_id"]) or "bool"
+        raw_mt = await self.repo.get_metric_type(row["metric_id"]) or MetricType.bool
         mt = await self.repo.resolve_storage_type(row["metric_id"], raw_mt)
         await self.repo.update_value(entry_id, value, mt, entry_date=row["date"], metric_id=row["metric_id"])
         return await _entry_to_out(self.repo, row, mt)

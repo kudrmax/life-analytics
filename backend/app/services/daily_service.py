@@ -4,7 +4,9 @@ import json
 from collections import defaultdict
 from datetime import date as date_type
 
-from app.metric_helpers import mask_name, mask_icon, is_blocked, format_display_value
+from app.domain.enums import MetricType
+from app.domain.privacy import mask_name, mask_icon, is_blocked
+from app.domain.formatters import format_display_value
 from app.analytics.value_converter import ValueConverter
 from app.repositories.daily_repository import DailyRepository
 from app.services.daily_helpers import (
@@ -59,16 +61,16 @@ class DailyService:
 
         metric_type_map: dict[int, str] = {}
         for m in metrics:
-            metric_type_map[m["id"]] = (m.get("value_type") or "number") if m["type"] == "integration" else m["type"]
+            metric_type_map[m["id"]] = (m.get("value_type") or MetricType.number) if m["type"] == MetricType.integration else m["type"]
 
         entry_ids_by_type: dict[str, list[int]] = defaultdict(list)
         for e in entries:
-            entry_ids_by_type[metric_type_map.get(e["metric_id"], "bool")].append(e["id"])
+            entry_ids_by_type[metric_type_map.get(e["metric_id"], MetricType.bool)].append(e["id"])
 
         values_map, scale_ctx = await self.repo.batch_load_values(entry_ids_by_type)
-        enum_ids = [m["id"] for m in metrics if m["type"] == "enum"]
+        enum_ids = [m["id"] for m in metrics if m["type"] == MetricType.enum]
         enum_opts = await self.repo.get_enum_options_for_metrics(enum_ids)
-        text_ids = [m["id"] for m in metrics if m["type"] == "text"]
+        text_ids = [m["id"] for m in metrics if m["type"] == MetricType.text]
         notes_count, notes_by = await self.repo.get_notes_for_date(text_ids, d)
 
         return {
@@ -101,9 +103,9 @@ class DailyService:
                 "result_type": m.get("result_type"), "provider": m.get("provider"),
                 "metric_key": m.get("metric_key"), "value_type": m.get("value_type"),
                 "multi_select": m.get("multi_select"),
-                "enum_options": data["enum_options_by_metric"].get(mid) if m["type"] == "enum" else None,
-                "notes": data["notes_by_metric"].get(mid, []) if m["type"] == "text" else None,
-                "note_count": data["notes_count_map"].get(mid, 0) if m["type"] == "text" else None,
+                "enum_options": data["enum_options_by_metric"].get(mid) if m["type"] == MetricType.enum else None,
+                "notes": data["notes_by_metric"].get(mid, []) if m["type"] == MetricType.text else None,
+                "note_count": data["notes_count_map"].get(mid, 0) if m["type"] == MetricType.text else None,
                 "condition": {
                     "depends_on_metric_id": m.get("condition_metric_id"),
                     "type": m.get("condition_type"),
@@ -111,8 +113,8 @@ class DailyService:
                 } if m.get("condition_metric_id") else None,
             }
             if m_blocked:
-                item["notes"] = [] if m["type"] == "text" else None
-                item["note_count"] = 0 if m["type"] == "text" else None
+                item["notes"] = [] if m["type"] == MetricType.text else None
+                item["note_count"] = 0 if m["type"] == MetricType.text else None
                 result.append(item); continue
 
             slots = data["enabled_slots"].get(mid, [])

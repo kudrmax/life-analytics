@@ -1,72 +1,35 @@
+"""Backward-compatibility shim — re-exports from canonical locations.
+
+New code should import from:
+  - app.domain.privacy (mask_name, mask_icon, is_blocked, PRIVATE_MASK, PRIVATE_ICON)
+  - app.domain.formatters (format_display_value)
+  - app.services.metric_builder (build_metric_out)
+  - app.repositories.entry_repository.EntryRepository (get_entry_value, insert_value, ...)
+  - app.repositories.metric_repository.MetricRepository (get_slots_for_metrics, ...)
+
+This module exists solely so that existing unit tests continue to work
+without modification — the standalone function signatures are preserved.
 """
-Shared helpers for metric operations across routers.
-"""
-import json
+
+# --- Re-exports: pure domain functions ---
+from app.domain.privacy import (  # noqa: F401
+    mask_name,
+    mask_icon,
+    is_blocked,
+    PRIVATE_MASK,
+    PRIVATE_ICON,
+)
+
+from app.domain.formatters import format_display_value  # noqa: F401
+
+from app.services.metric_builder import build_metric_out  # noqa: F401
+
+# --- Legacy standalone functions (kept for backward-compat with tests) ---
+
 from collections import defaultdict
 from datetime import date as date_type, datetime, timezone
 
 import asyncpg
-
-from app.schemas import MetricDefinitionOut, MeasurementSlotOut
-
-PRIVATE_MASK = "***"
-PRIVATE_ICON = "🔒"
-
-
-def mask_name(name: str, is_private: bool, privacy_mode: bool) -> str:
-    return PRIVATE_MASK if (is_private and privacy_mode) else name
-
-
-def mask_icon(icon: str, is_private: bool, privacy_mode: bool) -> str:
-    return PRIVATE_ICON if (is_private and privacy_mode) else icon
-
-
-def is_blocked(is_private: bool, privacy_mode: bool) -> bool:
-    return is_private and privacy_mode
-
-
-async def build_metric_out(
-    row: asyncpg.Record,
-    slots: list | None = None,
-    enum_opts: list | None = None,
-    privacy_mode: bool = False,
-) -> MetricDefinitionOut:
-    formula_raw = row.get("formula")
-    if isinstance(formula_raw, str):
-        formula_raw = json.loads(formula_raw)
-    is_private = row.get("private", False)
-    return MetricDefinitionOut(
-        id=row["id"],
-        slug=row["slug"],
-        name=mask_name(row["name"], is_private, privacy_mode),
-        description=row.get("description"),
-        category_id=row.get("category_id"),
-        icon=mask_icon(row.get("icon", ""), is_private, privacy_mode),
-        type=row["type"],
-        enabled=row["enabled"],
-        sort_order=row["sort_order"],
-        scale_min=row.get("scale_min"),
-        scale_max=row.get("scale_max"),
-        scale_step=row.get("scale_step"),
-        scale_labels=json.loads(row["scale_labels"]) if row.get("scale_labels") is not None else None,
-        slots=[MeasurementSlotOut(**s) for s in slots] if slots else [],
-        formula=formula_raw,
-        result_type=row.get("result_type"),
-        provider=row.get("provider"),
-        metric_key=row.get("metric_key"),
-        value_type=row.get("value_type"),
-        filter_name=row.get("filter_name"),
-        filter_query=row.get("filter_query"),
-        activitywatch_category_id=row.get("activitywatch_category_id"),
-        config_app_name=row.get("config_app_name"),
-        enum_options=enum_opts,
-        multi_select=row.get("multi_select"),
-        private=is_private,
-        hide_in_cards=row.get("hide_in_cards", False),
-        condition_metric_id=row.get("condition_metric_id"),
-        condition_type=row.get("condition_type"),
-        condition_value=json.loads(row["condition_value"]) if row.get("condition_value") is not None else None,
-    )
 
 
 async def get_metric_slots(
@@ -141,30 +104,22 @@ async def get_entry_value(
         row = await conn.fetchrow(
             "SELECT value FROM values_number WHERE entry_id = $1", entry_id
         )
-        if not row:
-            return None
-        return row["value"]
+        return row["value"] if row else None
     elif metric_type == "scale":
         row = await conn.fetchrow(
             "SELECT value FROM values_scale WHERE entry_id = $1", entry_id
         )
-        if not row:
-            return None
-        return row["value"]
+        return row["value"] if row else None
     elif metric_type == "duration":
         row = await conn.fetchrow(
             "SELECT value FROM values_duration WHERE entry_id = $1", entry_id
         )
-        if not row:
-            return None
-        return row["value"]
+        return row["value"] if row else None
     elif metric_type == "enum":
         row = await conn.fetchrow(
             "SELECT selected_option_ids FROM values_enum WHERE entry_id = $1", entry_id
         )
-        if not row:
-            return None
-        return list(row["selected_option_ids"])
+        return list(row["selected_option_ids"]) if row else None
     else:
         row = await conn.fetchrow(
             "SELECT value FROM values_bool WHERE entry_id = $1", entry_id
@@ -179,7 +134,7 @@ async def insert_value(
     metric_type: str,
     entry_date: date_type | None = None,
     metric_id: int | None = None,
-):
+) -> None:
     if metric_type == "time":
         ts = _parse_time(value, entry_date)
         await conn.execute(
@@ -228,7 +183,7 @@ async def update_value(
     metric_type: str,
     entry_date: date_type | None = None,
     metric_id: int | None = None,
-):
+) -> None:
     if metric_type == "time":
         ts = _parse_time(value, entry_date)
         await conn.execute(
@@ -269,58 +224,6 @@ async def get_metric_type(conn: asyncpg.Connection, metric_id: int, user_id: int
         metric_id, user_id,
     )
     return row["type"] if row else None
-
-
-def format_display_value(
-    value: bool | str | int | list[int] | float | None,
-    metric_type: str,
-    result_type: str | None = None,
-    enum_options: list[dict] | None = None,
-    scale_labels: dict[str, str] | None = None,
-) -> str:
-    """Format a raw metric value into a human-readable display string."""
-    if value is None:
-        return "—"
-
-    if metric_type == "enum":
-        if not isinstance(value, list):
-            return "—"
-        if enum_options:
-            id_to_label = {opt["id"]: opt["label"] for opt in enum_options}
-            return ", ".join(id_to_label.get(oid, str(oid)) for oid in value)
-        return ", ".join(str(v) for v in value)
-
-    if metric_type == "computed":
-        rt = result_type or "float"
-        if rt == "bool":
-            return "Да" if value else "Нет"
-        if rt in ("time", "duration"):
-            return str(value)
-        if rt == "int":
-            return str(round(value)) if isinstance(value, (int, float)) else str(value)
-        # float
-        return f"{value:.2f}" if isinstance(value, float) else str(value)
-
-    if metric_type == "integration":
-        return str(value)
-
-    if metric_type == "duration":
-        minutes = int(value)
-        h, m = divmod(minutes, 60)
-        if h > 0:
-            return f"{h}ч {m}м"
-        return f"{m}м"
-
-    if metric_type == "time":
-        return str(value) if value else "—"
-
-    if metric_type in ("number", "scale"):
-        if metric_type == "scale" and scale_labels and str(value) in scale_labels:
-            return scale_labels[str(value)]
-        return str(value) if value is not None else "—"
-
-    # bool
-    return "Да" if value else "Нет"
 
 
 def _parse_time(value: str, entry_date: date_type | None) -> datetime:

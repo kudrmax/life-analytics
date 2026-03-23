@@ -6,8 +6,9 @@ from statistics import mean, median
 from app.analytics.pair_formatter import PairFormatter
 from app.analytics.value_converter import ValueConverter
 from app.analytics.value_fetcher import ValueFetcher
+from app.domain.enums import MetricType
 from app.formula import get_referenced_metric_ids
-from app.metric_helpers import mask_name, is_blocked, PRIVATE_MASK
+from app.domain.privacy import mask_name, is_blocked, PRIVATE_MASK
 from app.repositories.analytics_repository import AnalyticsRepository
 from app.timing import QueryTimer
 
@@ -28,21 +29,21 @@ class AnalyticsService:
             return {"metric_id": metric_id, "metric_name": PRIVATE_MASK, "start": start, "end": end, "points": [], "blocked": True}
 
         mt = metric["type"]
-        if mt == "integration":
-            mt = metric["ic_value_type"] or "number"
+        if mt == MetricType.integration:
+            mt = metric["ic_value_type"] or MetricType.number
         start_d, end_d = date_type.fromisoformat(start), date_type.fromisoformat(end)
 
-        if metric["type"] == "computed":
+        if metric["type"] == MetricType.computed:
             formula = ValueConverter.parse_formula(metric.get("formula"))
             ref_ids = get_referenced_metric_ids(formula)
             aggregated = await ValueFetcher(self.conn).values_by_date_for_computed(
                 formula, metric.get("result_type") or "float", ref_ids, start_d, end_d, self.user_id)
-        elif mt == "text":
+        elif mt == MetricType.text:
             rows = await self.repo.get_notes_by_date(metric_id, start_d, end_d)
             qt.mark("values"); qt.log()
             return {"metric_id": metric_id, "metric_name": metric["name"], "metric_type": "text",
                     "start": start, "end": end, "points": [{"date": str(r["date"]), "value": r["cnt"]} for r in rows]}
-        elif mt == "enum":
+        elif mt == MetricType.enum:
             opts = await self.repo.get_enum_options_enabled(metric_id)
             option_series = {}
             for o in opts:
@@ -58,7 +59,7 @@ class AnalyticsService:
         qt.mark("values")
         points = [{"date": d, "value": v} for d, v in sorted(aggregated.items())]
         display_name = metric["name"]
-        if mt == "bool" and await self.repo.has_enabled_slots(metric_id):
+        if mt == MetricType.bool and await self.repo.has_enabled_slots(metric_id):
             display_name = f"{display_name} (хоть раз)"
         qt.mark("display_name"); qt.log()
         return {"metric_id": metric_id, "metric_name": display_name, "start": start, "end": end, "points": points}
@@ -72,16 +73,16 @@ class AnalyticsService:
             return {"blocked": True}
         qt.mark("metric")
         mt = metric["type"]
-        if mt == "integration":
-            mt = metric["ic_value_type"] or "number"
+        if mt == MetricType.integration:
+            mt = metric["ic_value_type"] or MetricType.number
         start_date, end_date = date_type.fromisoformat(start), date_type.fromisoformat(end)
         total_days = (end_date - start_date).days + 1
 
-        if metric["type"] == "computed":
+        if metric["type"] == MetricType.computed:
             return await self._computed_stats(metric, start_date, end_date, total_days, metric_id)
-        if mt == "text":
+        if mt == MetricType.text:
             return await self._text_stats(metric_id, start_date, end_date, total_days, qt)
-        if mt == "enum":
+        if mt == MetricType.enum:
             return await self._enum_stats(metric_id, start_date, end_date, total_days, qt)
         return await self._numeric_stats(metric, mt, metric_id, start_date, end_date, total_days, qt)
 
@@ -95,15 +96,15 @@ class AnalyticsService:
             return {"blocked": True}
         qt.mark("metric")
         mt = metric["type"]
-        if mt == "integration":
-            mt = metric["ic_value_type"] or "number"
-        if mt == "computed":
+        if mt == MetricType.integration:
+            mt = metric["ic_value_type"] or MetricType.number
+        if mt == MetricType.computed:
             mt = metric.get("result_type") or "float"
         if mt not in {"number", "duration", "scale", "time", "int", "float"}:
             return {"not_applicable": True, "reason": f"Type '{mt}' does not support distribution"}
         start_date, end_date = date_type.fromisoformat(start), date_type.fromisoformat(end)
         fetcher = ValueFetcher(self.conn)
-        if metric["type"] == "computed":
+        if metric["type"] == MetricType.computed:
             formula = ValueConverter.parse_formula(metric.get("formula"))
             ref_ids = get_referenced_metric_ids(formula)
             aggregated = await fetcher.values_by_date_for_computed(formula, metric.get("result_type") or "float", ref_ids, start_date, end_date, self.user_id)
@@ -201,7 +202,7 @@ class AnalyticsService:
         te = len(aggregated); fr = round(te / total_days * 100, 1) if total_days > 0 else 0
         result: dict = {"metric_id": metric_id, "metric_type": mt, "total_entries": te, "total_days": total_days, "fill_rate": fr}
         values = sorted(aggregated.values())
-        if mt == "bool":
+        if mt == MetricType.bool:
             yc = sum(1 for v in aggregated.values() if v == 1.0); nc = te - yc
             yp = round(yc / te * 100, 1) if te > 0 else 0
             srows = await self.repo.get_bool_streak_rows(metric_id)
@@ -214,18 +215,18 @@ class AnalyticsService:
                 if r["day_value"] is True: run += 1; ls = max(ls, run)
                 else: run = 0
             result.update({"yes_percent": yp, "yes_count": yc, "no_count": nc, "current_streak": cs, "longest_streak": ls})
-        elif mt == "time":
+        elif mt == MetricType.time:
             if values:
                 am = mean(values)
                 result.update({"average": f"{int(am)//60:02d}:{int(am)%60:02d}", "earliest": f"{int(min(values))//60:02d}:{int(min(values))%60:02d}", "latest": f"{int(max(values))//60:02d}:{int(max(values))%60:02d}"})
             else: result.update({"average": "--:--", "earliest": "--:--", "latest": "--:--"})
-        elif mt == "duration":
+        elif mt == MetricType.duration:
             _f = lambda m: f"{int(round(m))//60}ч {int(round(m))%60}м"
             if values: result.update({"average": _f(mean(values)), "min": _f(min(values)), "max": _f(max(values)), "median": _f(median(values))})
             else: result.update({"average": "0ч 0м", "min": "0ч 0м", "max": "0ч 0м", "median": "0ч 0м"})
-        elif mt in ("number", "scale"):
-            if values: result.update({"average": round(mean(values), 1), "min": round(min(values), 1), "max": round(max(values), 1)} | ({"median": round(median(values), 1)} if mt == "number" else {}))
-            else: result.update({"average": 0, "min": 0, "max": 0} | ({"median": 0} if mt == "number" else {}))
+        elif mt in (MetricType.number, MetricType.scale):
+            if values: result.update({"average": round(mean(values), 1), "min": round(min(values), 1), "max": round(max(values), 1)} | ({"median": round(median(values), 1)} if mt == MetricType.number else {}))
+            else: result.update({"average": 0, "min": 0, "max": 0} | ({"median": 0} if mt == MetricType.number else {}))
         result["display_stats"] = PairFormatter.build_display_stats(result, mt)
         qt.log()
         return result

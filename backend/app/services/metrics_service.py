@@ -7,10 +7,11 @@ from app.domain.exceptions import InvalidOperationError, ConflictError
 from app.formula import validate_formula, get_referenced_metric_ids
 from app.integrations.todoist.registry import TODOIST_METRICS, TODOIST_ICON
 from app.integrations.activitywatch.registry import ACTIVITYWATCH_METRICS, ACTIVITYWATCH_ICON
-from app.metric_helpers import build_metric_out, get_metric_slots, get_enum_options
+from app.services.metric_builder import build_metric_out
 from app.repositories.metric_repository import MetricRepository
 from app.repositories.metric_config_repository import MetricConfigRepository
-from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut, MetricType
+from app.domain.enums import MetricType
+from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut
 from app.services.metric_conversion_service import MetricConversionService, ALLOWED_CONVERSIONS
 
 
@@ -29,14 +30,14 @@ class MetricsService:
     async def list_all(self, enabled_only: bool, privacy_mode: bool) -> list[MetricDefinitionOut]:
         rows = await self.repo.get_all_with_config(enabled_only)
         metric_ids = [r["id"] for r in rows]
-        slots_map = await get_metric_slots(self.conn, metric_ids) if metric_ids else {}
-        enum_opts_map = await get_enum_options(self.conn, metric_ids) if metric_ids else {}
+        slots_map = await self.repo.get_slots_for_metrics(metric_ids) if metric_ids else {}
+        enum_opts_map = await self.repo.get_enum_options_for_metrics(metric_ids) if metric_ids else {}
         return [await build_metric_out(r, slots_map.get(r["id"]), enum_opts_map.get(r["id"]), privacy_mode) for r in rows]
 
     async def get_one(self, metric_id: int, privacy_mode: bool) -> MetricDefinitionOut:
         row = await self.repo.get_one_with_config(metric_id)
-        slots_map = await get_metric_slots(self.conn, [metric_id])
-        enum_opts_map = await get_enum_options(self.conn, [metric_id])
+        slots_map = await self.repo.get_slots_for_metrics([metric_id])
+        enum_opts_map = await self.repo.get_enum_options_for_metrics([metric_id])
         return await build_metric_out(row, slots_map.get(metric_id), enum_opts_map.get(metric_id), privacy_mode)
 
     async def reorder(self, items: list[dict]) -> None:
@@ -81,8 +82,8 @@ class MetricsService:
         from app.services.metric_markdown_service import build_markdown_table
         rows = await self.repo.get_all_with_config()
         metric_ids = [r["id"] for r in rows]
-        slots_map = await get_metric_slots(self.conn, metric_ids) if metric_ids else {}
-        enum_opts_map = await get_enum_options(self.conn, metric_ids) if metric_ids else {}
+        slots_map = await self.repo.get_slots_for_metrics(metric_ids) if metric_ids else {}
+        enum_opts_map = await self.repo.get_enum_options_for_metrics(metric_ids) if metric_ids else {}
         metrics = [await build_metric_out(r, slots_map.get(r["id"]), enum_opts_map.get(r["id"]), False) for r in rows]
         cat_rows = await self.repo.get_all_categories()
         return build_markdown_table(metrics, cat_rows)

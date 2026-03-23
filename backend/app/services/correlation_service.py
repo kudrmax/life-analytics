@@ -9,8 +9,9 @@ from app.analytics.source_reconstructor import SourceReconstructor
 from app.analytics.time_series import TimeSeriesTransform
 from app.analytics.value_converter import ValueConverter
 from app.analytics.value_fetcher import ValueFetcher
+from app.domain.enums import MetricType
 from app.formula import get_referenced_metric_ids
-from app.metric_helpers import is_blocked, PRIVATE_MASK
+from app.domain.privacy import is_blocked, PRIVATE_MASK
 from app.repositories.analytics_repository import AnalyticsRepository
 from app.source_key import SourceKey, STREAK_TYPES
 
@@ -135,11 +136,11 @@ class CorrelationService:
         common = sorted(set(data_a) & set(data_b))
 
         type_a, type_b = row["type_a"], row["type_b"]
-        if type_a == "computed" and row["metric_a_id"]:
+        if type_a == MetricType.computed and row["metric_a_id"]:
             rt = await self.repo.get_computed_result_type(row["metric_a_id"])
             if rt:
                 type_a = rt
-        if type_b == "computed" and row["metric_b_id"]:
+        if type_b == MetricType.computed and row["metric_b_id"]:
             rt = await self.repo.get_computed_result_type(row["metric_b_id"])
             if rt:
                 type_b = rt
@@ -176,7 +177,7 @@ class CorrelationService:
     # ── Helpers ───────────────────────────────────────────────────
 
     async def _fetch_values(self, fetcher, metric, metric_id, start_date, end_date) -> dict:
-        if metric["type"] == "computed":
+        if metric["type"] == MetricType.computed:
             formula = ValueConverter.parse_formula(metric.get("formula"))
             ref_ids = get_referenced_metric_ids(formula)
             return await fetcher.values_by_date_for_computed(

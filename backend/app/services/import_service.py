@@ -5,6 +5,7 @@ import json
 import zipfile
 from io import StringIO, BytesIO
 
+from app.domain.enums import MetricType
 from app.domain.exceptions import InvalidOperationError
 from app.repositories.import_repository import ImportRepository
 from app.services.import_entries_service import EntryImporter
@@ -57,9 +58,10 @@ class ImportService:
 
                 cat_id = await self._resolve_category(row)
                 existing = await self.repo.find_metric_by_slug(slug)
-                mt = row.get('type', 'bool')
-                if mt not in ('bool', 'time', 'number', 'duration', 'scale', 'computed', 'integration', 'enum', 'text'):
-                    mt = 'bool'
+                mt = row.get('type', MetricType.bool.value)
+                valid_types = {t.value for t in MetricType}
+                if mt not in valid_types:
+                    mt = MetricType.bool.value
 
                 parsed = self._parse_row(row)
                 slot_configs = await self._parse_slot_configs(row)
@@ -83,13 +85,13 @@ class ImportService:
     async def _build_slug_lookups(self) -> tuple[dict, dict]:
         rows = await self.repo.get_metrics_with_types()
         s2id = {r["slug"]: r["id"] for r in rows}
-        s2t = {r["slug"]: (r["ic_value_type"] or "number") if r["type"] == "integration" else r["type"] for r in rows}
+        s2t = {r["slug"]: (r["ic_value_type"] or MetricType.number) if r["type"] == MetricType.integration else r["type"] for r in rows}
         return s2id, s2t
 
     async def _import_computed_formulas(self, zf, slug_to_id: dict) -> None:
         text = zf.read('metrics.csv').decode('utf-8')
         for row in csv.DictReader(StringIO(text)):
-            if row.get('type') != 'computed': continue
+            if row.get('type') != MetricType.computed.value: continue
             mid = slug_to_id.get(row.get('slug', ''))
             if not mid: continue
             raw = row.get('formula', '')
@@ -178,31 +180,31 @@ class ImportService:
         except (json.JSONDecodeError, TypeError): return []
 
     async def _update_configs(self, mid, mt, row, p, slot_configs) -> None:
-        if mt == 'scale' and p["smin"] and p["smax"] and p["sstep"]:
+        if mt == MetricType.scale.value and p["smin"] and p["smax"] and p["sstep"]:
             cfg = await self.repo.get_scale_config(mid)
             await self.repo.upsert_scale_config(mid, int(p["smin"]), int(p["smax"]), int(p["sstep"]), p["scale_labels"], cfg is not None)
-        if mt == 'integration' and p["provider"] and p["mkey"]:
+        if mt == MetricType.integration.value and p["provider"] and p["mkey"]:
             await self.repo.upsert_integration_config(mid, p["provider"], p["mkey"], p["vtype"] or 'number')
             if p["mkey"] == 'filter_tasks_count' and p["fname"]:
                 await self.repo.upsert_integration_filter_config(mid, p["fname"])
             elif p["mkey"] == 'query_tasks_count' and p["fquery"]:
                 await self.repo.upsert_integration_query_config(mid, p["fquery"])
-        if mt == 'enum' and p["enum_opts"]:
+        if mt == MetricType.enum.value and p["enum_opts"]:
             await self.repo.upsert_enum_config(mid, p["multi"])
             await self._import_enum_options(mid, p["enum_opts"])
         if len(slot_configs) >= 2:
             await self._import_slots(mid, slot_configs)
 
     async def _create_configs(self, mid, mt, row, p, slot_configs) -> None:
-        if mt == 'scale':
+        if mt == MetricType.scale.value:
             await self.repo.upsert_scale_config(mid, int(p["smin"] or 1), int(p["smax"] or 5), int(p["sstep"] or 1), p["scale_labels"], False)
-        if mt == 'integration' and p["provider"] and p["mkey"]:
+        if mt == MetricType.integration.value and p["provider"] and p["mkey"]:
             await self.repo.upsert_integration_config(mid, p["provider"], p["mkey"], p["vtype"] or 'number')
             if p["mkey"] == 'filter_tasks_count' and p["fname"]:
                 await self.repo.upsert_integration_filter_config(mid, p["fname"])
             elif p["mkey"] == 'query_tasks_count' and p["fquery"]:
                 await self.repo.upsert_integration_query_config(mid, p["fquery"])
-        if mt == 'enum' and p["enum_opts"]:
+        if mt == MetricType.enum.value and p["enum_opts"]:
             await self.repo.upsert_enum_config(mid, p["multi"])
             for i, label in enumerate(p["enum_opts"]):
                 await self.repo.insert_enum_option(mid, i, label)

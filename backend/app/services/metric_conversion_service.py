@@ -3,12 +3,13 @@
 from app.domain.exceptions import InvalidOperationError
 from app.repositories.metric_config_repository import MetricConfigRepository
 from app.repositories.metric_conversion_repository import MetricConversionRepository
-from app.schemas import MetricConvertRequest, ConversionPreview, MetricConvertResponse, MetricType
+from app.domain.enums import MetricType
+from app.schemas import MetricConvertRequest, ConversionPreview, MetricConvertResponse
 
-ALLOWED_CONVERSIONS: dict[str, list[str]] = {
-    "scale": ["scale"],
-    "bool": ["enum"],
-    "enum": ["scale"],
+ALLOWED_CONVERSIONS: dict[MetricType, list[MetricType]] = {
+    MetricType.scale: [MetricType.scale],
+    MetricType.bool: [MetricType.enum],
+    MetricType.enum: [MetricType.scale],
 }
 
 
@@ -20,28 +21,28 @@ class MetricConversionService:
         self.conn = conn
 
     async def preview(
-        self, metric_id: int, source_type: str, target_type: MetricType,
+        self, metric_id: int, source_type: MetricType, target_type: MetricType,
     ) -> ConversionPreview:
         conv = MetricConversionRepository(self.conn, self.cfg_repo.user_id)
         allowed = ALLOWED_CONVERSIONS.get(source_type, [])
-        if target_type.value not in allowed:
-            raise InvalidOperationError(f"Conversion from {source_type} to {target_type.value} is not supported")
+        if target_type not in allowed:
+            raise InvalidOperationError(f"Conversion from {source_type} to {target_type} is not supported")
 
         entries_by_value: list[dict] = []
         total = 0
 
-        if source_type == "scale":
+        if source_type == MetricType.scale:
             rows = await conv.get_scale_value_distribution(metric_id)
             for r in rows:
                 entries_by_value.append({"value": str(r["value"]), "display": str(r["value"]), "count": r["cnt"]})
                 total += r["cnt"]
-        elif source_type == "bool":
+        elif source_type == MetricType.bool:
             rows = await conv.get_bool_value_distribution(metric_id)
             for r in rows:
                 display = "Да" if r["value"] else "Нет"
                 entries_by_value.append({"value": str(r["value"]).lower(), "display": display, "count": r["cnt"]})
                 total += r["cnt"]
-        elif source_type == "enum":
+        elif source_type == MetricType.enum:
             if await conv.get_enum_multi_select(metric_id):
                 raise InvalidOperationError("Cannot convert multi-select enum to scale")
             opts = await conv.get_all_enum_options(metric_id)
@@ -62,21 +63,21 @@ class MetricConversionService:
         return ConversionPreview(total_entries=total, entries_by_value=entries_by_value)
 
     async def convert(
-        self, metric_id: int, source_type: str, data: MetricConvertRequest,
+        self, metric_id: int, source_type: MetricType, data: MetricConvertRequest,
     ) -> MetricConvertResponse:
         conv = MetricConversionRepository(self.conn, self.cfg_repo.user_id)
-        target_type = data.target_type.value
+        target_type = data.target_type
         allowed = ALLOWED_CONVERSIONS.get(source_type, [])
         if target_type not in allowed:
             raise InvalidOperationError(f"Conversion from {source_type} to {target_type} is not supported")
 
         converted = 0
         deleted = 0
-        if source_type == "scale" and target_type == "scale":
+        if source_type == MetricType.scale and target_type == MetricType.scale:
             converted, deleted = await self._scale_to_scale(conv, metric_id, data)
-        elif source_type == "bool" and target_type == "enum":
+        elif source_type == MetricType.bool and target_type == MetricType.enum:
             converted, deleted = await self._bool_to_enum(conv, metric_id, data)
-        elif source_type == "enum" and target_type == "scale":
+        elif source_type == MetricType.enum and target_type == MetricType.scale:
             converted, deleted = await self._enum_to_scale(conv, metric_id, data)
 
         return MetricConvertResponse(converted=converted, deleted=deleted)
@@ -141,7 +142,7 @@ class MetricConversionService:
                 converted += await conv.convert_bool_to_enum_values(metric_id, opt_id, bool_str == "true")
 
         await conv.delete_all_bool_values(metric_id)
-        await self.cfg_repo.update_metric_type(metric_id, "enum")
+        await self.cfg_repo.update_metric_type(metric_id, MetricType.enum.value)
         return converted, deleted
 
     async def _enum_to_scale(
@@ -172,7 +173,7 @@ class MetricConversionService:
         await conv.delete_enum_options(metric_id)
         await conv.delete_enum_config(metric_id)
         await conv.insert_scale_config_with_labels(metric_id, data.scale_min, data.scale_max, data.scale_step, data.scale_labels)
-        await self.cfg_repo.update_metric_type(metric_id, "scale")
+        await self.cfg_repo.update_metric_type(metric_id, MetricType.scale.value)
         return converted, deleted
 
 
