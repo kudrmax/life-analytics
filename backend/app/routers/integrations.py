@@ -14,6 +14,7 @@ from app.integrations.todoist.service import fetch_and_store
 from app.integrations.activitywatch.service import process_and_store as aw_process_and_store
 from app.integrations.activitywatch.registry import ACTIVITYWATCH_METRICS, ACTIVITYWATCH_ICON
 from app.schemas import AWSyncRequest
+from app.repositories.integrations_repository import IntegrationsRepository
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
@@ -26,13 +27,10 @@ async def list_integrations(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    rows = await db.fetch(
-        "SELECT provider, enabled, created_at FROM user_integrations WHERE user_id = $1",
-        current_user["id"],
-    )
+    repo = IntegrationsRepository(db, current_user["id"])
+    rows = await repo.get_user_integrations()
     connected = {r["provider"]: r for r in rows}
     result = []
-    # Todoist — show only if configured on server
     if TODOIST_CLIENT_ID:
         if "todoist" in connected:
             r = connected["todoist"]
@@ -47,11 +45,7 @@ async def list_integrations(
                 "enabled": False,
                 "connected_at": None,
             })
-    # ActivityWatch — always available (no server-side config needed)
-    aw_settings = await db.fetchrow(
-        "SELECT enabled FROM activitywatch_settings WHERE user_id = $1",
-        current_user["id"],
-    )
+    aw_settings = await repo.get_aw_settings()
     result.append({
         "provider": "activitywatch",
         "enabled": aw_settings["enabled"] if aw_settings else False,
@@ -121,13 +115,8 @@ async def todoist_callback(
         raise HTTPException(400, "Token verification failed")
 
     encrypted = encrypt_token(access_token)
-    await db.execute(
-        """INSERT INTO user_integrations (user_id, provider, encrypted_token)
-           VALUES ($1, 'todoist', $2)
-           ON CONFLICT (user_id, provider) DO UPDATE
-           SET encrypted_token = EXCLUDED.encrypted_token, enabled = TRUE""",
-        user_id, encrypted,
-    )
+    repo = IntegrationsRepository(db, user_id)
+    await repo.upsert_todoist_token(encrypted)
 
     return RedirectResponse("/")
 
@@ -153,17 +142,8 @@ async def disconnect_integration(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    await db.execute(
-        """UPDATE metric_definitions SET enabled = FALSE
-           WHERE user_id = $1 AND id IN (
-               SELECT metric_id FROM integration_config WHERE provider = $2
-           )""",
-        current_user["id"], provider,
-    )
-    result = await db.execute(
-        "DELETE FROM user_integrations WHERE user_id = $1 AND provider = $2",
-        current_user["id"], provider,
-    )
+    repo = IntegrationsRepository(db, current_user["id"])
+    result = await repo.disconnect_provider(provider)
     if result == "DELETE 0":
         raise HTTPException(404, "Integration not found")
     return {"status": "disconnected"}
@@ -217,10 +197,8 @@ async def aw_status(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    settings = await db.fetchrow(
-        "SELECT enabled, aw_url FROM activitywatch_settings WHERE user_id = $1",
-        current_user["id"],
-    )
+    repo = IntegrationsRepository(db, current_user["id"])
+    settings = await repo.get_aw_settings()
     if not settings:
         return {"enabled": False, "aw_url": "http://localhost:5600", "configured": False}
     return {
@@ -235,12 +213,8 @@ async def aw_enable(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    await db.execute(
-        """INSERT INTO activitywatch_settings (user_id, enabled)
-           VALUES ($1, TRUE)
-           ON CONFLICT (user_id) DO UPDATE SET enabled = TRUE""",
-        current_user["id"],
-    )
+    repo = IntegrationsRepository(db, current_user["id"])
+    await repo.aw_enable()
     return {"status": "enabled"}
 
 
@@ -249,10 +223,8 @@ async def aw_disable(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    await db.execute(
-        "UPDATE activitywatch_settings SET enabled = FALSE WHERE user_id = $1",
-        current_user["id"],
-    )
+    repo = IntegrationsRepository(db, current_user["id"])
+    await repo.aw_disable()
     return {"status": "disabled"}
 
 
@@ -284,18 +256,10 @@ async def aw_summary(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    repo = IntegrationsRepository(db, current_user["id"])
     d = date_type.fromisoformat(date)
-    summary = await db.fetchrow(
-        "SELECT total_seconds, active_seconds, synced_at FROM activitywatch_daily_summary WHERE user_id = $1 AND date = $2",
-        current_user["id"], d,
-    )
-    apps = await db.fetch(
-        """SELECT app_name, source, duration_seconds
-           FROM activitywatch_app_usage
-           WHERE user_id = $1 AND date = $2
-           ORDER BY duration_seconds DESC""",
-        current_user["id"], d,
-    )
+    summary = await repo.get_aw_daily_summary(d)
+    apps = await repo.get_aw_app_usage(d)
     if not summary:
         return {"date": date, "synced": False, "total_seconds": 0, "active_seconds": 0, "afk_percent": 0, "apps": [], "domains": [], "all_apps": [], "all_domains": []}
 
@@ -341,15 +305,10 @@ async def aw_trends(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    repo = IntegrationsRepository(db, current_user["id"])
     start_d = date_type.fromisoformat(start)
     end_d = date_type.fromisoformat(end)
-    rows = await db.fetch(
-        """SELECT date, total_seconds, active_seconds
-           FROM activitywatch_daily_summary
-           WHERE user_id = $1 AND date >= $2 AND date <= $3
-           ORDER BY date""",
-        current_user["id"], start_d, end_d,
-    )
+    rows = await repo.get_aw_trends(start_d, end_d)
     points = []
     for r in rows:
         total_h = round(r["total_seconds"] / 3600, 2)
@@ -375,13 +334,8 @@ async def aw_list_categories(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    rows = await db.fetch(
-        """SELECT id, name, color, sort_order
-           FROM activitywatch_categories
-           WHERE user_id = $1
-           ORDER BY sort_order, id""",
-        current_user["id"],
-    )
+    repo = IntegrationsRepository(db, current_user["id"])
+    rows = await repo.get_aw_categories()
     return [dict(r) for r in rows]
 
 
@@ -395,19 +349,10 @@ async def aw_create_category(
     if not name:
         raise HTTPException(400, "name is required")
     color = body.get("color", "#6c5ce7")
-    max_order = await db.fetchval(
-        "SELECT COALESCE(MAX(sort_order), -1) FROM activitywatch_categories WHERE user_id = $1",
-        current_user["id"],
-    )
-    try:
-        cat_id = await db.fetchval(
-            """INSERT INTO activitywatch_categories (user_id, name, color, sort_order)
-               VALUES ($1, $2, $3, $4) RETURNING id""",
-            current_user["id"], name, color, max_order + 1,
-        )
-    except Exception:
-        raise HTTPException(409, "Category with this name already exists")
-    return {"id": cat_id, "name": name, "color": color, "sort_order": max_order + 1}
+    repo = IntegrationsRepository(db, current_user["id"])
+    sort_order = await repo.get_aw_next_cat_sort_order()
+    cat_id = await repo.create_aw_category(name, color, sort_order)
+    return {"id": cat_id, "name": name, "color": color, "sort_order": sort_order}
 
 
 @router.put("/activitywatch/categories/{cat_id}")
@@ -417,10 +362,8 @@ async def aw_update_category(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    row = await db.fetchrow(
-        "SELECT id FROM activitywatch_categories WHERE id = $1 AND user_id = $2",
-        cat_id, current_user["id"],
-    )
+    repo = IntegrationsRepository(db, current_user["id"])
+    row = await repo.get_aw_category(cat_id)
     if not row:
         raise HTTPException(404, "Category not found")
     updates, params = [], []
@@ -435,11 +378,7 @@ async def aw_update_category(
         idx += 1
     if not updates:
         raise HTTPException(400, "Nothing to update")
-    params.extend([cat_id, current_user["id"]])
-    await db.execute(
-        f"UPDATE activitywatch_categories SET {', '.join(updates)} WHERE id = ${idx} AND user_id = ${idx + 1}",
-        *params,
-    )
+    await repo.update_aw_category(cat_id, updates, params)
     return {"status": "updated"}
 
 
@@ -449,10 +388,8 @@ async def aw_delete_category(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    result = await db.execute(
-        "DELETE FROM activitywatch_categories WHERE id = $1 AND user_id = $2",
-        cat_id, current_user["id"],
-    )
+    repo = IntegrationsRepository(db, current_user["id"])
+    result = await repo.delete_aw_category(cat_id)
     if result == "DELETE 0":
         raise HTTPException(404, "Category not found")
     return {"status": "deleted"}
@@ -463,19 +400,8 @@ async def aw_list_apps(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    rows = await db.fetch(
-        """SELECT DISTINCT au.app_name,
-                  acm.activitywatch_category_id,
-                  ac.name AS category_name,
-                  ac.color AS category_color
-           FROM activitywatch_app_usage au
-           LEFT JOIN activitywatch_app_category_map acm
-               ON acm.user_id = au.user_id AND acm.app_name = au.app_name
-           LEFT JOIN activitywatch_categories ac ON ac.id = acm.activitywatch_category_id
-           WHERE au.user_id = $1 AND au.source = 'window'
-           ORDER BY au.app_name""",
-        current_user["id"],
-    )
+    repo = IntegrationsRepository(db, current_user["id"])
+    rows = await repo.get_aw_apps_with_categories()
     return [
         {
             "app_name": r["app_name"],
@@ -494,25 +420,15 @@ async def aw_set_app_category(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    repo = IntegrationsRepository(db, current_user["id"])
     category_id = body.get("category_id")
     if category_id is None:
-        await db.execute(
-            "DELETE FROM activitywatch_app_category_map WHERE user_id = $1 AND app_name = $2",
-            current_user["id"], app_name,
-        )
+        await repo.remove_app_category(app_name)
     else:
-        cat = await db.fetchrow(
-            "SELECT id FROM activitywatch_categories WHERE id = $1 AND user_id = $2",
-            category_id, current_user["id"],
-        )
+        cat = await repo.get_aw_category(category_id)
         if not cat:
             raise HTTPException(404, "Category not found")
-        await db.execute(
-            """INSERT INTO activitywatch_app_category_map (user_id, app_name, activitywatch_category_id)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (user_id, app_name) DO UPDATE SET activitywatch_category_id = EXCLUDED.activitywatch_category_id""",
-            current_user["id"], app_name, category_id,
-        )
+        await repo.upsert_app_category(app_name, category_id)
     return {"status": "updated"}
 
 
@@ -526,26 +442,16 @@ async def aw_batch_set_category(
     category_id = body.get("category_id")
     if not app_names:
         raise HTTPException(400, "app_names is required")
+    repo = IntegrationsRepository(db, current_user["id"])
     if category_id is not None:
-        cat = await db.fetchrow(
-            "SELECT id FROM activitywatch_categories WHERE id = $1 AND user_id = $2",
-            category_id, current_user["id"],
-        )
+        cat = await repo.get_aw_category(category_id)
         if not cat:
             raise HTTPException(404, "Category not found")
     for app_name in app_names:
         if category_id is None:
-            await db.execute(
-                "DELETE FROM activitywatch_app_category_map WHERE user_id = $1 AND app_name = $2",
-                current_user["id"], app_name,
-            )
+            await repo.remove_app_category(app_name)
         else:
-            await db.execute(
-                """INSERT INTO activitywatch_app_category_map (user_id, app_name, activitywatch_category_id)
-                   VALUES ($1, $2, $3)
-                   ON CONFLICT (user_id, app_name) DO UPDATE SET activitywatch_category_id = EXCLUDED.activitywatch_category_id""",
-                current_user["id"], app_name, category_id,
-            )
+            await repo.upsert_app_category(app_name, category_id)
     return {"status": "updated", "count": len(app_names)}
 
 
