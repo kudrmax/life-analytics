@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.database import get_db
 from app.auth import get_current_user
 from app.schemas import InsightCreate, InsightUpdate, InsightOut, InsightMetricOut
+from app.repositories.insights_repository import InsightsRepository
 
 router = APIRouter(prefix="/api/insights", tags=["insights"])
 
@@ -37,18 +38,8 @@ async def list_insights(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    rows = await db.fetch(
-        """SELECT i.id, i.text, i.created_at, i.updated_at,
-                  im.id AS im_id, im.metric_id, im.custom_label,
-                  im.sort_order AS im_sort_order,
-                  md.name AS metric_name, md.icon AS metric_icon
-           FROM insights i
-           LEFT JOIN insight_metrics im ON im.insight_id = i.id
-           LEFT JOIN metric_definitions md ON md.id = im.metric_id
-           WHERE i.user_id = $1
-           ORDER BY i.updated_at DESC, im.sort_order""",
-        current_user["id"],
-    )
+    repo = InsightsRepository(db, current_user["id"])
+    rows = await repo.get_all_with_metrics()
     return _build_insights(rows)
 
 
@@ -58,35 +49,23 @@ async def create_insight(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    repo = InsightsRepository(db, current_user["id"])
     text = data.text.strip()
     async with db.transaction():
-        row = await db.fetchrow(
-            """INSERT INTO insights (user_id, text)
-               VALUES ($1, $2)
-               RETURNING id, text, created_at, updated_at""",
-            current_user["id"], text,
-        )
+        row = await repo.create(text)
         insight_id = row["id"]
         metrics_out: list[InsightMetricOut] = []
         for i, m in enumerate(data.metrics):
-            im_row = await db.fetchrow(
-                """INSERT INTO insight_metrics (insight_id, metric_id, custom_label, sort_order)
-                   VALUES ($1, $2, $3, $4)
-                   RETURNING id""",
-                insight_id, m.metric_id, m.custom_label, i,
-            )
+            im_id = await repo.insert_metric(insight_id, m.metric_id, m.custom_label, i)
             metric_name: str | None = None
             metric_icon: str | None = None
             if m.metric_id is not None:
-                md = await db.fetchrow(
-                    "SELECT name, icon FROM metric_definitions WHERE id = $1 AND user_id = $2",
-                    m.metric_id, current_user["id"],
-                )
+                md = await repo.get_metric_name_icon(m.metric_id)
                 if md:
                     metric_name = md["name"]
                     metric_icon = md["icon"]
             metrics_out.append(InsightMetricOut(
-                id=im_row["id"],
+                id=im_id,
                 metric_id=m.metric_id,
                 metric_name=metric_name,
                 metric_icon=metric_icon,
@@ -110,50 +89,20 @@ async def update_insight(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    existing = await db.fetchrow(
-        "SELECT id FROM insights WHERE id = $1 AND user_id = $2",
-        insight_id, current_user["id"],
-    )
-    if not existing:
-        raise HTTPException(404, "Insight not found")
+    repo = InsightsRepository(db, current_user["id"])
+    await repo.get_by_id(insight_id)
 
     async with db.transaction():
         if data.text is not None:
-            await db.execute(
-                "UPDATE insights SET text = $1, updated_at = now() WHERE id = $2",
-                data.text.strip(), insight_id,
-            )
+            await repo.update_text(insight_id, data.text.strip())
 
         if data.metrics is not None:
-            await db.execute(
-                "DELETE FROM insight_metrics WHERE insight_id = $1",
-                insight_id,
-            )
+            await repo.delete_all_metrics(insight_id)
             for i, m in enumerate(data.metrics):
-                await db.execute(
-                    """INSERT INTO insight_metrics (insight_id, metric_id, custom_label, sort_order)
-                       VALUES ($1, $2, $3, $4)""",
-                    insight_id, m.metric_id, m.custom_label, i,
-                )
-            # Touch updated_at even if only metrics changed
-            await db.execute(
-                "UPDATE insights SET updated_at = now() WHERE id = $1",
-                insight_id,
-            )
+                await repo.insert_metric(insight_id, m.metric_id, m.custom_label, i)
+            await repo.touch_updated_at(insight_id)
 
-    # Re-fetch full insight
-    rows = await db.fetch(
-        """SELECT i.id, i.text, i.created_at, i.updated_at,
-                  im.id AS im_id, im.metric_id, im.custom_label,
-                  im.sort_order AS im_sort_order,
-                  md.name AS metric_name, md.icon AS metric_icon
-           FROM insights i
-           LEFT JOIN insight_metrics im ON im.insight_id = i.id
-           LEFT JOIN metric_definitions md ON md.id = im.metric_id
-           WHERE i.id = $1
-           ORDER BY im.sort_order""",
-        insight_id,
-    )
+    rows = await repo.get_one_with_metrics(insight_id)
     return _build_insights(rows)[0]
 
 
@@ -163,10 +112,6 @@ async def delete_insight(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    row = await db.fetchrow(
-        "SELECT id FROM insights WHERE id = $1 AND user_id = $2",
-        insight_id, current_user["id"],
-    )
-    if not row:
-        raise HTTPException(404, "Insight not found")
-    await db.execute("DELETE FROM insights WHERE id = $1", insight_id)
+    repo = InsightsRepository(db, current_user["id"])
+    await repo.get_by_id(insight_id)
+    await repo.delete(insight_id)
