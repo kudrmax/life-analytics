@@ -11,6 +11,7 @@ from app.formula import convert_metric_value, evaluate_formula
 from app.metric_helpers import format_display_value
 from app.timing import QueryTimer
 from app.analytics.value_converter import ValueConverter
+from app.repositories.daily_repository import DailyRepository
 
 _parse_formula = ValueConverter.parse_formula
 
@@ -61,49 +62,19 @@ router = APIRouter(prefix="/api/daily", tags=["daily"])
 @router.get("/{date}")
 async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depends(get_current_user), privacy_mode: bool = Depends(get_privacy_mode)):
     qt = QueryTimer(f"daily/{date}")
-    metrics = await db.fetch(
-        """SELECT md.*, sc.scale_min, sc.scale_max, sc.scale_step, sc.labels AS scale_labels,
-                  cc.formula, cc.result_type,
-                  ic.provider, ic.metric_key, ic.value_type,
-                  ifc.filter_name, iqc.filter_query,
-                  icatc.activitywatch_category_id, iapc.app_name AS config_app_name,
-                  ec.multi_select,
-                  mcond.depends_on_metric_id AS condition_metric_id,
-                  mcond.condition_type, mcond.condition_value
-           FROM metric_definitions md
-           LEFT JOIN scale_config sc ON sc.metric_id = md.id
-           LEFT JOIN computed_config cc ON cc.metric_id = md.id
-           LEFT JOIN integration_config ic ON ic.metric_id = md.id
-           LEFT JOIN integration_filter_config ifc ON ifc.metric_id = md.id
-           LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
-           LEFT JOIN integration_category_config icatc ON icatc.metric_id = md.id
-           LEFT JOIN integration_app_config iapc ON iapc.metric_id = md.id
-           LEFT JOIN enum_config ec ON ec.metric_id = md.id
-           LEFT JOIN metric_condition mcond ON mcond.metric_id = md.id
-           WHERE md.enabled = TRUE AND md.user_id = $1
-           ORDER BY md.sort_order, md.id""",
-        current_user["id"],
-    )
+    repo = DailyRepository(db, current_user["id"])
+
+    metrics = await repo.get_enabled_metrics_with_config()
 
     qt.mark("metrics")
     d = date_type.fromisoformat(date)
-    entries = await db.fetch(
-        "SELECT * FROM entries WHERE date = $1 AND user_id = $2",
-        d, current_user["id"],
-    )
+    entries = await repo.get_entries_for_date(d)
 
     qt.mark("entries")
     metric_ids = [m["id"] for m in metrics]
 
     # Get enabled slots for all metrics
-    enabled_slots_rows = await db.fetch(
-        """SELECT ms.id, msl.metric_id, ms.label, ms.sort_order, msl.category_id
-           FROM metric_slots msl
-           JOIN measurement_slots ms ON ms.id = msl.slot_id
-           WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE
-           ORDER BY msl.metric_id, ms.sort_order""",
-        metric_ids,
-    ) if metric_ids else []
+    enabled_slots_rows = await repo.get_enabled_slots(metric_ids)
 
     qt.mark("slots")
     enabled_slots: dict[int, list] = defaultdict(list)
@@ -111,17 +82,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
         enabled_slots[r["metric_id"]].append(r)
 
     # Get disabled slots that have entries on this date
-    disabled_slot_ids_with_entries = []
-    if metric_ids:
-        disabled_slot_ids_with_entries = await db.fetch(
-            """SELECT DISTINCT ms.id, msl.metric_id, ms.label, ms.sort_order, msl.category_id
-               FROM metric_slots msl
-               JOIN measurement_slots ms ON ms.id = msl.slot_id
-               JOIN entries e ON e.slot_id = ms.id AND e.date = $1 AND e.user_id = $2
-               WHERE msl.metric_id = ANY($3) AND msl.enabled = FALSE
-               ORDER BY msl.metric_id, ms.sort_order""",
-            d, current_user["id"], metric_ids,
-        )
+    disabled_slot_ids_with_entries = await repo.get_disabled_slots_with_entries(metric_ids, d)
 
     qt.mark("disabled_slots")
     disabled_with_entries: dict[int, list] = defaultdict(list)
@@ -144,103 +105,20 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
 
     # Group entry IDs by storage type
     entry_ids_by_type: dict[str, list[int]] = defaultdict(list)
-    all_entry_ids = [e["id"] for e in entries]
     for e in entries:
         etype = metric_type_map.get(e["metric_id"], "bool")
         entry_ids_by_type[etype].append(e["id"])
 
     # Batch-fetch values from each typed table
-    values_map: dict[int, any] = {}  # entry_id -> value
-    scale_context_map: dict[int, dict] = {}  # entry_id -> {scale_min, scale_max, scale_step}
-
-    if entry_ids_by_type.get("bool"):
-        rows = await db.fetch(
-            "SELECT entry_id, value FROM values_bool WHERE entry_id = ANY($1)",
-            entry_ids_by_type["bool"],
-        )
-        for r in rows:
-            values_map[r["entry_id"]] = r["value"]
-
-    if entry_ids_by_type.get("number"):
-        rows = await db.fetch(
-            "SELECT entry_id, value FROM values_number WHERE entry_id = ANY($1)",
-            entry_ids_by_type["number"],
-        )
-        for r in rows:
-            values_map[r["entry_id"]] = r["value"]
-
-    if entry_ids_by_type.get("time"):
-        rows = await db.fetch(
-            "SELECT entry_id, value FROM values_time WHERE entry_id = ANY($1)",
-            entry_ids_by_type["time"],
-        )
-        for r in rows:
-            ts = r["value"]
-            values_map[r["entry_id"]] = f"{ts.hour:02d}:{ts.minute:02d}"
-
-    if entry_ids_by_type.get("scale"):
-        rows = await db.fetch(
-            "SELECT entry_id, value, scale_min, scale_max, scale_step FROM values_scale WHERE entry_id = ANY($1)",
-            entry_ids_by_type["scale"],
-        )
-        for r in rows:
-            values_map[r["entry_id"]] = r["value"]
-            scale_context_map[r["entry_id"]] = {
-                "scale_min": r["scale_min"],
-                "scale_max": r["scale_max"],
-                "scale_step": r["scale_step"],
-            }
-
-    if entry_ids_by_type.get("duration"):
-        rows = await db.fetch(
-            "SELECT entry_id, value FROM values_duration WHERE entry_id = ANY($1)",
-            entry_ids_by_type["duration"],
-        )
-        for r in rows:
-            values_map[r["entry_id"]] = r["value"]
-
-    if entry_ids_by_type.get("enum"):
-        rows = await db.fetch(
-            "SELECT entry_id, selected_option_ids FROM values_enum WHERE entry_id = ANY($1)",
-            entry_ids_by_type["enum"],
-        )
-        for r in rows:
-            values_map[r["entry_id"]] = list(r["selected_option_ids"])
+    values_map, scale_context_map = await repo.batch_load_values(entry_ids_by_type)
 
     # Bulk-load enum options for enum metrics
     enum_metric_ids = [m["id"] for m in metrics if m["type"] == "enum"]
-    enum_options_by_metric: dict[int, list] = defaultdict(list)
-    if enum_metric_ids:
-        eo_rows = await db.fetch(
-            """SELECT id, metric_id, label, sort_order FROM enum_options
-               WHERE metric_id = ANY($1) AND enabled = TRUE
-               ORDER BY metric_id, sort_order""",
-            enum_metric_ids,
-        )
-        for r in eo_rows:
-            enum_options_by_metric[r["metric_id"]].append({
-                "id": r["id"], "label": r["label"], "sort_order": r["sort_order"],
-            })
+    enum_options_by_metric = await repo.get_enum_options_for_metrics(enum_metric_ids)
 
     # Batch-load notes for text metrics
     text_metric_ids = [m["id"] for m in metrics if m["type"] == "text"]
-    notes_count_map: dict[int, int] = {}
-    notes_by_metric: dict[int, list] = defaultdict(list)
-    if text_metric_ids:
-        nc_rows = await db.fetch(
-            "SELECT metric_id, COUNT(*) AS cnt FROM notes WHERE metric_id = ANY($1) AND user_id = $2 AND date = $3 GROUP BY metric_id",
-            text_metric_ids, current_user["id"], d,
-        )
-        for r in nc_rows:
-            notes_count_map[r["metric_id"]] = r["cnt"]
-        n_rows = await db.fetch(
-            "SELECT id, metric_id, text, created_at FROM notes WHERE metric_id = ANY($1) AND user_id = $2 AND date = $3 ORDER BY created_at",
-            text_metric_ids, current_user["id"], d,
-        )
-        for r in n_rows:
-            notes_by_metric[r["metric_id"]].append({
-                "id": r["id"], "text": r["text"], "created_at": str(r["created_at"]),
-            })
+    notes_count_map, notes_by_metric = await repo.get_notes_for_date(text_metric_ids, d)
 
     qt.mark("values")
     # --- Build result using pre-loaded values ---
@@ -473,7 +351,7 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
          "value": d.isoweekday() <= 5},
     ])
 
-    # Progress calculation (skip computed/integration, text=filled if note_count>0, multi-slot each slot separately)
+    # Progress calculation
     progress_filled = 0
     progress_total = 0
     for item in result:
@@ -512,12 +390,10 @@ async def daily_summary(date: str, db=Depends(get_db), current_user: dict = Depe
             groups.setdefault(cat, []).append(s)
 
         if len(groups) == 1:
-            # All slots in one category — single item with slot's category_id
             cat_id = next(iter(groups.keys()))
             item["category_id"] = cat_id
             final_result.append(item)
         else:
-            # Different categories — split into separate items
             for cat_id, cat_slots in groups.items():
                 split_item = {**item}
                 split_item["category_id"] = cat_id
