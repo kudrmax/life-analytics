@@ -1,20 +1,12 @@
 from __future__ import annotations
 
-import json
 from datetime import date as date_type, timedelta
 
 from app.analytics.time_series import TimeSeriesTransform
+from app.analytics.value_converter import ValueConverter
 from app.analytics.value_fetcher import ValueFetcher
 from app.formula import get_referenced_metric_ids
 from app.source_key import AutoSourceType, SourceKey, STREAK_TYPES
-
-
-def _parse_formula(raw) -> list:
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        return json.loads(raw)
-    return raw
 
 
 class SourceReconstructor:
@@ -52,7 +44,7 @@ class SourceReconstructor:
             )
             if not cfg or not cfg["formula"]:
                 return {}
-            formula = _parse_formula(cfg["formula"])
+            formula = ValueConverter.parse_formula(cfg["formula"])
             rt = cfg["result_type"] or "float"
             ref_ids = get_referenced_metric_ids(formula)
             return await self._fetcher.values_by_date_for_computed(
@@ -163,7 +155,7 @@ class SourceReconstructor:
                 )
                 if not cfg or not cfg["formula"]:
                     return {}
-                formula = _parse_formula(cfg["formula"])
+                formula = ValueConverter.parse_formula(cfg["formula"])
                 rt = cfg["result_type"] or "float"
                 ref_ids = get_referenced_metric_ids(formula)
                 parent_data = await self._fetcher.values_by_date_for_computed(

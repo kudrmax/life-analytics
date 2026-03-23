@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 import logging
 from collections import defaultdict
+from dataclasses import astuple, dataclass
 from datetime import date as date_type, timedelta
 from statistics import variance
 
@@ -13,6 +13,7 @@ from app.analytics.correlation_math import (
 )
 from app.analytics.quality import QualityAssessor
 from app.analytics.time_series import TimeSeriesTransform
+from app.analytics.value_converter import ValueConverter
 from app.analytics.value_fetcher import ValueFetcher
 from app.correlation_blacklist import should_skip_pair
 from app.correlation_config import CorrelationConfig, correlation_config
@@ -25,12 +26,24 @@ from app.timing import QueryTimer
 logger = logging.getLogger(__name__)
 
 
-def _parse_formula(raw) -> list:
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        return json.loads(raw)
-    return raw
+@dataclass(frozen=True, slots=True)
+class CorrelationPairResult:
+    """Result of evaluating a single correlation pair — maps 1:1 to correlation_pairs columns."""
+
+    report_id: int
+    metric_a_id: int | None
+    metric_b_id: int | None
+    slot_a_id: int | None
+    slot_b_id: int | None
+    source_key_a: str
+    source_key_b: str
+    type_a: str
+    type_b: str
+    correlation: float
+    data_points: int
+    lag_days: int
+    p_value: float
+    quality_issue: str | None
 
 
 class CorrelationEngine:
@@ -195,7 +208,7 @@ class CorrelationEngine:
             elif mt == "computed":
                 cfg = self._computed_cfgs.get(sk.metric_id)
                 if cfg and cfg["formula"]:
-                    formula = _parse_formula(cfg["formula"])
+                    formula = ValueConverter.parse_formula(cfg["formula"])
                     rt = cfg["result_type"] or "float"
                     ref_ids = get_referenced_metric_ids(formula)
                     self._source_data[i] = await self._fetcher.values_by_date_for_computed(
@@ -406,8 +419,8 @@ class CorrelationEngine:
 
     # ─── Phase 6: Evaluate all pairs ───────────────────────────────
 
-    def _evaluate_all_pairs(self) -> list[tuple]:
-        pairs: list[tuple] = []
+    def _evaluate_all_pairs(self) -> list[CorrelationPairResult]:
+        pairs: list[CorrelationPairResult] = []
         for i in range(len(self._sources)):
             for j in range(i + 1, len(self._sources)):
                 sk_i, mt_i = self._sources[i]
@@ -440,7 +453,7 @@ class CorrelationEngine:
         sk_a: SourceKey, sk_b: SourceKey, mt_a: str, mt_b: str,
         idx_a: int, idx_b: int, lag: int,
         low_var: bool, both_binary: bool,
-    ) -> tuple | None:
+    ) -> CorrelationPairResult | None:
         calc = CorrelationCalculator(data_a, data_b)
         r, n = calc.pearson()
         if r is None:
@@ -452,11 +465,14 @@ class CorrelationEngine:
         fisher_hp = both_binary and fisher_exact_p(data_a, data_b) >= 0.05
         streak_reset = self._check_low_streak_resets(data_a, data_b, idx_a, idx_b)
         qi = self._quality.determine_issue(n, p_val, low_variance=low_var, small_binary_group=small_group, wide_ci=wide_ci, fisher_high_p=fisher_hp, low_streak_resets=streak_reset)
-        return (
-            self._report_id,
-            sk_a.metric_id, sk_b.metric_id, sk_a.slot_id, sk_b.slot_id,
-            sk_a.to_str(), sk_b.to_str(), mt_a, mt_b,
-            r, n, lag, p_val, qi,
+        return CorrelationPairResult(
+            report_id=self._report_id,
+            metric_a_id=sk_a.metric_id, metric_b_id=sk_b.metric_id,
+            slot_a_id=sk_a.slot_id, slot_b_id=sk_b.slot_id,
+            source_key_a=sk_a.to_str(), source_key_b=sk_b.to_str(),
+            type_a=mt_a, type_b=mt_b,
+            correlation=r, data_points=n, lag_days=lag, p_value=p_val,
+            quality_issue=qi,
         )
 
     def _check_small_binary_group(
@@ -498,14 +514,14 @@ class CorrelationEngine:
 
     # ─── Phase 7: Insert pairs ─────────────────────────────────────
 
-    async def _insert_pairs(self, pairs: list[tuple]) -> None:
+    async def _insert_pairs(self, pairs: list[CorrelationPairResult]) -> None:
         if pairs:
             await self._conn.executemany(
                 """INSERT INTO correlation_pairs
                    (report_id, metric_a_id, metric_b_id, slot_a_id, slot_b_id,
                     source_key_a, source_key_b, type_a, type_b, correlation, data_points, lag_days, p_value, quality_issue)
                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)""",
-                pairs,
+                [astuple(p) for p in pairs],
             )
         self._qt.mark("insert_pairs")
 

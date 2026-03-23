@@ -1,106 +1,30 @@
 import asyncio
-import json
 import logging
-import math
-from collections import defaultdict
 from datetime import date as date_type, timedelta
-from enum import Enum
-from statistics import mean, median, stdev, variance
+from statistics import mean, median
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from app import database as _db_module
 from app.database import get_db
 from app.auth import get_current_user, get_privacy_mode
 from app.metric_helpers import mask_name, mask_icon, is_blocked, PRIVATE_MASK, PRIVATE_ICON
-from app.formula import convert_metric_value, evaluate_formula, get_referenced_metric_ids
-from app.correlation_blacklist import should_skip_pair
+from app.formula import get_referenced_metric_ids
 from app.correlation_config import correlation_config
-from app.source_key import (
-    AutoSourceType, SourceKey, AUTO_DISPLAY_NAMES, AUTO_ICONS, CALENDAR_OPTION_LABELS,
-    STREAK_TYPES,
-)
-from app.timing import timed_fetch, QueryTimer
+from app.source_key import SourceKey, STREAK_TYPES
+from app.timing import QueryTimer
 from app.analytics.value_converter import ValueConverter
 from app.analytics.time_series import TimeSeriesTransform
-from app.analytics.correlation_math import (
-    CorrelationCalculator,
-    p_value_from_r,
-    confidence_interval_from_r,
-    build_contingency_table,
-    fisher_exact_p,
-    BINARY_TYPES as _BINARY_TYPES,
-)
-from app.analytics.quality import QualityIssue, QualityAssessor
+from app.analytics.correlation_math import CorrelationCalculator
 from app.analytics.pair_formatter import PairFormatter
 from app.analytics.value_fetcher import ValueFetcher
 from app.analytics.source_reconstructor import SourceReconstructor
 from app.analytics.correlation_engine import run_correlation_report
 
 
-def _parse_formula(raw):
-    """Parse formula from DB — may be JSON string or list."""
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        return json.loads(raw)
-    return raw
-
 logger = logging.getLogger(__name__)
 
-
-# --- Quality delegation (temporary, removed in step 7) ---
-QUALITY_ISSUE_LABELS = QualityAssessor.LABELS
-QUALITY_SEVERITY = QualityAssessor.SEVERITY
-
-
-def _determine_quality_issue(
-    n: int, p_value: float, low_variance: bool = False,
-    small_binary_group: bool = False, wide_ci: bool = False,
-    fisher_high_p: bool = False, low_streak_resets: bool = False,
-) -> str | None:
-    return QualityAssessor(config=correlation_config).determine_issue(
-        n, p_value, low_variance=low_variance, small_binary_group=small_binary_group,
-        wide_ci=wide_ci, fisher_high_p=fisher_high_p, low_streak_resets=low_streak_resets,
-    )
-
-
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
-
-
-# --- Delegating wrappers to new analytics classes (temporary, removed in step 7) ---
-_extract_numeric = ValueConverter.extract_numeric
-_compute_slot_agg = TimeSeriesTransform.slot_agg
-_compute_rolling_avg = TimeSeriesTransform.rolling_avg
-_compute_streak = TimeSeriesTransform.streak
-_aggregate_by_date = ValueConverter.aggregate_by_date
-_get_value_table = ValueConverter.get_value_table
-
-
-# --- Value fetcher delegation (temporary, removed in step 7) ---
-async def _values_by_date_for_slot(conn, metric_id, metric_type, start_date, end_date, user_id, slot_id=None):
-    return await ValueFetcher(conn).values_by_date_for_slot(metric_id, metric_type, start_date, end_date, user_id, slot_id=slot_id)
-
-async def _raw_values_by_date(conn, metric_id, metric_type, start_date, end_date, user_id):
-    return await ValueFetcher(conn).raw_values_by_date(metric_id, metric_type, start_date, end_date, user_id)
-
-async def _values_by_date_for_computed(conn, formula, result_type, ref_ids, start_date, end_date, user_id):
-    return await ValueFetcher(conn).values_by_date_for_computed(formula, result_type, ref_ids, start_date, end_date, user_id)
-
-async def _values_by_date_for_enum_option(conn, metric_id, option_id, start_date, end_date, user_id, slot_id=None):
-    return await ValueFetcher(conn).values_by_date_for_enum_option(metric_id, option_id, start_date, end_date, user_id, slot_id=slot_id)
-
-
-# --- Delegating wrappers to CorrelationCalculator (temporary, removed in step 7) ---
-def _compute_pearson(a_by_date: dict[str, float], b_by_date: dict[str, float]) -> tuple[float | None, int]:
-    return CorrelationCalculator(a_by_date, b_by_date).pearson()
-
-_shift_dates = TimeSeriesTransform.shift_dates
-_p_value = p_value_from_r
-_confidence_interval = confidence_interval_from_r
-_build_contingency_table = build_contingency_table
-_fisher_exact_p = fisher_exact_p
 
 
 @router.get("/trends")
@@ -142,11 +66,10 @@ async def trends(
     end_d = date_type.fromisoformat(end)
 
     if metric["type"] == "computed":
-        formula = _parse_formula(metric.get("formula"))
+        formula = ValueConverter.parse_formula(metric.get("formula"))
         result_type = metric.get("result_type") or "float"
         ref_ids = get_referenced_metric_ids(formula)
-        aggregated = await _values_by_date_for_computed(
-            db, formula, result_type, ref_ids, start_d, end_d, current_user["id"],
+        aggregated = await ValueFetcher(db).values_by_date_for_computed( formula, result_type, ref_ids, start_d, end_d, current_user["id"],
         )
     elif mt == "text":
         # Text metrics: count notes per day
@@ -176,8 +99,7 @@ async def trends(
         )
         option_series = {}
         for o in opts:
-            series = await _values_by_date_for_enum_option(
-                db, metric_id, o["id"], start_d, end_d, current_user["id"],
+            series = await ValueFetcher(db).values_by_date_for_enum_option( metric_id, o["id"], start_d, end_d, current_user["id"],
             )
             option_series[o["label"]] = [{"date": d, "value": v} for d, v in sorted(series.items())]
         qt.mark("values")
@@ -192,7 +114,7 @@ async def trends(
             "option_series": option_series,
         }
     else:
-        value_table, extra_cols = _get_value_table(mt)
+        value_table, extra_cols = ValueConverter.get_value_table(mt)
         rows = await db.fetch(
             f"""SELECT e.date, v.value{extra_cols}
                 FROM entries e
@@ -201,7 +123,7 @@ async def trends(
                 ORDER BY e.date""",
             metric_id, start_d, end_d, current_user["id"],
         )
-        aggregated = _aggregate_by_date(rows, mt)
+        aggregated = ValueConverter.aggregate_by_date(rows, mt)
     qt.mark("values")
 
     points = [{"date": d, "value": v} for d, v in sorted(aggregated.items())]
@@ -255,20 +177,20 @@ async def correlations(
     end_date = date_type.fromisoformat(end)
 
     if ma["type"] == "computed":
-        formula_a = _parse_formula(ma.get("formula"))
+        formula_a = ValueConverter.parse_formula(ma.get("formula"))
         ref_ids_a = get_referenced_metric_ids(formula_a)
-        a_by_date = await _values_by_date_for_computed(db, formula_a, ma.get("result_type") or "float", ref_ids_a, start_date, end_date, current_user["id"])
+        a_by_date = await ValueFetcher(db).values_by_date_for_computed( formula_a, ma.get("result_type") or "float", ref_ids_a, start_date, end_date, current_user["id"])
     else:
-        a_by_date = await _values_by_date_for_slot(db, metric_a, ma["type"], start_date, end_date, current_user["id"])
+        a_by_date = await ValueFetcher(db).values_by_date_for_slot( metric_a, ma["type"], start_date, end_date, current_user["id"])
 
     if mb["type"] == "computed":
-        formula_b = _parse_formula(mb.get("formula"))
+        formula_b = ValueConverter.parse_formula(mb.get("formula"))
         ref_ids_b = get_referenced_metric_ids(formula_b)
-        b_by_date = await _values_by_date_for_computed(db, formula_b, mb.get("result_type") or "float", ref_ids_b, start_date, end_date, current_user["id"])
+        b_by_date = await ValueFetcher(db).values_by_date_for_computed( formula_b, mb.get("result_type") or "float", ref_ids_b, start_date, end_date, current_user["id"])
     else:
-        b_by_date = await _values_by_date_for_slot(db, metric_b, mb["type"], start_date, end_date, current_user["id"])
+        b_by_date = await ValueFetcher(db).values_by_date_for_slot( metric_b, mb["type"], start_date, end_date, current_user["id"])
 
-    r, n = _compute_pearson(a_by_date, b_by_date)
+    r, n = CorrelationCalculator(a_by_date, b_by_date).pearson()
 
     if r is None:
         return {
@@ -320,11 +242,10 @@ async def metric_stats(
     total_days = (end_date - start_date).days + 1
 
     if metric["type"] == "computed":
-        formula = _parse_formula(metric.get("formula"))
+        formula = ValueConverter.parse_formula(metric.get("formula"))
         rt = metric.get("result_type") or "float"
         ref_ids = get_referenced_metric_ids(formula)
-        aggregated = await _values_by_date_for_computed(
-            db, formula, rt, ref_ids, start_date, end_date, current_user["id"],
+        aggregated = await ValueFetcher(db).values_by_date_for_computed( formula, rt, ref_ids, start_date, end_date, current_user["id"],
         )
         total_entries = len(aggregated)
         fill_rate = round(total_entries / total_days * 100, 1) if total_days > 0 else 0
@@ -364,7 +285,7 @@ async def metric_stats(
                     "min": round(min(values), 2),
                     "max": round(max(values), 2),
                 })
-        result["display_stats"] = _build_display_stats(result, "computed")
+        result["display_stats"] = PairFormatter.build_display_stats(result, "computed")
         return result
 
     if mt == "text":
@@ -390,7 +311,7 @@ async def metric_stats(
             "average_per_day": round(total_notes / days_with_notes, 1) if days_with_notes > 0 else 0,
             "max_per_day": max(counts) if counts else 0,
         }
-        text_result["display_stats"] = _build_display_stats(text_result, "text")
+        text_result["display_stats"] = PairFormatter.build_display_stats(text_result, "text")
         return text_result
 
     if mt == "enum":
@@ -437,10 +358,10 @@ async def metric_stats(
             "option_stats": option_stats,
             "most_common": most_common,
         }
-        enum_result["display_stats"] = _build_display_stats(enum_result, "enum")
+        enum_result["display_stats"] = PairFormatter.build_display_stats(enum_result, "enum")
         return enum_result
 
-    value_table, extra_cols = _get_value_table(mt)
+    value_table, extra_cols = ValueConverter.get_value_table(mt)
     rows = await db.fetch(
         f"""SELECT e.date, v.value{extra_cols}
             FROM entries e
@@ -450,7 +371,7 @@ async def metric_stats(
         metric_id, start_date, end_date, current_user["id"],
     )
 
-    aggregated = _aggregate_by_date(rows, mt)
+    aggregated = ValueConverter.aggregate_by_date(rows, mt)
     qt.mark("values")
     total_entries = len(aggregated)
     fill_rate = round(total_entries / total_days * 100, 1) if total_days > 0 else 0
@@ -548,7 +469,7 @@ async def metric_stats(
             result.update({"average": 0, "min": 0, "max": 0})
 
     # Build display_stats — ready-to-render list of {label, value}
-    result["display_stats"] = _build_display_stats(result, mt)
+    result["display_stats"] = PairFormatter.build_display_stats(result, mt)
 
     qt.log()
     return result
@@ -602,15 +523,13 @@ async def metric_distribution(
     end_date = date_type.fromisoformat(end)
 
     if metric["type"] == "computed":
-        formula = _parse_formula(metric.get("formula"))
+        formula = ValueConverter.parse_formula(metric.get("formula"))
         ref_ids = get_referenced_metric_ids(formula)
         rt = metric.get("result_type") or "float"
-        aggregated = await _values_by_date_for_computed(
-            db, formula, rt, ref_ids, start_date, end_date, current_user["id"],
+        aggregated = await ValueFetcher(db).values_by_date_for_computed( formula, rt, ref_ids, start_date, end_date, current_user["id"],
         )
     else:
-        aggregated = await _values_by_date_for_slot(
-            db, metric_id, mt, start_date, end_date, current_user["id"],
+        aggregated = await ValueFetcher(db).values_by_date_for_slot( metric_id, mt, start_date, end_date, current_user["id"],
         )
     qt.mark("values")
 
@@ -740,32 +659,8 @@ async def get_latest_correlation_report(
     return {"running": running, "report": report}
 
 
-# --- Pair formatting delegation (temporary, removed in step 7) ---
-_CATEGORY_FILTERS = PairFormatter.CATEGORY_FILTERS
-_build_display_label = PairFormatter.build_display_label
-_corr_type_words = PairFormatter.corr_type_words
-_corr_hint_words = PairFormatter.corr_hint_words
-_build_display_stats = PairFormatter.build_display_stats
 
 
-def _resolve_icon(source_key_str: str, db_icon: str | None, metric_icons_by_id: dict[int, str]) -> str:
-    return PairFormatter(metric_icons=metric_icons_by_id, enum_labels={}, parent_names={}).resolve_icon(source_key_str, db_icon)
-
-
-def _format_pair(
-    p: dict,
-    metric_icons_by_id: dict[int, str],
-    enum_labels: dict[int, str],
-    parent_names: dict[int, str],
-    privacy_mode: bool = False,
-    metrics_with_slots: set[int] | None = None,
-) -> dict:
-    fmt = PairFormatter(
-        metric_icons=metric_icons_by_id, enum_labels=enum_labels,
-        parent_names=parent_names, privacy_mode=privacy_mode,
-        metrics_with_slots=metrics_with_slots,
-    )
-    return fmt.format_pair(p)
 
 
 @router.get("/correlation-report/{report_id}/pairs")
@@ -787,7 +682,7 @@ async def get_correlation_pairs(
     if not report_row:
         return {"pairs": [], "total": 0, "has_more": False}
 
-    cat_filter = _CATEGORY_FILTERS.get(category, "")
+    cat_filter = PairFormatter.CATEGORY_FILTERS.get(category, "")
 
     # Optional metric_ids filter
     metric_filter = ""
@@ -880,15 +775,18 @@ async def get_correlation_pairs(
         metrics_with_slots = {r["metric_id"] for r in mws_rows}
 
     return {
-        "pairs": [_format_pair(p, metric_icons_by_id, enum_labels, parent_names, privacy_mode, metrics_with_slots) for p in pairs],
+        "pairs": [PairFormatter(
+            metric_icons=metric_icons_by_id, enum_labels=enum_labels,
+            parent_names=parent_names, privacy_mode=privacy_mode,
+            metrics_with_slots=metrics_with_slots,
+        ).format_pair(p) for p in pairs],
         "total": total,
         "has_more": offset + limit < total,
     }
 
 
-# --- Source reconstructor delegation (temporary, removed in step 7) ---
-async def _reconstruct_source_data(conn, source_key_str, source_type, start_date, end_date, user_id):
-    return await SourceReconstructor(conn).reconstruct(source_key_str, source_type, start_date, end_date, user_id)
+
+
 
 
 @router.get("/correlation-pair-chart")
@@ -928,16 +826,14 @@ async def correlation_pair_chart(
     end_date = row["period_end"]
     uid = current_user["id"]
 
-    data_a = await _reconstruct_source_data(
-        db, row["source_key_a"], row["type_a"], start_date, end_date, uid,
+    data_a = await SourceReconstructor(db).reconstruct( row["source_key_a"], row["type_a"], start_date, end_date, uid,
     )
-    data_b = await _reconstruct_source_data(
-        db, row["source_key_b"], row["type_b"], start_date, end_date, uid,
+    data_b = await SourceReconstructor(db).reconstruct( row["source_key_b"], row["type_b"], start_date, end_date, uid,
     )
 
     lag = row["lag_days"] or 0
     if lag > 0:
-        data_b = _shift_dates(data_b, lag)
+        data_b = TimeSeriesTransform.shift_dates(data_b, lag)
 
     common = sorted(set(data_a) & set(data_b))
 
@@ -999,11 +895,11 @@ async def correlation_pair_chart(
         )
         chart_mws = {r["metric_id"] for r in mws_rows}
 
-    display_label_a = PRIVATE_MASK if blocked_a else _build_display_label(
+    display_label_a = PRIVATE_MASK if blocked_a else PairFormatter.build_display_label(
         row["source_key_a"], ma_name, parent_names.get(sk_a.auto_parent_metric_id),
         metric_type=row["type_a"], has_slots=(row["metric_a_id"] in chart_mws if row["metric_a_id"] else False),
     )
-    display_label_b = PRIVATE_MASK if blocked_b else _build_display_label(
+    display_label_b = PRIVATE_MASK if blocked_b else PairFormatter.build_display_label(
         row["source_key_b"], mb_name, parent_names.get(sk_b.auto_parent_metric_id),
         metric_type=row["type_b"], has_slots=(row["metric_b_id"] in chart_mws if row["metric_b_id"] else False),
     )

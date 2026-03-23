@@ -70,7 +70,8 @@ class PairFormatter:
             if sk.auto_option_id is not None:
                 if sk.auto_type in STREAK_TYPES:
                     return self._enum_labels.get(sk.auto_option_id, "")
-                return CALENDAR_OPTION_LABELS.get(sk.auto_type, {}).get(sk.auto_option_id, "")  # type: ignore[arg-type]
+                assert sk.auto_type is not None
+                return CALENDAR_OPTION_LABELS.get(sk.auto_type, {}).get(sk.auto_option_id, "")
             if sk.enum_option_id:
                 return self._enum_labels.get(sk.enum_option_id, "")
             return ""

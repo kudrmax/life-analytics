@@ -10,15 +10,9 @@ from app.metric_helpers import mask_name, mask_icon, is_blocked
 from app.formula import convert_metric_value, evaluate_formula
 from app.metric_helpers import format_display_value
 from app.timing import QueryTimer
+from app.analytics.value_converter import ValueConverter
 
-
-def _parse_formula(raw):
-    """Parse formula from DB — may be JSON string or list."""
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        return json.loads(raw)
-    return raw
+_parse_formula = ValueConverter.parse_formula
 
 
 def _extract_dep_value(item):

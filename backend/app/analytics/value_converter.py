@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from statistics import mean
 from typing import Any
@@ -7,6 +8,15 @@ from typing import Any
 
 class ValueConverter:
     """Конвертация значений метрик из БД-формата в числовой."""
+
+    @staticmethod
+    def parse_formula(raw: Any) -> list:
+        """Parse formula from DB — may be JSON string or list."""
+        if raw is None:
+            return []
+        if isinstance(raw, str):
+            return json.loads(raw)
+        return raw
 
     @staticmethod
     def extract_numeric(value_row: Any, metric_type: str = "bool") -> float | None:
