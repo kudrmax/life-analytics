@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from dataclasses import astuple, dataclass
+from dataclasses import dataclass
 from datetime import date as date_type, timedelta
 from statistics import variance
 
@@ -18,6 +18,7 @@ from app.analytics.value_fetcher import ValueFetcher
 from app.correlation_blacklist import should_skip_pair
 from app.correlation_config import CorrelationConfig, correlation_config
 from app.formula import get_referenced_metric_ids
+from app.repositories.analytics_repository import AnalyticsRepository
 from app.source_key import (
     AutoSourceType, SourceKey, CALENDAR_OPTION_LABELS, STREAK_TYPES,
 )
@@ -57,20 +58,20 @@ class CorrelationEngine:
 
     def __init__(
         self,
-        conn,  # asyncpg.Connection
+        repo: AnalyticsRepository,
         report_id: int,
-        user_id: int,
         start_date: date_type,
         end_date: date_type,
         config: CorrelationConfig | None = None,
     ) -> None:
-        self._conn = conn
+        self._repo = repo
+        self._conn = repo.conn  # for ValueFetcher compatibility
         self._report_id = report_id
-        self._user_id = user_id
+        self._user_id = repo.user_id
         self._start_date = start_date
         self._end_date = end_date
         self._config = config or correlation_config
-        self._fetcher = ValueFetcher(conn)
+        self._fetcher = ValueFetcher(repo.conn)
         self._quality = QualityAssessor(config=self._config)
         self._qt = QueryTimer(f"correlation-report/{report_id}")
 
@@ -104,16 +105,9 @@ class CorrelationEngine:
     # ─── Phase 1: Load metrics and configs ─────────────────────────
 
     async def _load_metrics_and_configs(self) -> None:
-        conn = self._conn
-        user_id = self._user_id
+        repo = self._repo
 
-        self._metrics_rows = list(await conn.fetch(
-            """SELECT md.id, md.name, md.type, ic.value_type AS ic_value_type
-               FROM metric_definitions md
-               LEFT JOIN integration_config ic ON ic.metric_id = md.id
-               WHERE md.user_id = $1 AND md.enabled = TRUE ORDER BY md.sort_order""",
-            user_id,
-        ))
+        self._metrics_rows = list(await repo.load_enabled_metrics())
         self._qt.mark("load_metrics")
 
         # Resolve integration types
@@ -125,49 +119,25 @@ class CorrelationEngine:
         metric_ids = [m["id"] for m in self._metrics_rows]
 
         # Load slots
-        slots_rows = await conn.fetch(
-            """SELECT ms.id, msl.metric_id, ms.label
-               FROM metric_slots msl
-               JOIN measurement_slots ms ON ms.id = msl.slot_id
-               WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE
-               ORDER BY msl.metric_id, ms.sort_order""",
-            metric_ids,
-        ) if metric_ids else []
+        slots_rows = await repo.load_slots_for_metrics(metric_ids)
         self._qt.mark("load_slots")
         for s in slots_rows:
             self._slots_by_metric[s["metric_id"]].append(s)
 
         # Load computed configs
         computed_ids = [m["id"] for m in self._metrics_rows if m["type"] == "computed"]
-        if computed_ids:
-            cc_rows = await conn.fetch(
-                "SELECT metric_id, formula, result_type FROM computed_config WHERE metric_id = ANY($1)",
-                computed_ids,
-            )
-            self._computed_cfgs = {r["metric_id"]: r for r in cc_rows}
+        self._computed_cfgs = await repo.load_computed_configs(computed_ids)
         self._qt.mark("load_computed_cfg")
 
         # Load enum options
         enum_metric_ids = [m["id"] for m in self._metrics_rows if m["type"] == "enum"]
-        if enum_metric_ids:
-            eo_rows = await conn.fetch(
-                """SELECT id, metric_id, label FROM enum_options
-                   WHERE metric_id = ANY($1) AND enabled = TRUE
-                   ORDER BY metric_id, sort_order""",
-                enum_metric_ids,
-            )
-            for r in eo_rows:
-                self._enum_opts_by_metric[r["metric_id"]].append(r)
+        self._enum_opts_by_metric = await repo.load_enum_options(enum_metric_ids)
 
-            # Identify single-select enums
-            ec_rows = await conn.fetch(
-                "SELECT metric_id, multi_select FROM enum_config WHERE metric_id = ANY($1)",
-                enum_metric_ids,
-            )
-            ec_by_metric = {r["metric_id"]: r["multi_select"] for r in ec_rows}
-            for mid in enum_metric_ids:
-                if not ec_by_metric.get(mid, False):
-                    self._single_select_metric_ids.add(mid)
+        # Identify single-select enums
+        ec_by_metric = await repo.load_enum_configs(enum_metric_ids)
+        for mid in enum_metric_ids:
+            if not ec_by_metric.get(mid, False):
+                self._single_select_metric_ids.add(mid)
 
     # ─── Phase 2: Build sources ────────────────────────────────────
 
@@ -515,27 +485,13 @@ class CorrelationEngine:
     # ─── Phase 7: Insert pairs ─────────────────────────────────────
 
     async def _insert_pairs(self, pairs: list[CorrelationPairResult]) -> None:
-        if pairs:
-            await self._conn.executemany(
-                """INSERT INTO correlation_pairs
-                   (report_id, metric_a_id, metric_b_id, slot_a_id, slot_b_id,
-                    source_key_a, source_key_b, type_a, type_b, correlation, data_points, lag_days, p_value, quality_issue)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)""",
-                [astuple(p) for p in pairs],
-            )
+        await self._repo.insert_pairs(pairs)
         self._qt.mark("insert_pairs")
 
     # ─── Phase 8: Finalize ─────────────────────────────────────────
 
     async def _finalize(self) -> None:
-        await self._conn.execute(
-            "UPDATE correlation_reports SET status = 'done', finished_at = now() WHERE id = $1",
-            self._report_id,
-        )
-        await self._conn.execute(
-            "DELETE FROM correlation_reports WHERE user_id = $1 AND id != $2",
-            self._user_id, self._report_id,
-        )
+        await self._repo.finalize_report(self._report_id)
         self._qt.log()
 
 
@@ -546,8 +502,9 @@ async def run_correlation_report(
     """Top-level entry point for asyncio.create_task. Acquires connection and runs engine."""
     try:
         async with _db_module.pool.acquire() as conn:
+            repo = AnalyticsRepository(conn, user_id)
             engine = CorrelationEngine(
-                conn, report_id, user_id,
+                repo, report_id,
                 date_type.fromisoformat(start),
                 date_type.fromisoformat(end),
                 config=config,
@@ -557,9 +514,7 @@ async def run_correlation_report(
         logger.exception("Error computing correlation report %s", report_id)
         try:
             async with _db_module.pool.acquire() as conn:
-                await conn.execute(
-                    "UPDATE correlation_reports SET status = 'error', finished_at = now() WHERE id = $1",
-                    report_id,
-                )
+                repo = AnalyticsRepository(conn, user_id)
+                await repo.mark_report_error(report_id)
         except Exception:
             logger.exception("Failed to update report status to error")

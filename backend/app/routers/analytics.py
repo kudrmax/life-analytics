@@ -20,6 +20,7 @@ from app.analytics.pair_formatter import PairFormatter
 from app.analytics.value_fetcher import ValueFetcher
 from app.analytics.source_reconstructor import SourceReconstructor
 from app.analytics.correlation_engine import run_correlation_report
+from app.repositories.analytics_repository import AnalyticsRepository
 
 
 logger = logging.getLogger(__name__)
@@ -37,14 +38,8 @@ async def trends(
     privacy_mode: bool = Depends(get_privacy_mode),
 ):
     qt = QueryTimer(f"trends/{metric_id}")
-    metric = await db.fetchrow(
-        """SELECT md.*, cc.formula, cc.result_type, ic.value_type AS ic_value_type
-           FROM metric_definitions md
-           LEFT JOIN computed_config cc ON cc.metric_id = md.id
-           LEFT JOIN integration_config ic ON ic.metric_id = md.id
-           WHERE md.id = $1 AND md.user_id = $2""",
-        metric_id, current_user["id"],
-    )
+    repo = AnalyticsRepository(db, current_user["id"])
+    metric = await repo.get_metric_with_config(metric_id)
     if not metric:
         return {"error": "Metric not found"}
     qt.mark("metric")
@@ -73,12 +68,7 @@ async def trends(
         )
     elif mt == "text":
         # Text metrics: count notes per day
-        rows = await db.fetch(
-            """SELECT date, COUNT(*) AS cnt FROM notes
-               WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4
-               GROUP BY date ORDER BY date""",
-            metric_id, current_user["id"], start_d, end_d,
-        )
+        rows = await repo.get_notes_by_date(metric_id, start_d, end_d)
         points = [{"date": str(r["date"]), "value": r["cnt"]} for r in rows]
         qt.mark("values")
         qt.log()
@@ -93,10 +83,7 @@ async def trends(
 
     elif mt == "enum":
         # Return per-option boolean series
-        opts = await db.fetch(
-            "SELECT id, label, sort_order FROM enum_options WHERE metric_id = $1 AND enabled = TRUE ORDER BY sort_order",
-            metric_id,
-        )
+        opts = await repo.get_enum_options_enabled(metric_id)
         option_series = {}
         for o in opts:
             series = await ValueFetcher(db).values_by_date_for_enum_option( metric_id, o["id"], start_d, end_d, current_user["id"],
@@ -115,14 +102,7 @@ async def trends(
         }
     else:
         value_table, extra_cols = ValueConverter.get_value_table(mt)
-        rows = await db.fetch(
-            f"""SELECT e.date, v.value{extra_cols}
-                FROM entries e
-                JOIN {value_table} v ON v.entry_id = e.id
-                WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4
-                ORDER BY e.date""",
-            metric_id, start_d, end_d, current_user["id"],
-        )
+        rows = await repo.get_entries_with_values(metric_id, value_table, extra_cols, start_d, end_d)
         aggregated = ValueConverter.aggregate_by_date(rows, mt)
     qt.mark("values")
 
@@ -131,12 +111,10 @@ async def trends(
     # Bool metric with slots: annotate aggregate name
     display_name = metric["name"]
     if mt == "bool":
-        has_slots_row = await db.fetchrow(
-            "SELECT 1 FROM metric_slots WHERE metric_id = $1 AND enabled = TRUE LIMIT 1",
-            metric_id,
-        )
+        has_slots_row = await repo.has_enabled_slots(metric_id)
         if has_slots_row:
             display_name = f"{display_name} (хоть раз)"
+
     qt.mark("display_name")
     qt.log()
 
@@ -158,18 +136,9 @@ async def correlations(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    ma = await db.fetchrow(
-        """SELECT md.*, cc.formula, cc.result_type
-           FROM metric_definitions md LEFT JOIN computed_config cc ON cc.metric_id = md.id
-           WHERE md.id = $1 AND md.user_id = $2""",
-        metric_a, current_user["id"],
-    )
-    mb = await db.fetchrow(
-        """SELECT md.*, cc.formula, cc.result_type
-           FROM metric_definitions md LEFT JOIN computed_config cc ON cc.metric_id = md.id
-           WHERE md.id = $1 AND md.user_id = $2""",
-        metric_b, current_user["id"],
-    )
+    repo = AnalyticsRepository(db, current_user["id"])
+    ma = await repo.get_metric_with_computed_config(metric_a)
+    mb = await repo.get_metric_with_computed_config(metric_b)
     if not ma or not mb:
         return {"error": "Metric not found"}
 
@@ -220,14 +189,8 @@ async def metric_stats(
     privacy_mode: bool = Depends(get_privacy_mode),
 ):
     qt = QueryTimer(f"metric-stats/{metric_id}")
-    metric = await db.fetchrow(
-        """SELECT md.*, cc.formula, cc.result_type, ic.value_type AS ic_value_type
-           FROM metric_definitions md
-           LEFT JOIN computed_config cc ON cc.metric_id = md.id
-           LEFT JOIN integration_config ic ON ic.metric_id = md.id
-           WHERE md.id = $1 AND md.user_id = $2""",
-        metric_id, current_user["id"],
-    )
+    repo = AnalyticsRepository(db, current_user["id"])
+    metric = await repo.get_metric_with_config(metric_id)
     if not metric:
         return {"error": "Metric not found"}
     if is_blocked(metric.get("private", False), privacy_mode):
@@ -289,12 +252,7 @@ async def metric_stats(
         return result
 
     if mt == "text":
-        rows = await db.fetch(
-            """SELECT date, COUNT(*) AS cnt FROM notes
-               WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4
-               GROUP BY date ORDER BY date""",
-            metric_id, current_user["id"], start_date, end_date,
-        )
+        rows = await repo.get_notes_by_date(metric_id, start_date, end_date)
         qt.mark("values")
         total_notes = sum(r["cnt"] for r in rows)
         days_with_notes = len(rows)
@@ -315,18 +273,8 @@ async def metric_stats(
         return text_result
 
     if mt == "enum":
-        rows = await db.fetch(
-            """SELECT e.date, ve.selected_option_ids
-               FROM entries e
-               JOIN values_enum ve ON ve.entry_id = e.id
-               WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4
-               ORDER BY e.date""",
-            metric_id, start_date, end_date, current_user["id"],
-        )
-        opts = await db.fetch(
-            "SELECT id, label FROM enum_options WHERE metric_id = $1 AND enabled = TRUE ORDER BY sort_order",
-            metric_id,
-        )
+        rows = await repo.get_enum_entries(metric_id, start_date, end_date)
+        opts = await repo.get_enum_options_enabled(metric_id)
         qt.mark("values")
         dates_with_entries = set(str(r["date"]) for r in rows)
         total_entries = len(dates_with_entries)
@@ -362,14 +310,7 @@ async def metric_stats(
         return enum_result
 
     value_table, extra_cols = ValueConverter.get_value_table(mt)
-    rows = await db.fetch(
-        f"""SELECT e.date, v.value{extra_cols}
-            FROM entries e
-            JOIN {value_table} v ON v.entry_id = e.id
-            WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3 AND e.user_id = $4
-            ORDER BY e.date""",
-        metric_id, start_date, end_date, current_user["id"],
-    )
+    rows = await repo.get_entries_with_values(metric_id, value_table, extra_cols, start_date, end_date)
 
     aggregated = ValueConverter.aggregate_by_date(rows, mt)
     qt.mark("values")
@@ -391,15 +332,7 @@ async def metric_stats(
         no_count = total_entries - yes_count
         yes_percent = round(yes_count / total_entries * 100, 1) if total_entries > 0 else 0
         # Streaks — reuse logic from /streaks
-        streak_rows = await db.fetch(
-            """SELECT e.date, bool_and(vb.value) AS day_value
-               FROM entries e
-               JOIN values_bool vb ON vb.entry_id = e.id
-               WHERE e.metric_id = $1 AND e.user_id = $2
-               GROUP BY e.date
-               ORDER BY e.date DESC""",
-            metric_id, current_user["id"],
-        )
+        streak_rows = await repo.get_bool_streak_rows(metric_id)
         current_streak = 0
         for r in streak_rows:
             if r["day_value"] is True:
@@ -496,14 +429,8 @@ async def metric_distribution(
     from app.distribution import compute_distribution, format_value
 
     qt = QueryTimer(f"distribution/{metric_id}")
-    metric = await db.fetchrow(
-        """SELECT md.*, cc.formula, cc.result_type, ic.value_type AS ic_value_type
-           FROM metric_definitions md
-           LEFT JOIN computed_config cc ON cc.metric_id = md.id
-           LEFT JOIN integration_config ic ON ic.metric_id = md.id
-           WHERE md.id = $1 AND md.user_id = $2""",
-        metric_id, current_user["id"],
-    )
+    repo = AnalyticsRepository(db, current_user["id"])
+    metric = await repo.get_metric_with_config(metric_id)
     if not metric:
         return {"error": "Metric not found"}
     if is_blocked(metric.get("private", False), privacy_mode):
@@ -584,11 +511,8 @@ async def create_correlation_report(
 ):
     start_date = date_type.fromisoformat(body.start)
     end_date = date_type.fromisoformat(body.end)
-    report_id = await db.fetchval(
-        """INSERT INTO correlation_reports (user_id, status, period_start, period_end)
-           VALUES ($1, 'running', $2, $3) RETURNING id""",
-        current_user["id"], start_date, end_date,
-    )
+    repo = AnalyticsRepository(db, current_user["id"])
+    report_id = await repo.create_report(start_date, end_date)
     asyncio.create_task(run_correlation_report(report_id, current_user["id"], body.start, body.end, config=correlation_config))
     return {"report_id": report_id, "status": "running"}
 
@@ -603,13 +527,8 @@ async def get_latest_correlation_report(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    rows = await db.fetch(
-        """SELECT id, status, period_start, period_end, created_at
-           FROM correlation_reports
-           WHERE user_id = $1
-           ORDER BY created_at DESC""",
-        current_user["id"],
-    )
+    repo = AnalyticsRepository(db, current_user["id"])
+    rows = await repo.get_all_reports()
     if not rows:
         return {"running": None, "report": None}
 
@@ -627,19 +546,7 @@ async def get_latest_correlation_report(
 
     report = None
     if done_row:
-        counts_row = await db.fetchrow(
-            """SELECT
-                   COUNT(*) AS total,
-                   COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) > 0.7) AS sig_strong,
-                   COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) > 0.3
-                                    AND ABS(correlation) <= 0.7) AS sig_medium,
-                   COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) <= 0.3) AS sig_weak,
-                   COUNT(*) FILTER (WHERE quality_issue IN ('wide_ci', 'fisher_exact_high_p')) AS maybe,
-                   COUNT(*) FILTER (WHERE quality_issue IS NOT NULL
-                                    AND quality_issue NOT IN ('wide_ci', 'fisher_exact_high_p')) AS insig
-               FROM correlation_pairs WHERE report_id = $1""",
-            done_row["id"],
-        )
+        counts_row = await repo.get_report_pair_counts(done_row["id"])
         report = {
             "id": done_row["id"],
             "status": "done",
@@ -674,11 +581,9 @@ async def get_correlation_pairs(
     current_user: dict = Depends(get_current_user),
     privacy_mode: bool = Depends(get_privacy_mode),
 ):
+    repo = AnalyticsRepository(db, current_user["id"])
     # Verify report belongs to user
-    report_row = await db.fetchrow(
-        "SELECT id FROM correlation_reports WHERE id = $1 AND user_id = $2",
-        report_id, current_user["id"],
-    )
+    report_row = await repo.get_report_owned(report_id)
     if not report_row:
         return {"pairs": [], "total": 0, "has_more": False}
 
@@ -695,34 +600,10 @@ async def get_correlation_pairs(
             args_base.append(ids_list)
 
     # Count total for this category
-    total_row = await db.fetchrow(
-        f"SELECT COUNT(*) AS cnt FROM correlation_pairs cp WHERE cp.report_id = $1 {cat_filter}{metric_filter}",
-        *args_base,
-    )
-    total = total_row["cnt"]
+    total = await repo.count_pairs(report_id, cat_filter, metric_filter, args_base)
 
     # Fetch page of pairs
-    limit_idx = len(args_base) + 1
-    offset_idx = len(args_base) + 2
-    pairs = await db.fetch(
-        f"""SELECT cp.id AS pair_id,
-                   cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days, cp.p_value, cp.quality_issue,
-                   cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
-                   cp.source_key_a, cp.source_key_b,
-                   ma.name AS name_a, ma.icon AS icon_a, COALESCE(ma.private, FALSE) AS private_a, ma.description AS description_a,
-                   mb.name AS name_b, mb.icon AS icon_b, COALESCE(mb.private, FALSE) AS private_b, mb.description AS description_b,
-                   sa.label AS slot_label_a,
-                   sb.label AS slot_label_b
-            FROM correlation_pairs cp
-            LEFT JOIN metric_definitions ma ON ma.id = cp.metric_a_id
-            LEFT JOIN metric_definitions mb ON mb.id = cp.metric_b_id
-            LEFT JOIN measurement_slots sa ON sa.id = cp.slot_a_id
-            LEFT JOIN measurement_slots sb ON sb.id = cp.slot_b_id
-            WHERE cp.report_id = $1 {cat_filter}{metric_filter}
-            ORDER BY ABS(cp.correlation) DESC
-            LIMIT ${limit_idx} OFFSET ${offset_idx}""",
-        *args_base, limit, offset,
-    )
+    pairs = await repo.fetch_pairs_page(report_id, cat_filter, metric_filter, args_base, limit, offset)
 
     # Collect all referenced IDs from source_keys for batch lookups
     all_parent_metric_ids: set[int] = set()
@@ -741,23 +622,14 @@ async def get_correlation_pairs(
     metric_icons_by_id: dict[int, str] = {}
     parent_names: dict[int, str] = {}
     if all_parent_metric_ids:
-        pm_rows = await db.fetch(
-            "SELECT id, name, icon FROM metric_definitions WHERE id = ANY($1)",
-            list(all_parent_metric_ids),
-        )
+        pm_rows = await repo.get_metric_names_icons(list(all_parent_metric_ids))
         for r in pm_rows:
             parent_names[r["id"]] = r["name"]
             if r["icon"]:
                 metric_icons_by_id[r["id"]] = r["icon"]
 
     # Batch: enum option labels
-    enum_labels: dict[int, str] = {}
-    if all_enum_option_ids:
-        eo_rows = await db.fetch(
-            "SELECT id, label FROM enum_options WHERE id = ANY($1)",
-            list(all_enum_option_ids),
-        )
-        enum_labels = {r["id"]: r["label"] for r in eo_rows}
+    enum_labels = await repo.get_enum_labels(list(all_enum_option_ids))
 
     # Batch: metrics with slots (for bool annotation)
     all_metric_ids: set[int] = set()
@@ -766,13 +638,7 @@ async def get_correlation_pairs(
             all_metric_ids.add(p["metric_a_id"])
         if p["metric_b_id"] is not None:
             all_metric_ids.add(p["metric_b_id"])
-    metrics_with_slots: set[int] = set()
-    if all_metric_ids:
-        mws_rows = await db.fetch(
-            "SELECT DISTINCT metric_id FROM metric_slots WHERE metric_id = ANY($1) AND enabled = TRUE",
-            list(all_metric_ids),
-        )
-        metrics_with_slots = {r["metric_id"] for r in mws_rows}
+    metrics_with_slots = await repo.get_metrics_with_slots(list(all_metric_ids))
 
     return {
         "pairs": [PairFormatter(
@@ -796,29 +662,14 @@ async def correlation_pair_chart(
     current_user: dict = Depends(get_current_user),
     privacy_mode: bool = Depends(get_privacy_mode),
 ):
-    row = await db.fetchrow(
-        """SELECT cp.*, cr.period_start, cr.period_end, cr.user_id
-           FROM correlation_pairs cp
-           JOIN correlation_reports cr ON cr.id = cp.report_id
-           WHERE cp.id = $1""",
-        pair_id,
-    )
+    repo = AnalyticsRepository(db, current_user["id"])
+    row = await repo.get_pair_with_report(pair_id)
     if not row or row["user_id"] != current_user["id"]:
         return {"dates": [], "values_a": [], "values_b": []}
 
     # Check privacy for each side
-    priv_a = False
-    priv_b = False
-    if row["metric_a_id"] is not None:
-        ma_row = await db.fetchrow(
-            "SELECT private FROM metric_definitions WHERE id = $1", row["metric_a_id"]
-        )
-        priv_a = ma_row["private"] if ma_row else False
-    if row["metric_b_id"] is not None:
-        mb_row = await db.fetchrow(
-            "SELECT private FROM metric_definitions WHERE id = $1", row["metric_b_id"]
-        )
-        priv_b = mb_row["private"] if mb_row else False
+    priv_a = await repo.get_metric_privacy(row["metric_a_id"]) if row["metric_a_id"] else False
+    priv_b = await repo.get_metric_privacy(row["metric_b_id"]) if row["metric_b_id"] else False
     blocked_a = is_blocked(priv_a, privacy_mode)
     blocked_b = is_blocked(priv_b, privacy_mode)
 
@@ -841,19 +692,13 @@ async def correlation_pair_chart(
     type_a = row["type_a"]
     type_b = row["type_b"]
     if type_a == "computed" and row["metric_a_id"]:
-        cfg = await db.fetchrow(
-            "SELECT result_type FROM computed_config WHERE metric_id = $1",
-            row["metric_a_id"],
-        )
-        if cfg and cfg["result_type"]:
-            type_a = cfg["result_type"]
+        rt = await repo.get_computed_result_type(row["metric_a_id"])
+        if rt:
+            type_a = rt
     if type_b == "computed" and row["metric_b_id"]:
-        cfg = await db.fetchrow(
-            "SELECT result_type FROM computed_config WHERE metric_id = $1",
-            row["metric_b_id"],
-        )
-        if cfg and cfg["result_type"]:
-            type_b = cfg["result_type"]
+        rt = await repo.get_computed_result_type(row["metric_b_id"])
+        if rt:
+            type_b = rt
 
     original_dates_b = None
     if lag > 0:
@@ -869,31 +714,16 @@ async def correlation_pair_chart(
     parent_ids = {mid for mid in (sk_a.auto_parent_metric_id, sk_b.auto_parent_metric_id) if mid is not None}
     parent_names: dict[int, str] = {}
     if parent_ids:
-        pm_rows = await db.fetch(
-            "SELECT id, name FROM metric_definitions WHERE id = ANY($1)",
-            list(parent_ids),
-        )
+        pm_rows = await repo.get_metric_names_icons(list(parent_ids))
         parent_names = {r["id"]: r["name"] for r in pm_rows}
 
-    # Metric names from JOIN (ma/mb)
-    ma_name: str | None = None
-    mb_name: str | None = None
-    if row["metric_a_id"] is not None:
-        ma_row = await db.fetchrow("SELECT name FROM metric_definitions WHERE id = $1", row["metric_a_id"])
-        ma_name = ma_row["name"] if ma_row else None
-    if row["metric_b_id"] is not None:
-        mb_row = await db.fetchrow("SELECT name FROM metric_definitions WHERE id = $1", row["metric_b_id"])
-        mb_name = mb_row["name"] if mb_row else None
+    # Metric names
+    ma_name = await repo.get_metric_name(row["metric_a_id"]) if row["metric_a_id"] else None
+    mb_name = await repo.get_metric_name(row["metric_b_id"]) if row["metric_b_id"] else None
 
     # Check if metrics have slots (for bool annotation)
     chart_metric_ids = [mid for mid in (row["metric_a_id"], row["metric_b_id"]) if mid is not None]
-    chart_mws: set[int] = set()
-    if chart_metric_ids:
-        mws_rows = await db.fetch(
-            "SELECT DISTINCT metric_id FROM metric_slots WHERE metric_id = ANY($1) AND enabled = TRUE",
-            chart_metric_ids,
-        )
-        chart_mws = {r["metric_id"] for r in mws_rows}
+    chart_mws = await repo.get_metrics_with_slots(chart_metric_ids)
 
     display_label_a = PRIVATE_MASK if blocked_a else PairFormatter.build_display_label(
         row["source_key_a"], ma_name, parent_names.get(sk_a.auto_parent_metric_id),
@@ -920,27 +750,15 @@ async def correlation_pair_chart(
 
 @router.get("/streaks")
 async def streaks(db=Depends(get_db), current_user: dict = Depends(get_current_user), privacy_mode: bool = Depends(get_privacy_mode)):
-    metrics = await db.fetch(
-        """SELECT * FROM metric_definitions
-           WHERE enabled = TRUE AND user_id = $1 AND type = 'bool'
-           ORDER BY sort_order""",
-        current_user["id"],
-    )
+    repo = AnalyticsRepository(db, current_user["id"])
+    metrics = await repo.get_enabled_bool_metrics()
 
     result = []
     for m in metrics:
         m_private = m.get("private", False)
         m_blocked = is_blocked(m_private, privacy_mode)
         # Group by date: day counts as True only if ALL slot entries are True
-        rows = await db.fetch(
-            """SELECT e.date, bool_and(vb.value) AS day_value
-               FROM entries e
-               JOIN values_bool vb ON vb.entry_id = e.id
-               WHERE e.metric_id = $1 AND e.user_id = $2
-               GROUP BY e.date
-               ORDER BY e.date DESC""",
-            m["id"], current_user["id"],
-        )
+        rows = await repo.get_bool_streak_rows(m["id"])
         current_streak = 0
         for r in rows:
             if r["day_value"] is True:
