@@ -5,36 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import get_db
 from app.auth import get_current_user
 from app.schemas import NoteCreate, NoteUpdate, NoteOut
+from app.repositories.notes_repository import NotesRepository
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
 
 
-@router.post("", response_model=NoteOut, status_code=201)
-async def create_note(
-    data: NoteCreate,
-    db=Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    metric = await db.fetchrow(
-        "SELECT id, type FROM metric_definitions WHERE id = $1 AND user_id = $2",
-        data.metric_id, current_user["id"],
-    )
-    if not metric:
-        raise HTTPException(404, "Metric not found")
-    if metric["type"] != "text":
-        raise HTTPException(400, "Only text metrics support notes")
-
-    text = data.text.strip()
-    if not text:
-        raise HTTPException(400, "Note text cannot be empty")
-
-    d = date_type.fromisoformat(data.date)
-    row = await db.fetchrow(
-        """INSERT INTO notes (metric_id, user_id, date, text)
-           VALUES ($1, $2, $3, $4)
-           RETURNING id, metric_id, date, text, created_at""",
-        data.metric_id, current_user["id"], d, text,
-    )
+def _row_to_out(row) -> NoteOut:
     return NoteOut(
         id=row["id"],
         metric_id=row["metric_id"],
@@ -44,6 +20,26 @@ async def create_note(
     )
 
 
+@router.post("", response_model=NoteOut, status_code=201)
+async def create_note(
+    data: NoteCreate,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    repo = NotesRepository(db, current_user["id"])
+    metric = await repo.get_metric_type(data.metric_id)
+    if metric["type"] != "text":
+        raise HTTPException(400, "Only text metrics support notes")
+
+    text = data.text.strip()
+    if not text:
+        raise HTTPException(400, "Note text cannot be empty")
+
+    d = date_type.fromisoformat(data.date)
+    row = await repo.create(data.metric_id, d, text)
+    return _row_to_out(row)
+
+
 @router.put("/{note_id}", response_model=NoteOut)
 async def update_note(
     note_id: int,
@@ -51,28 +47,15 @@ async def update_note(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    row = await db.fetchrow(
-        "SELECT * FROM notes WHERE id = $1 AND user_id = $2",
-        note_id, current_user["id"],
-    )
-    if not row:
-        raise HTTPException(404, "Note not found")
+    repo = NotesRepository(db, current_user["id"])
+    await repo.get_by_id(note_id)
 
     text = data.text.strip()
     if not text:
         raise HTTPException(400, "Note text cannot be empty")
 
-    updated = await db.fetchrow(
-        "UPDATE notes SET text = $1 WHERE id = $2 RETURNING id, metric_id, date, text, created_at",
-        text, note_id,
-    )
-    return NoteOut(
-        id=updated["id"],
-        metric_id=updated["metric_id"],
-        date=str(updated["date"]),
-        text=updated["text"],
-        created_at=str(updated["created_at"]),
-    )
+    updated = await repo.update_text(note_id, text)
+    return _row_to_out(updated)
 
 
 @router.delete("/{note_id}", status_code=204)
@@ -81,13 +64,9 @@ async def delete_note(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    row = await db.fetchrow(
-        "SELECT id FROM notes WHERE id = $1 AND user_id = $2",
-        note_id, current_user["id"],
-    )
-    if not row:
-        raise HTTPException(404, "Note not found")
-    await db.execute("DELETE FROM notes WHERE id = $1", note_id)
+    repo = NotesRepository(db, current_user["id"])
+    await repo.get_by_id(note_id)
+    await repo.delete(note_id)
 
 
 @router.get("", response_model=list[NoteOut])
@@ -98,22 +77,8 @@ async def list_notes(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    repo = NotesRepository(db, current_user["id"])
     start_d = date_type.fromisoformat(start)
     end_d = date_type.fromisoformat(end)
-    rows = await db.fetch(
-        """SELECT id, metric_id, date, text, created_at
-           FROM notes
-           WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4
-           ORDER BY date DESC, created_at DESC""",
-        metric_id, current_user["id"], start_d, end_d,
-    )
-    return [
-        NoteOut(
-            id=r["id"],
-            metric_id=r["metric_id"],
-            date=str(r["date"]),
-            text=r["text"],
-            created_at=str(r["created_at"]),
-        )
-        for r in rows
-    ]
+    rows = await repo.list_by_metric_and_period(metric_id, start_d, end_d)
+    return [_row_to_out(r) for r in rows]
