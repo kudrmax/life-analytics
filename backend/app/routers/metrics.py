@@ -15,6 +15,7 @@ from app.formula import validate_formula, get_referenced_metric_ids
 from app.integrations.todoist.registry import TODOIST_METRICS, TODOIST_ICON
 from app.integrations.activitywatch.registry import ACTIVITYWATCH_METRICS, ACTIVITYWATCH_ICON
 from app.repositories.metric_repository import MetricRepository
+from app.repositories.metric_config_repository import MetricConfigRepository
 from app.repositories.metric_conversion_repository import MetricConversionRepository
 
 
@@ -211,6 +212,7 @@ async def create_metric(
     privacy_mode: bool = Depends(get_privacy_mode),
 ):
     repo = MetricRepository(db, current_user["id"])
+    cfg_repo = MetricConfigRepository(db, current_user["id"])
 
     if data.type == MetricType.integration:
         if not data.provider:
@@ -274,7 +276,7 @@ async def create_metric(
 
     cat_id = data.category_id
     if data.new_category_name:
-        cat_id = await repo.create_inline_category(data.new_category_name.strip(), data.new_category_parent_id)
+        cat_id = await cfg_repo.create_inline_category(data.new_category_name.strip(), data.new_category_parent_id)
 
     metric_id = await repo.create_metric(
         slug, data.name, cat_id, icon, data.type.value,
@@ -286,25 +288,25 @@ async def create_metric(
             value_type = ACTIVITYWATCH_METRICS[data.metric_key]["value_type"]
         else:
             value_type = TODOIST_METRICS[data.metric_key]["value_type"]
-        await repo.insert_integration_config(metric_id, data.provider, data.metric_key, value_type)
+        await cfg_repo.insert_integration_config(metric_id, data.provider, data.metric_key, value_type)
         if data.metric_key == "filter_tasks_count":
-            await repo.insert_integration_filter_config(metric_id, data.filter_name.strip())
+            await cfg_repo.insert_integration_filter_config(metric_id, data.filter_name.strip())
         elif data.metric_key == "query_tasks_count":
-            await repo.insert_integration_query_config(metric_id, data.filter_query.strip())
+            await cfg_repo.insert_integration_query_config(metric_id, data.filter_query.strip())
         elif data.metric_key == "category_time":
-            await repo.insert_integration_category_config(metric_id, data.activitywatch_category_id)
+            await cfg_repo.insert_integration_category_config(metric_id, data.activitywatch_category_id)
         elif data.metric_key == "app_time":
-            await repo.insert_integration_app_config(metric_id, data.app_name.strip())
+            await cfg_repo.insert_integration_app_config(metric_id, data.app_name.strip())
 
     if data.type == MetricType.scale:
         labels_json = json.dumps(data.scale_labels) if data.scale_labels else None
-        await repo.insert_scale_config(metric_id, s_min, s_max, s_step, labels_json)
+        await cfg_repo.insert_scale_config(metric_id, s_min, s_max, s_step, labels_json)
 
     if data.type == MetricType.enum:
         multi = data.multi_select if data.multi_select is not None else False
-        await repo.insert_enum_config(metric_id, multi)
+        await cfg_repo.insert_enum_config(metric_id, multi)
         for i, label in enumerate(data.enum_options):
-            await repo.insert_enum_option(metric_id, i, label)
+            await cfg_repo.insert_enum_option(metric_id, i, label)
 
     if data.type == MetricType.computed:
         if not data.formula:
@@ -325,7 +327,7 @@ async def create_metric(
         )
         if has_comparison and data.result_type != "bool":
             raise HTTPException(400, "Формула со сравнением должна иметь тип результата bool")
-        await repo.insert_computed_config(metric_id, data.formula, data.result_type)
+        await cfg_repo.insert_computed_config(metric_id, data.formula, data.result_type)
 
     # Link measurement slots if 2+ slot_configs provided
     if data.type not in (MetricType.computed, MetricType.integration, MetricType.text):
@@ -334,14 +336,14 @@ async def create_metric(
                 slot_id = cfg.get("slot_id")
                 if slot_id is None:
                     raise HTTPException(400, "slot_id is required in slot_configs")
-                if not await repo.check_slot_ownership(slot_id):
+                if not await cfg_repo.check_slot_ownership(slot_id):
                     raise HTTPException(400, f"Slot {slot_id} not found")
                 slot_cat_id = cfg.get("category_id")
                 if slot_cat_id is not None:
-                    if not await repo.check_category_ownership(slot_cat_id):
+                    if not await cfg_repo.check_category_ownership(slot_cat_id):
                         raise HTTPException(400, f"Category {slot_cat_id} not found")
-                await repo.insert_metric_slot(metric_id, slot_id, i, slot_cat_id)
-            await repo.clear_metric_category(metric_id)
+                await cfg_repo.insert_metric_slot(metric_id, slot_id, i, slot_cat_id)
+            await cfg_repo.clear_metric_category(metric_id)
 
     # Condition
     if data.condition_metric_id is not None and data.condition_type is not None:
@@ -355,10 +357,10 @@ async def create_metric(
             raise HTTPException(400, "Dependency metric not found")
         if data.condition_type in ('equals', 'not_equals') and data.condition_value is None:
             raise HTTPException(400, "condition_value is required for equals/not_equals")
-        cycle_check = await repo.get_condition_dependency(data.condition_metric_id)
+        cycle_check = await cfg_repo.get_condition_dependency(data.condition_metric_id)
         if cycle_check == metric_id:
             raise HTTPException(400, "Circular dependency detected")
-        await repo.insert_or_update_condition(
+        await cfg_repo.insert_or_update_condition(
             metric_id, data.condition_metric_id, data.condition_type, data.condition_value,
         )
 
@@ -374,6 +376,7 @@ async def update_metric(
     privacy_mode: bool = Depends(get_privacy_mode),
 ):
     repo = MetricRepository(db, current_user["id"])
+    cfg_repo = MetricConfigRepository(db, current_user["id"])
     row = await repo.get_by_id(metric_id)
 
     updates = {}
@@ -401,7 +404,7 @@ async def update_metric(
     if row["type"] == "scale" and any(
         getattr(data, f) is not None for f in ("scale_min", "scale_max", "scale_step", "scale_labels")
     ):
-        cfg = await repo.get_scale_config(metric_id)
+        cfg = await cfg_repo.get_scale_config(metric_id)
         s_min = data.scale_min if data.scale_min is not None else (cfg["scale_min"] if cfg else 1)
         s_max = data.scale_max if data.scale_max is not None else (cfg["scale_max"] if cfg else 5)
         s_step = data.scale_step if data.scale_step is not None else (cfg["scale_step"] if cfg else 1)
@@ -413,11 +416,11 @@ async def update_metric(
             labels_json = json.dumps(data.scale_labels) if data.scale_labels else None
         else:
             labels_json = cfg["labels"] if cfg else None
-        await repo.upsert_scale_config(metric_id, s_min, s_max, s_step, labels_json, cfg is not None)
+        await cfg_repo.upsert_scale_config(metric_id, s_min, s_max, s_step, labels_json, cfg is not None)
 
     # Update computed_config
     if row["type"] == "computed" and (data.formula is not None or data.result_type is not None):
-        cfg = await repo.get_computed_config(metric_id)
+        cfg = await cfg_repo.get_computed_config(metric_id)
         new_formula = data.formula if data.formula is not None else (json.loads(cfg["formula"]) if cfg and cfg["formula"] else [])
         new_result_type = data.result_type if data.result_type is not None else (cfg["result_type"] if cfg else "float")
         if new_result_type not in ("bool", "int", "float", "time"):
@@ -436,13 +439,13 @@ async def update_metric(
         )
         if has_comparison and new_result_type != "bool":
             raise HTTPException(400, "Формула со сравнением должна иметь тип результата bool")
-        await repo.upsert_computed_config(metric_id, new_formula, new_result_type, cfg is not None)
+        await cfg_repo.upsert_computed_config(metric_id, new_formula, new_result_type, cfg is not None)
 
     # Update enum config
     if row["type"] == "enum":
         if data.multi_select is not None:
-            cfg = await repo.get_enum_config(metric_id)
-            await repo.upsert_enum_config_multi_select(metric_id, data.multi_select, cfg is not None)
+            cfg = await cfg_repo.get_enum_config(metric_id)
+            await cfg_repo.upsert_enum_config_multi_select(metric_id, data.multi_select, cfg is not None)
 
         if data.enum_options is not None:
             new_opts = data.enum_options
@@ -452,7 +455,7 @@ async def update_metric(
             if len(set(labels)) != len(labels):
                 raise HTTPException(400, "Enum option labels must be unique")
 
-            existing_opts = await repo.get_enum_options(metric_id)
+            existing_opts = await cfg_repo.get_enum_options(metric_id)
             existing_ids = {o["id"] for o in existing_opts}
             seen_ids = set()
 
@@ -461,17 +464,17 @@ async def update_metric(
                 label = opt["label"]
                 if opt_id and opt_id in existing_ids:
                     seen_ids.add(opt_id)
-                    await repo.update_enum_option(opt_id, label, i)
+                    await cfg_repo.update_enum_option(opt_id, label, i)
                 else:
-                    await repo.insert_enum_option(metric_id, i, label)
+                    await cfg_repo.insert_enum_option(metric_id, i, label)
 
             for o in existing_opts:
                 if o["id"] not in seen_ids:
-                    await repo.disable_enum_option(o["id"])
+                    await cfg_repo.disable_enum_option(o["id"])
 
     # Update metric slots
     if data.slot_configs is not None:
-        existing_slots = await repo.get_metric_slots(metric_id)
+        existing_slots = await cfg_repo.get_metric_slots(metric_id)
         has_existing_slots = len(existing_slots) > 0
 
         if len(data.slot_configs) < 2:
@@ -482,22 +485,22 @@ async def update_metric(
                 sid = cfg.get("slot_id")
                 if sid is None:
                     raise HTTPException(400, "slot_id is required in slot_configs")
-                if not await repo.check_slot_ownership(sid):
+                if not await cfg_repo.check_slot_ownership(sid):
                     raise HTTPException(400, f"Slot {sid} not found")
                 slot_cat_id = cfg.get("category_id")
                 if slot_cat_id is not None:
-                    if not await repo.check_category_ownership(slot_cat_id):
+                    if not await cfg_repo.check_category_ownership(slot_cat_id):
                         raise HTTPException(400, f"Category {slot_cat_id} not found")
 
             if not has_existing_slots:
                 first_slot_id = None
                 for i, cfg in enumerate(data.slot_configs):
                     sid = cfg["slot_id"]
-                    await repo.insert_metric_slot(metric_id, sid, i, cfg.get("category_id"))
+                    await cfg_repo.insert_metric_slot(metric_id, sid, i, cfg.get("category_id"))
                     if i == 0:
                         first_slot_id = sid
                 if first_slot_id:
-                    await repo.migrate_null_slot_entries(metric_id, first_slot_id)
+                    await cfg_repo.migrate_null_slot_entries(metric_id, first_slot_id)
             else:
                 existing_by_slot_id = {s["slot_id"]: s for s in existing_slots}
                 seen_slot_ids: set[int] = set()
@@ -506,18 +509,18 @@ async def update_metric(
                     sid = cfg["slot_id"]
                     seen_slot_ids.add(sid)
                     if sid in existing_by_slot_id:
-                        await repo.update_metric_slot(metric_id, sid, cfg.get("category_id"), i)
+                        await cfg_repo.update_metric_slot(metric_id, sid, cfg.get("category_id"), i)
                     else:
-                        await repo.insert_metric_slot(metric_id, sid, i, cfg.get("category_id"))
+                        await cfg_repo.insert_metric_slot(metric_id, sid, i, cfg.get("category_id"))
                 for s in existing_slots:
                     if s["slot_id"] not in seen_slot_ids:
-                        await repo.disable_metric_slot(metric_id, s["slot_id"])
+                        await cfg_repo.disable_metric_slot(metric_id, s["slot_id"])
 
-            await repo.clear_metric_category(metric_id)
+            await cfg_repo.clear_metric_category(metric_id)
 
     # Update condition
     if data.remove_condition:
-        await repo.delete_condition(metric_id)
+        await cfg_repo.delete_condition(metric_id)
     elif data.condition_metric_id is not None and data.condition_type is not None:
         if data.condition_type not in ('filled', 'equals', 'not_equals'):
             raise HTTPException(400, "condition_type must be 'filled', 'equals', or 'not_equals'")
@@ -529,10 +532,10 @@ async def update_metric(
             raise HTTPException(400, "Dependency metric not found")
         if data.condition_type in ('equals', 'not_equals') and data.condition_value is None:
             raise HTTPException(400, "condition_value is required for equals/not_equals")
-        cycle_check = await repo.get_condition_dependency(data.condition_metric_id)
+        cycle_check = await cfg_repo.get_condition_dependency(data.condition_metric_id)
         if cycle_check == metric_id:
             raise HTTPException(400, "Circular dependency detected")
-        await repo.insert_or_update_condition(
+        await cfg_repo.insert_or_update_condition(
             metric_id, data.condition_metric_id, data.condition_type, data.condition_value,
         )
 
@@ -622,6 +625,7 @@ async def convert_metric(
     current_user: dict = Depends(get_current_user),
 ):
     repo = MetricRepository(db, current_user["id"])
+    cfg_repo = MetricConfigRepository(db, current_user["id"])
     conv = MetricConversionRepository(db, current_user["id"])
 
     async with db.transaction():
@@ -637,17 +641,17 @@ async def convert_metric(
         deleted = 0
 
         if source_type == "scale" and target_type == "scale":
-            converted, deleted = await _convert_scale_to_scale(repo, conv, metric_id, data)
+            converted, deleted = await _convert_scale_to_scale(cfg_repo, conv, metric_id, data)
         elif source_type == "bool" and target_type == "enum":
-            converted, deleted = await _convert_bool_to_enum(repo, conv, metric_id, data)
+            converted, deleted = await _convert_bool_to_enum(cfg_repo, conv, metric_id, data)
         elif source_type == "enum" and target_type == "scale":
-            converted, deleted = await _convert_enum_to_scale(repo, conv, metric_id, data)
+            converted, deleted = await _convert_enum_to_scale(cfg_repo, conv, metric_id, data)
 
     return MetricConvertResponse(converted=converted, deleted=deleted)
 
 
 async def _convert_scale_to_scale(
-    repo: MetricRepository, conv: MetricConversionRepository,
+    cfg_repo: MetricConfigRepository, conv: MetricConversionRepository,
     metric_id: int, data: MetricConvertRequest,
 ) -> tuple[int, int]:
     if data.scale_min is None or data.scale_max is None or data.scale_step is None:
@@ -696,7 +700,7 @@ async def _convert_scale_to_scale(
 
 
 async def _convert_bool_to_enum(
-    repo: MetricRepository, conv: MetricConversionRepository,
+    cfg_repo: MetricConfigRepository, conv: MetricConversionRepository,
     metric_id: int, data: MetricConvertRequest,
 ) -> tuple[int, int]:
     if not data.enum_options or len(data.enum_options) < 2:
@@ -709,10 +713,10 @@ async def _convert_bool_to_enum(
         if k not in valid_bool_keys:
             raise HTTPException(400, f"Invalid bool value in mapping: {k}")
 
-    await repo.insert_enum_config(metric_id, data.multi_select)
+    await cfg_repo.insert_enum_config(metric_id, data.multi_select)
     option_label_to_id: dict[str, int] = {}
     for i, label in enumerate(data.enum_options):
-        opt_id = await repo.insert_enum_option(metric_id, i, label)
+        opt_id = await cfg_repo.insert_enum_option(metric_id, i, label)
         option_label_to_id[label] = opt_id
 
     bool_to_option: dict[str, int | None] = {}
@@ -745,13 +749,13 @@ async def _convert_bool_to_enum(
         converted += await conv.convert_bool_to_enum_values(metric_id, opt_id, bool_val)
 
     await conv.delete_all_bool_values(metric_id)
-    await repo.update_metric_type(metric_id, "enum")
+    await cfg_repo.update_metric_type(metric_id, "enum")
 
     return converted, deleted
 
 
 async def _convert_enum_to_scale(
-    repo: MetricRepository, conv: MetricConversionRepository,
+    cfg_repo: MetricConfigRepository, conv: MetricConversionRepository,
     metric_id: int, data: MetricConvertRequest,
 ) -> tuple[int, int]:
     if data.scale_min is None or data.scale_max is None or data.scale_step is None:
@@ -810,6 +814,6 @@ async def _convert_enum_to_scale(
     await conv.delete_enum_options(metric_id)
     await conv.delete_enum_config(metric_id)
     await conv.insert_scale_config_with_labels(metric_id, data.scale_min, data.scale_max, data.scale_step, data.scale_labels)
-    await repo.update_metric_type(metric_id, "scale")
+    await cfg_repo.update_metric_type(metric_id, "scale")
 
     return converted, deleted

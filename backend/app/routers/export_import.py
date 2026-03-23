@@ -14,14 +14,15 @@ from fastapi.responses import StreamingResponse
 from app.database import get_db
 from app.auth import get_current_user
 from app.metric_helpers import get_entry_value, insert_value
-from app.repositories.export_import_repository import ExportImportRepository
+from app.repositories.export_repository import ExportRepository
+from app.repositories.import_repository import ImportRepository
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 
 
 @router.get("/csv")
 async def export_data(db=Depends(get_db), current_user: dict = Depends(get_current_user)):
-    repo = ExportImportRepository(db, current_user["id"])
+    repo = ExportRepository(db, current_user["id"])
     zip_buffer = BytesIO()
 
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
@@ -209,7 +210,7 @@ async def import_data(
     content = await file.read()
     zip_buffer = BytesIO(content)
 
-    repo = ExportImportRepository(db, current_user["id"])
+    repo = ImportRepository(db, current_user["id"])
 
     metrics_imported = 0
     metrics_updated = 0
@@ -597,7 +598,7 @@ async def import_data(
     }
 
 
-async def _import_enum_options(repo: ExportImportRepository, metric_id: int, labels: list[str]) -> None:
+async def _import_enum_options(repo: ImportRepository, metric_id: int, labels: list[str]) -> None:
     """Create or update enum options during import."""
     existing = await repo.get_enum_options_ordered(metric_id)
     for i, label in enumerate(labels):
@@ -612,7 +613,7 @@ async def _import_enum_options(repo: ExportImportRepository, metric_id: int, lab
 
 
 async def _import_slots(
-    repo: ExportImportRepository, metric_id: int, configs: list[dict],
+    repo: ImportRepository, metric_id: int, configs: list[dict],
 ) -> None:
     """Create or update metric slot bindings during import.
 

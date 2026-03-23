@@ -7,14 +7,14 @@ from datetime import date
 from unittest.mock import MagicMock
 
 from app.analytics.correlation_engine import CorrelationEngine, CorrelationPairResult
-from app.repositories.analytics_repository import AnalyticsRepository
+from app.repositories.correlation_repository import CorrelationRepository
 from app.source_key import AutoSourceType, SourceKey
 
 
 def _make_engine(**state_overrides: object) -> CorrelationEngine:
     """Create engine with mock conn and manually set internal state."""
     mock_conn = MagicMock()
-    mock_repo = MagicMock(spec=AnalyticsRepository)
+    mock_repo = MagicMock(spec=CorrelationRepository)
     mock_repo.conn = mock_conn
     mock_repo.user_id = 1
     engine = CorrelationEngine(

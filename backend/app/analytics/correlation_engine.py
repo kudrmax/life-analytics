@@ -18,7 +18,7 @@ from app.analytics.value_fetcher import ValueFetcher
 from app.correlation_blacklist import should_skip_pair
 from app.correlation_config import CorrelationConfig, correlation_config
 from app.formula import get_referenced_metric_ids
-from app.repositories.analytics_repository import AnalyticsRepository
+from app.repositories.correlation_repository import CorrelationRepository
 from app.source_key import (
     AutoSourceType, SourceKey, CALENDAR_OPTION_LABELS, STREAK_TYPES,
 )
@@ -58,7 +58,7 @@ class CorrelationEngine:
 
     def __init__(
         self,
-        repo: AnalyticsRepository,
+        repo: CorrelationRepository,
         report_id: int,
         start_date: date_type,
         end_date: date_type,
@@ -502,7 +502,7 @@ async def run_correlation_report(
     """Top-level entry point for asyncio.create_task. Acquires connection and runs engine."""
     try:
         async with _db_module.pool.acquire() as conn:
-            repo = AnalyticsRepository(conn, user_id)
+            repo = CorrelationRepository(conn, user_id)
             engine = CorrelationEngine(
                 repo, report_id,
                 date_type.fromisoformat(start),
@@ -514,7 +514,7 @@ async def run_correlation_report(
         logger.exception("Error computing correlation report %s", report_id)
         try:
             async with _db_module.pool.acquire() as conn:
-                repo = AnalyticsRepository(conn, user_id)
+                repo = CorrelationRepository(conn, user_id)
                 await repo.mark_report_error(report_id)
         except Exception:
             logger.exception("Failed to update report status to error")
