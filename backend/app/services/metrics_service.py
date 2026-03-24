@@ -55,9 +55,11 @@ class MetricsService:
             slug, data.name, cat_id, icon, data.type.value,
             data.enabled, data.sort_order, data.private, data.description,
             data.hide_in_cards, data.is_checkpoint,
+            data.interval_binding, data.interval_start_slot_id,
         )
         await self._create_type_config(metric_id, data)
         await self._create_slot_configs(metric_id, data)
+        await self._create_interval_slots(metric_id, data.interval_binding, data.interval_start_slot_id)
         await self._create_condition(metric_id, data)
         return await self.get_one(metric_id, privacy_mode)
 
@@ -68,6 +70,7 @@ class MetricsService:
         await self._update_computed_config(metric_id, row, data)
         await self._update_enum_config(metric_id, row, data)
         await self._update_slot_configs(metric_id, data)
+        await self._update_interval_binding(metric_id, row, data)
         await self._update_condition(metric_id, data)
         return await self.get_one(metric_id, privacy_mode)
 
@@ -211,7 +214,7 @@ class MetricsService:
 
     async def _apply_field_updates(self, metric_id: int, row, data: MetricDefinitionUpdate) -> None:
         updates = {}
-        for field in ("name", "enabled", "sort_order", "private", "hide_in_cards", "is_checkpoint"):
+        for field in ("name", "enabled", "sort_order", "private", "hide_in_cards", "is_checkpoint", "interval_binding", "interval_start_slot_id"):
             val = getattr(data, field)
             if val is not None:
                 updates[field] = val
@@ -316,6 +319,37 @@ class MetricsService:
                 if s["slot_id"] not in seen:
                     await self.cfg_repo.disable_metric_slot(metric_id, s["slot_id"])
         await self.cfg_repo.clear_metric_category(metric_id)
+
+    async def _create_interval_slots(self, metric_id: int, binding: str, start_slot_id: int | None) -> None:
+        """Auto-create metric_slots for interval-bound facts."""
+        if binding == "daily":
+            return
+        user_slots = await self.repo.get_user_slots_ordered()
+        if len(user_slots) < 2:
+            return
+        if binding == "floating":
+            # Create metric_slots for all intervals (N-1 = all except last checkpoint)
+            for i, slot in enumerate(user_slots[:-1]):
+                await self.cfg_repo.insert_metric_slot(metric_id, slot["id"], i, None)
+            await self.cfg_repo.clear_metric_category(metric_id)
+        elif binding == "fixed" and start_slot_id is not None:
+            await self.cfg_repo.insert_metric_slot(metric_id, start_slot_id, 0, None)
+
+    async def _update_interval_binding(self, metric_id: int, row, data: MetricDefinitionUpdate) -> None:
+        """Handle interval_binding changes — recreate metric_slots."""
+        if data.interval_binding is None:
+            return
+        old_binding = row.get("interval_binding", "daily")
+        if data.interval_binding == old_binding and data.interval_start_slot_id is None:
+            return
+        # Remove old interval slots
+        if old_binding in ("floating", "fixed"):
+            existing = await self.cfg_repo.get_metric_slots(metric_id)
+            for s in existing:
+                await self.cfg_repo.disable_metric_slot(metric_id, s["slot_id"])
+        # Create new interval slots
+        start_slot_id = data.interval_start_slot_id or row.get("interval_start_slot_id")
+        await self._create_interval_slots(metric_id, data.interval_binding, start_slot_id)
 
     async def _update_condition(self, metric_id: int, data: MetricDefinitionUpdate) -> None:
         if data.remove_condition:

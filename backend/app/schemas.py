@@ -76,6 +76,8 @@ class MetricDefinitionCreate(BaseModel):
     private: bool = False
     hide_in_cards: bool = False
     is_checkpoint: bool = False
+    interval_binding: str = "daily"
+    interval_start_slot_id: int | None = None
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None
@@ -100,6 +102,8 @@ class MetricDefinitionUpdate(BaseModel):
     private: bool | None = None
     hide_in_cards: bool | None = None
     is_checkpoint: bool | None = None
+    interval_binding: str | None = None
+    interval_start_slot_id: int | None = None
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None
@@ -135,6 +139,8 @@ class MetricDefinitionOut(BaseModel):
     private: bool = False
     hide_in_cards: bool = False
     is_checkpoint: bool = False
+    interval_binding: str = "daily"
+    interval_start_slot_id: int | None = None
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None

@@ -70,14 +70,14 @@ class ImportService:
                     await self.repo.update_metric_on_import(
                         existing["id"], parsed["name"], cat_id, parsed["enabled"],
                         parsed["sort_order"], parsed["icon"], parsed["private"], parsed["desc"], parsed["hic"],
-                        parsed["is_checkpoint"])
+                        parsed["is_checkpoint"], parsed["interval_binding"])
                     await self._update_configs(existing["id"], mt, row, parsed, slot_configs)
                     updated += 1
                 else:
                     new_id = await self.repo.create_metric_on_import(
                         slug, parsed["name"], cat_id, parsed["icon"], mt,
                         parsed["enabled"], parsed["sort_order"], parsed["private"], parsed["desc"], parsed["hic"],
-                        parsed["is_checkpoint"])
+                        parsed["is_checkpoint"], parsed["interval_binding"])
                     await self._create_configs(new_id, mt, row, parsed, slot_configs)
                     imported += 1
             except Exception as e:
@@ -161,6 +161,7 @@ class ImportService:
             "desc": row.get('description', '') or None,
             "hic": row.get('hide_in_cards', '') in ('1', 'True', 'true'),
             "is_checkpoint": row.get('is_checkpoint', '') in ('1', 'True', 'true'),
+            "interval_binding": row.get('interval_binding', 'daily') or 'daily',
             "multi": row.get('multi_select', '') in ('1', 'True', 'true'),
             "enum_opts": eo, "scale_labels": sl,
             "smin": row.get('scale_min', ''), "smax": row.get('scale_max', ''), "sstep": row.get('scale_step', ''),

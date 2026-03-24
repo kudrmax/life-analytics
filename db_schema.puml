@@ -53,6 +53,8 @@ entity "metric_definitions" as md {
     * private : BOOLEAN
     * hide_in_cards : BOOLEAN
     * is_checkpoint : BOOLEAN
+    * interval_binding : VARCHAR(20)
+    interval_start_slot_id : INTEGER <<FK>>
     description : TEXT
     * created_at : TIMESTAMPTZ
     --

@@ -410,6 +410,10 @@ MIGRATIONS = [
         ALTER TABLE metric_slots ADD CONSTRAINT metric_slots_slot_id_fkey
             FOREIGN KEY (slot_id) REFERENCES measurement_slots(id) ON DELETE CASCADE;
     """),
+    (19, "add_interval_binding", """
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS interval_binding VARCHAR(20) NOT NULL DEFAULT 'daily';
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS interval_start_slot_id INTEGER REFERENCES measurement_slots(id) ON DELETE SET NULL;
+    """),
 ]
 
 
