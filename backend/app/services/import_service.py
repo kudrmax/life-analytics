@@ -11,6 +11,13 @@ from app.repositories.import_repository import ImportRepository
 from app.services.import_entries_service import EntryImporter
 
 
+_INTERVAL_BINDING_MAP = {"daily": "all_day", "fixed": "by_interval", "floating": "by_interval"}
+
+
+def _normalize_interval_binding(raw: str) -> str:
+    return _INTERVAL_BINDING_MAP.get(raw, raw)
+
+
 class ImportService:
     def __init__(self, repo: ImportRepository, conn) -> None:
         self.repo = repo
@@ -161,7 +168,7 @@ class ImportService:
             "desc": row.get('description', '') or None,
             "hic": row.get('hide_in_cards', '') in ('1', 'True', 'true'),
             "is_checkpoint": row.get('is_checkpoint', '') in ('1', 'True', 'true'),
-            "interval_binding": row.get('interval_binding', 'daily') or 'daily',
+            "interval_binding": _normalize_interval_binding(row.get('interval_binding', 'all_day') or 'all_day'),
             "multi": row.get('multi_select', '') in ('1', 'True', 'true'),
             "enum_opts": eo, "scale_labels": sl,
             "smin": row.get('scale_min', ''), "smax": row.get('scale_max', ''), "sstep": row.get('scale_step', ''),

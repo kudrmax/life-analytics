@@ -417,6 +417,11 @@ MIGRATIONS = [
     (20, "add_deleted_to_measurement_slots", """
         ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE;
     """),
+    (21, "unify_interval_binding", """
+        UPDATE metric_definitions SET interval_binding = 'all_day' WHERE interval_binding = 'daily';
+        UPDATE metric_definitions SET interval_binding = 'by_interval' WHERE interval_binding IN ('fixed', 'floating');
+        ALTER TABLE metric_definitions ALTER COLUMN interval_binding SET DEFAULT 'all_day';
+    """),
 ]
 
 

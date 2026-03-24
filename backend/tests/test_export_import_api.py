@@ -1247,10 +1247,11 @@ class TestImportLegacyFormat:
 
 METRICS_HEADER = (
     "id,slug,name,category_path,icon,type,enabled,sort_order,"
-    "scale_min,scale_max,scale_step,slot_labels,formula,result_type,"
+    "scale_min,scale_max,scale_step,scale_labels,slot_labels,formula,result_type,"
     "provider,metric_key,value_type,filter_name,filter_query,"
     "enum_options,multi_select,private,condition_metric_slug,"
-    "condition_type,condition_value"
+    "condition_type,condition_value,description,hide_in_cards,"
+    "is_checkpoint,interval_binding"
 )
 
 ENTRIES_HEADER = "date,metric_slug,value,slot_sort_order,slot_label"
@@ -1266,6 +1267,7 @@ def _metric_row(
     scale_min: str = "",
     scale_max: str = "",
     scale_step: str = "",
+    scale_labels: str = "",
     slot_labels: str = "",
     formula: str = "",
     result_type: str = "",
@@ -1280,21 +1282,26 @@ def _metric_row(
     condition_metric_slug: str = "",
     condition_type: str = "",
     condition_value: str = "",
+    description: str = "",
+    hide_in_cards: str = "0",
+    is_checkpoint: str = "0",
+    interval_binding: str = "all_day",
     metric_id: str = "1",
     category_path: str = "",
     icon: str = "",
 ) -> str:
-    """Build a single metrics.csv data row with correct 25-field alignment."""
+    """Build a single metrics.csv data row with correct 30-field alignment."""
     if not name:
         name = slug
     buf = StringIO()
     w = csv.writer(buf)
     w.writerow([
         metric_id, slug, name, category_path, icon, metric_type, enabled,
-        sort_order, scale_min, scale_max, scale_step, slot_labels, formula,
-        result_type, provider, metric_key, value_type, filter_name,
-        filter_query, enum_options, multi_select, private,
+        sort_order, scale_min, scale_max, scale_step, scale_labels,
+        slot_labels, formula, result_type, provider, metric_key, value_type,
+        filter_name, filter_query, enum_options, multi_select, private,
         condition_metric_slug, condition_type, condition_value,
+        description, hide_in_cards, is_checkpoint, interval_binding,
     ])
     return buf.getvalue().rstrip("\r\n")
 
@@ -2810,3 +2817,78 @@ class TestExportImportScaleLabels:
 
         no_label = next(r for r in metrics_rows if r["name"] == "NoLabel")
         assert no_label["scale_labels"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Interval binding import/export
+# ---------------------------------------------------------------------------
+
+
+class TestImportOldIntervalBindingFormat:
+    async def test_import_old_daily_becomes_all_day(self, client, user_a):
+        row = _metric_row("old_daily", "OldDaily", interval_binding="daily")
+        metrics_csv = f"{METRICS_HEADER}\n{row}\n"
+        entries_csv = f"{ENTRIES_HEADER}\n"
+        zf = build_zip(metrics_csv, entries_csv)
+        resp = await client.post(
+            "/api/export/import",
+            files={"file": ("data.zip", zf, "application/zip")},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+
+        metrics_resp = await client.get("/api/metrics", headers=auth_headers(user_a["token"]))
+        m = [m for m in metrics_resp.json() if m["slug"] == "old_daily"][0]
+        assert m["interval_binding"] == "all_day"
+
+    async def test_import_old_fixed_becomes_by_interval(self, client, user_a):
+        row = _metric_row("old_fixed", "OldFixed", interval_binding="fixed")
+        metrics_csv = f"{METRICS_HEADER}\n{row}\n"
+        entries_csv = f"{ENTRIES_HEADER}\n"
+        zf = build_zip(metrics_csv, entries_csv)
+        resp = await client.post(
+            "/api/export/import",
+            files={"file": ("data.zip", zf, "application/zip")},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+
+        metrics_resp = await client.get("/api/metrics", headers=auth_headers(user_a["token"]))
+        m = [m for m in metrics_resp.json() if m["slug"] == "old_fixed"][0]
+        assert m["interval_binding"] == "by_interval"
+
+    async def test_import_old_floating_becomes_by_interval(self, client, user_a):
+        row = _metric_row("old_float", "OldFloat", interval_binding="floating")
+        metrics_csv = f"{METRICS_HEADER}\n{row}\n"
+        entries_csv = f"{ENTRIES_HEADER}\n"
+        zf = build_zip(metrics_csv, entries_csv)
+        resp = await client.post(
+            "/api/export/import",
+            files={"file": ("data.zip", zf, "application/zip")},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+
+        metrics_resp = await client.get("/api/metrics", headers=auth_headers(user_a["token"]))
+        m = [m for m in metrics_resp.json() if m["slug"] == "old_float"][0]
+        assert m["interval_binding"] == "by_interval"
+
+
+class TestExportIntervalBinding:
+    async def test_export_by_interval_metric(self, client, user_a):
+        s1 = await create_slot(client, user_a["token"], "Утро")
+        await create_slot(client, user_a["token"], "День")
+
+        await client.post(
+            "/api/metrics",
+            json={"name": "Душ", "type": "bool", "interval_binding": "by_interval",
+                  "interval_slot_ids": [s1["id"]]},
+            headers=auth_headers(user_a["token"]),
+        )
+
+        resp = await client.get("/api/export/csv", headers=auth_headers(user_a["token"]))
+        assert resp.status_code == 200
+        files = parse_export_zip(resp.content)
+        rows = parse_csv_rows(files["metrics.csv"])
+        shower = [r for r in rows if r["name"] == "Душ"][0]
+        assert shower["interval_binding"] == "by_interval"

@@ -1778,8 +1778,8 @@ class TestBoolAggregateAnnotation:
             "/api/metrics",
             json={
                 "name": "FixedBool", "type": "bool",
-                "interval_binding": "fixed",
-                "interval_start_slot_id": slot_a["id"],
+                "interval_binding": "by_interval",
+                "interval_slot_ids": [slot_a["id"]],
             },
             headers=auth_headers(token),
         )
@@ -1873,8 +1873,8 @@ class TestSingleSlotNoDuplicate:
             "/api/metrics",
             json={
                 "name": "Зарядка", "type": "bool",
-                "interval_binding": "fixed",
-                "interval_start_slot_id": slot_a["id"],
+                "interval_binding": "by_interval",
+                "interval_slot_ids": [slot_a["id"]],
             },
             headers=auth_headers(token),
         )
@@ -1931,8 +1931,8 @@ class TestSingleSlotNoDuplicate:
             "/api/metrics",
             json={
                 "name": "Зарядка", "type": "bool",
-                "interval_binding": "fixed",
-                "interval_start_slot_id": slot_a["id"],
+                "interval_binding": "by_interval",
+                "interval_slot_ids": [slot_a["id"]],
             },
             headers=auth_headers(token),
         )
@@ -1984,8 +1984,8 @@ class TestSingleSlotNoDuplicate:
             "/api/metrics",
             json={
                 "name": "Зарядка", "type": "bool",
-                "interval_binding": "fixed",
-                "interval_start_slot_id": slot_a["id"],
+                "interval_binding": "by_interval",
+                "interval_slot_ids": [slot_a["id"]],
             },
             headers=auth_headers(token),
         )
@@ -2036,8 +2036,8 @@ class TestSingleSlotNoDuplicate:
             "/api/metrics",
             json={
                 "name": "Отжимания", "type": "number",
-                "interval_binding": "fixed",
-                "interval_start_slot_id": slot_a["id"],
+                "interval_binding": "by_interval",
+                "interval_slot_ids": [slot_a["id"]],
             },
             headers=auth_headers(token),
         )

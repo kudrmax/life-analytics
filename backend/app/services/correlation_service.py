@@ -237,7 +237,7 @@ class CorrelationService:
         # Replace slot labels with interval labels for interval-bound metrics
         interval_mids = await self.conn.fetch(
             """SELECT id FROM metric_definitions
-               WHERE id = ANY($1) AND interval_binding IN ('fixed', 'floating')""",
+               WHERE id = ANY($1) AND interval_binding = 'by_interval'""",
             list(set(metric_ids)),
         )
         if interval_mids:

@@ -45,7 +45,7 @@ class ImportRepository(BaseRepository):
         self, metric_id: int, name: str, category_id: int | None,
         enabled: bool, sort_order: int, icon: str, is_private: bool,
         description: str | None, hide_in_cards: bool, is_checkpoint: bool = False,
-        interval_binding: str = "daily",
+        interval_binding: str = "all_day",
     ) -> None:
         await self.conn.execute(
             """UPDATE metric_definitions
@@ -60,7 +60,7 @@ class ImportRepository(BaseRepository):
         self, slug: str, name: str, category_id: int | None, icon: str,
         metric_type: str, enabled: bool, sort_order: int, is_private: bool,
         description: str | None, hide_in_cards: bool, is_checkpoint: bool = False,
-        interval_binding: str = "daily",
+        interval_binding: str = "all_day",
     ) -> int:
         return await self.conn.fetchval(
             """INSERT INTO metric_definitions

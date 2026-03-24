@@ -289,13 +289,13 @@ class TestDeleteSlot:
             headers=auth_headers(user_a["token"]),
         )
 
-        # Try to create fixed metric with deleted slot
+        # Try to create by_interval metric with deleted slot
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "Test", "type": "bool",
-                "interval_binding": "fixed",
-                "interval_start_slot_id": slot_a["id"],
+                "interval_binding": "by_interval",
+                "interval_slot_ids": [slot_a["id"]],
             },
             headers=auth_headers(user_a["token"]),
         )

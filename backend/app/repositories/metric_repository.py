@@ -148,17 +148,17 @@ class MetricRepository(BaseRepository):
         icon: str | None, metric_type: str, enabled: bool,
         sort_order: int, private: bool, description: str | None,
         hide_in_cards: bool, is_checkpoint: bool = False,
-        interval_binding: str = "daily", interval_start_slot_id: int | None = None,
+        interval_binding: str = "all_day",
     ) -> int:
         return await self.conn.fetchval(
             """INSERT INTO metric_definitions
                (user_id, slug, name, category_id, icon, type, enabled, sort_order, private, description,
-                hide_in_cards, is_checkpoint, interval_binding, interval_start_slot_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                hide_in_cards, is_checkpoint, interval_binding)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                RETURNING id""",
             self.user_id, slug, name, category_id, icon, metric_type,
             enabled, sort_order, private, description, hide_in_cards, is_checkpoint,
-            interval_binding, interval_start_slot_id,
+            interval_binding,
         )
 
     # ── Update ─────────────────────────────────────────────────────────

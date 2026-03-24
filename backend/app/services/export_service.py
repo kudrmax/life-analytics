@@ -103,7 +103,7 @@ class ExportService:
                 m.get("description") or '',
                 1 if m.get("hide_in_cards") else 0,
                 1 if m.get("is_checkpoint") else 0,
-                m.get("interval_binding", "daily"),
+                m.get("interval_binding", "all_day"),
             ])
 
         zip_file.writestr('metrics.csv', metrics_csv.getvalue())

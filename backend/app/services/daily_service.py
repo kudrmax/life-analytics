@@ -107,7 +107,7 @@ class DailyService:
                 "scale_labels": json.loads(m["scale_labels"]) if m.get("scale_labels") is not None else None,
                 "private": m_private, "hide_in_cards": m.get("hide_in_cards", False),
                 "is_checkpoint": m.get("is_checkpoint", False),
-                "interval_binding": m.get("interval_binding", "daily"),
+                "interval_binding": m.get("interval_binding", "all_day"),
                 "entry": None, "slots": None,
                 "formula": _parse_formula(m.get("formula")) or None,
                 "result_type": m.get("result_type"), "provider": m.get("provider"),
@@ -145,7 +145,7 @@ class DailyService:
         all_vis = sorted(list(slots) + list(extra), key=lambda s: s["sort_order"])
         by_slot = {e["slot_id"]: e for e in entries if e["slot_id"] is not None}
         interval_labels = data.get("interval_label_map", {})
-        is_interval = m.get("interval_binding", "daily") in ("fixed", "floating")
+        is_interval = m.get("interval_binding", "all_day") == "by_interval"
         items = []
         for s in all_vis:
             label = interval_labels.get(s["id"], s["label"]) if is_interval else s["label"]
