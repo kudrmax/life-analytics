@@ -210,6 +210,11 @@ class CorrelationEngine:
             if sk.slot_id is not None and sk.metric_id is not None and not sk.is_auto:
                 self._slot_source_indices_by_metric[sk.metric_id].append(i)
 
+        # Single-slot metrics: treat per-slot as aggregate for auto-source generation
+        for mid, indices in self._slot_source_indices_by_metric.items():
+            if len(indices) == 1 and mid not in self._aggregate_indices:
+                self._aggregate_indices[mid] = indices[0]
+
         self._add_auto_source_definitions()
         await self._compute_auto_source_data()
 

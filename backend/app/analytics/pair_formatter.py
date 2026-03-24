@@ -114,8 +114,8 @@ class PairFormatter:
             "type_b": p["type_b"],
             "icon_a": icon_a,
             "icon_b": icon_b,
-            "slot_label_a": p["slot_label_a"] or "",
-            "slot_label_b": p["slot_label_b"] or "",
+            "slot_label_a": self._resolve_slot_label(p, "a"),
+            "slot_label_b": self._resolve_slot_label(p, "b"),
             "correlation": corr,
             "data_points": p["data_points"],
             "lag_days": p["lag_days"],
@@ -137,6 +137,12 @@ class PairFormatter:
             "quality_issue_label": QualityAssessor.LABELS.get(p.get("quality_issue")) if p.get("quality_issue") else None,
             "quality_severity": QualityAssessor.SEVERITY.get(p.get("quality_issue")) if p.get("quality_issue") else None,
         }
+
+    def _resolve_slot_label(self, p: dict[str, Any], side: str) -> str:
+        slot_id = p.get(f"slot_{side}_id")
+        if slot_id and slot_id in self._slot_labels:
+            return self._slot_labels[slot_id]
+        return p.get(f"slot_label_{side}") or ""
 
     def resolve_icon(self, source_key_str: str, db_icon: str | None) -> str:
         """Resolve icon from source_key or metric ID."""

@@ -1971,6 +1971,106 @@ class TestSingleSlotNoDuplicate:
             f"Expected interval label 'Утро → День' in labels, got: {zaryadka_labels}"
         )
 
+    async def test_single_slot_slot_label_uses_interval(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """slot_label_a/b field should show interval label, not raw checkpoint name."""
+        token = user_a["token"]
+
+        slot_a = await create_slot(client, token, "Утро")
+        await create_slot(client, token, "День")
+
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Зарядка", "type": "bool",
+                "interval_binding": "fixed",
+                "interval_start_slot_id": slot_a["id"],
+            },
+            headers=auth_headers(token),
+        )
+        bool_m = resp.json()
+
+        num_m = await create_metric(
+            client, token, name="Шаги", metric_type="number", slug="steps_slot_lbl",
+        )
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, slot_id=slot_a["id"])
+            await create_entry(client, token, num_m["id"], date_str, day * 100)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        slot_labels = set()
+        for p in pairs_data["pairs"]:
+            if "Зарядка" in p.get("label_a", "") and p.get("slot_label_a"):
+                slot_labels.add(p["slot_label_a"])
+            if "Зарядка" in p.get("label_b", "") and p.get("slot_label_b"):
+                slot_labels.add(p["slot_label_b"])
+
+        # slot_label should be interval "Утро → День", not raw "Утро"
+        for sl in slot_labels:
+            assert "→" in sl, (
+                f"Expected interval label with '→', got raw checkpoint name: '{sl}'"
+            )
+
+    async def test_fixed_number_has_nonzero_auto_source(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Fixed number metric (1 slot) should generate nonzero auto-source like daily."""
+        token = user_a["token"]
+
+        slot_a = await create_slot(client, token, "Утро")
+        await create_slot(client, token, "День")
+
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Отжимания", "type": "number",
+                "interval_binding": "fixed",
+                "interval_start_slot_id": slot_a["id"],
+            },
+            headers=auth_headers(token),
+        )
+        num_fixed = resp.json()
+
+        bool_m = await create_metric(
+            client, token, name="Спорт", metric_type="bool", slug="sport_nonzero",
+        )
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, num_fixed["id"], date_str, day * 5, slot_id=slot_a["id"])
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # Should have "не ноль" auto-source for the fixed number metric
+        nonzero_labels = [
+            p for p in pairs_data["pairs"]
+            if "не ноль" in p.get("label_a", "") or "не ноль" in p.get("label_b", "")
+        ]
+        assert len(nonzero_labels) > 0, (
+            "Expected 'не ноль' auto-source for fixed number metric"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Insufficient binary group
