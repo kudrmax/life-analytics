@@ -127,9 +127,12 @@ class DailyService:
                 item["note_count"] = 0 if m["type"] == MetricType.text else None
                 result.append(item); continue
 
+            is_moment = m.get("interval_binding") == "moment"
             slots = data["enabled_slots"].get(mid, [])
             extra = data["disabled_with_entries"].get(mid, [])
-            if slots or extra:
+            if is_moment:
+                self._fill_moment(item, m, data["entries_by_metric"].get(mid, []), data)
+            elif slots or extra:
                 self._fill_slots(item, m, data["entries_by_metric"].get(mid, []), slots, extra, data)
             else:
                 self._fill_single(item, m, data["entries_by_metric"].get(mid, []), data)
@@ -173,3 +176,32 @@ class DailyService:
             sc = data["scale_context_map"].get(e["id"])
             if sc:
                 item["scale_min"] = sc["scale_min"]; item["scale_max"] = sc["scale_max"]; item["scale_step"] = sc["scale_step"]
+
+    def _fill_moment(self, item, m, entries, data) -> None:
+        """Fill moment-binding slots from actual entries (no pre-configured metric_slots)."""
+        mid = m["id"]
+        interval_labels = data.get("interval_label_map", {})
+        slot_items = []
+        for e in sorted(entries, key=lambda x: x["recorded_at"]):
+            if e["slot_id"] is None:
+                continue
+            v = data["values_map"].get(e["id"])
+            entry_data: dict = {
+                "id": e["id"], "recorded_at": str(e["recorded_at"]), "value": v,
+                "display_value": format_display_value(
+                    v, m["type"], m.get("result_type"),
+                    data["enum_options_by_metric"].get(mid), scale_labels=item.get("scale_labels"),
+                ),
+            }
+            sc = data["scale_context_map"].get(e["id"])
+            if sc:
+                entry_data["scale_min"] = sc["scale_min"]
+                entry_data["scale_max"] = sc["scale_max"]
+                entry_data["scale_step"] = sc["scale_step"]
+            slot_items.append({
+                "slot_id": e["slot_id"],
+                "label": interval_labels.get(e["slot_id"], ""),
+                "category_id": None,
+                "entry": entry_data,
+            })
+        item["slots"] = slot_items

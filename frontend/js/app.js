@@ -30,6 +30,8 @@ let corrPollInterval = null;
 const corrPairData = new Map();
 let _dependencyMetricIdsGlobal = new Set();
 let _todayRenderVersion = 0;
+let _todayCheckpoints = [];
+let _momentMetricsById = {};
 let _historyRenderVersion = 0;
 let _dayHeaderObserver = null;
 
@@ -761,6 +763,13 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
         }
     }
 
+    // Save checkpoints and moment metrics for dynamic interval selection
+    _todayCheckpoints = summary.checkpoints || [];
+    _momentMetricsById = {};
+    for (const m of summary.metrics) {
+        if (m.interval_binding === 'moment') _momentMetricsById[String(m.metric_id)] = m;
+    }
+
     // Group metrics by checkpoint_section_id
     const checkpoints = summary.checkpoints || [];
     const metricsByCheckpoint = {};  // checkpoint_id → metrics[]
@@ -1129,6 +1138,48 @@ function renderMetricInput(m, metricNameById) {
                 <span class="computed-badge">формула</span>
             </div>
             <div class="computed-value ${isFilled ? '' : 'empty'}">${displayVal}</div>
+        </div>`;
+    }
+
+    // Moment-binding metric — single card with add-interval button
+    if (m.interval_binding === 'moment') {
+        const slots = m.slots || [];
+        const isFilled = slots.length > 0;
+        const filledClass = isFilled ? 'filled' : '';
+        let slotsHtml = '';
+        for (const slot of slots) {
+            const entry = slot.entry;
+            const val = entry ? entry.value : null;
+            const entryId = entry ? entry.id : null;
+            let input;
+            if (m.type === 'enum') input = renderEnum(val, m.enum_options, m.multi_select, !!entry);
+            else if (m.type === 'time') input = renderTime(val);
+            else if (m.type === 'duration') input = renderDuration(val);
+            else if (m.type === 'number') input = renderNumber(val);
+            else if (m.type === 'scale') {
+                const sMin = (entry && entry.scale_min != null) ? entry.scale_min : m.scale_min;
+                const sMax = (entry && entry.scale_max != null) ? entry.scale_max : m.scale_max;
+                const sStep = (entry && entry.scale_step != null) ? entry.scale_step : m.scale_step;
+                input = renderScale(val, sMin, sMax, sStep, m.scale_labels);
+            }
+            else input = renderBoolean(val);
+            const clearBtn = `<button class="period-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`;
+            slotsHtml += `<div class="metric-slot" data-slot-id="${slot.slot_id}" data-entry-id="${entryId || ''}">
+                <div class="period-header">
+                    <span class="period-label">${_escapeHtml(slot.label)}</span>
+                    ${clearBtn}
+                </div>
+                <div class="metric-input">${input}</div>
+            </div>`;
+        }
+        const descHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
+        return `<div class="metric-card${hicCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-interval-binding="moment">
+            <div class="metric-header">
+                <label class="metric-label">${metricLabelHtml(m)}</label>
+            </div>
+            ${descHtml}
+            <div class="multiple-entry">${slotsHtml}</div>
+            <button class="btn-small btn-add-moment" data-action="add-moment-interval" data-metric-id="${m.metric_id}" style="margin-top:8px">+ Добавить интервал</button>
         </div>`;
     }
 
@@ -1541,6 +1592,67 @@ async function handleFormClick(e) {
     // Cancel edit note
     if (btn.dataset.action === 'cancel-edit-note') {
         await renderTodayForm(true);
+        return;
+    }
+
+    // Moment-binding: show available interval selector
+    if (btn.dataset.action === 'add-moment-interval') {
+        const card = btn.closest('.metric-card');
+        if (!card) return;
+        // Remove existing selector if open (toggle)
+        const existing = card.querySelector('.moment-interval-selector');
+        if (existing) { existing.remove(); return; }
+        // Find already-used slot IDs
+        const usedSlotIds = new Set([...card.querySelectorAll('.metric-slot[data-slot-id]')].map(s => parseInt(s.dataset.slotId)));
+        // Build available intervals from checkpoints (consecutive pairs)
+        const available = [];
+        for (let i = 0; i < _todayCheckpoints.length - 1; i++) {
+            const cp = _todayCheckpoints[i];
+            if (!usedSlotIds.has(cp.id)) {
+                available.push({ slotId: cp.id, label: `${cp.label} → ${_todayCheckpoints[i + 1].label}` });
+            }
+        }
+        if (available.length === 0) return;
+        const metricId = btn.dataset.metricId;
+        const selectorHtml = `<div class="moment-interval-selector">
+            ${available.map(iv => `<button class="btn-small moment-interval-choice" data-action="select-moment-interval" data-slot-id="${iv.slotId}" data-metric-id="${metricId}">${_escapeHtml(iv.label)}</button>`).join('')}
+        </div>`;
+        btn.insertAdjacentHTML('afterend', selectorHtml);
+        return;
+    }
+
+    // Moment-binding: user selected an interval — add input slot
+    if (btn.dataset.action === 'select-moment-interval') {
+        const card = btn.closest('.metric-card');
+        if (!card) return;
+        const selector = btn.closest('.moment-interval-selector');
+        if (selector) selector.remove();
+        const slotId = btn.dataset.slotId;
+        const metricId = btn.dataset.metricId;
+        const mData = _momentMetricsById[metricId];
+        if (!mData) return;
+        // Build label from checkpoints
+        const cpIdx = _todayCheckpoints.findIndex(c => c.id === parseInt(slotId));
+        const label = (cpIdx >= 0 && cpIdx + 1 < _todayCheckpoints.length)
+            ? `${_todayCheckpoints[cpIdx].label} → ${_todayCheckpoints[cpIdx + 1].label}`
+            : '';
+        // Build input
+        let input;
+        if (mData.type === 'enum') input = renderEnum(null, mData.enum_options, mData.multi_select, false);
+        else if (mData.type === 'time') input = renderTime(null);
+        else if (mData.type === 'duration') input = renderDuration(null);
+        else if (mData.type === 'number') input = renderNumber(null);
+        else if (mData.type === 'scale') input = renderScale(null, mData.scale_min, mData.scale_max, mData.scale_step, mData.scale_labels);
+        else input = renderBoolean(null);
+        const slotHtml = `<div class="metric-slot" data-slot-id="${slotId}" data-entry-id="">
+            <div class="period-header">
+                <span class="period-label">${_escapeHtml(label)}</span>
+            </div>
+            <div class="metric-input">${input}</div>
+        </div>`;
+        const entriesDiv = card.querySelector('.multiple-entry');
+        if (entriesDiv) entriesDiv.insertAdjacentHTML('beforeend', slotHtml);
+        lucide.createIcons();
         return;
     }
 
@@ -5768,6 +5880,11 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <div class="slots-choice-icon"><i data-lucide="pin"></i></div>
                             <span class="slots-choice-title">В определённые интервалы</span>
                         </label>
+                        <label class="slots-choice-card ${existingMetric?.interval_binding === 'moment' ? 'selected' : ''}" data-interval="moment">
+                            <input type="radio" name="nm-interval-binding" value="moment" ${existingMetric?.interval_binding === 'moment' ? 'checked' : ''}>
+                            <div class="slots-choice-icon"><i data-lucide="clock"></i></div>
+                            <span class="slots-choice-title">В моменте</span>
+                        </label>
                     </div>
                     <div id="nm-interval-slots-select" style="display:${existingMetric?.interval_binding === 'by_interval' ? '' : 'none'}">
                         <div id="nm-interval-slots-list" class="checkbox-list"></div>
@@ -5953,6 +6070,11 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <input type="radio" name="nm-interval-binding" value="by_interval">
                             <div class="slots-choice-icon"><i data-lucide="pin"></i></div>
                             <span class="slots-choice-title">В определённые интервалы</span>
+                        </label>
+                        <label class="slots-choice-card" data-interval="moment">
+                            <input type="radio" name="nm-interval-binding" value="moment">
+                            <div class="slots-choice-icon"><i data-lucide="clock"></i></div>
+                            <span class="slots-choice-title">В моменте</span>
                         </label>
                     </div>
                     <div id="nm-interval-slots-select" style="display:none">

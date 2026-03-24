@@ -339,7 +339,7 @@ class MetricsService:
 
     async def _create_interval_slots(self, metric_id: int, binding: str, slot_ids: list[int] | None) -> None:
         """Auto-create metric_slots for interval-bound facts."""
-        if binding == "all_day":
+        if binding in ("all_day", "moment"):
             return
         if not slot_ids:
             raise InvalidOperationError("interval_slot_ids is required for by_interval binding")
