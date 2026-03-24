@@ -6567,7 +6567,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             for (let i = 0; i < sorted.length - 1; i++) {
                 const label = `${sorted[i].label} → ${sorted[i + 1].label}`;
                 const checked = existingSlotIds.has(sorted[i].id) ? 'checked' : '';
-                container.innerHTML += `<label class="checkbox-item"><input type="checkbox" name="nm-interval-slot" value="${sorted[i].id}" ${checked}><span>${label}</span></label>`;
+                container.innerHTML += `<label class="enum-multi-select-label"><input type="checkbox" name="nm-interval-slot" value="${sorted[i].id}" ${checked}><span>${label}</span></label>`;
             }
         } catch(e) {}
     }
