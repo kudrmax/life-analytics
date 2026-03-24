@@ -44,27 +44,32 @@ class ImportRepository(BaseRepository):
     async def update_metric_on_import(
         self, metric_id: int, name: str, category_id: int | None,
         enabled: bool, sort_order: int, icon: str, is_private: bool,
-        description: str | None, hide_in_cards: bool,
+        description: str | None, hide_in_cards: bool, is_checkpoint: bool = False,
+        interval_binding: str = "daily",
     ) -> None:
         await self.conn.execute(
             """UPDATE metric_definitions
-               SET name=$1, category_id=$2, enabled=$3, sort_order=$4, icon=$5, private=$6, description=$7, hide_in_cards=$8
-               WHERE id=$9 AND user_id=$10""",
+               SET name=$1, category_id=$2, enabled=$3, sort_order=$4, icon=$5, private=$6, description=$7,
+                   hide_in_cards=$8, is_checkpoint=$9, interval_binding=$10
+               WHERE id=$11 AND user_id=$12""",
             name, category_id, enabled, sort_order, icon, is_private, description, hide_in_cards,
-            metric_id, self.user_id,
+            is_checkpoint, interval_binding, metric_id, self.user_id,
         )
 
     async def create_metric_on_import(
         self, slug: str, name: str, category_id: int | None, icon: str,
         metric_type: str, enabled: bool, sort_order: int, is_private: bool,
-        description: str | None, hide_in_cards: bool,
+        description: str | None, hide_in_cards: bool, is_checkpoint: bool = False,
+        interval_binding: str = "daily",
     ) -> int:
         return await self.conn.fetchval(
             """INSERT INTO metric_definitions
-               (user_id, slug, name, category_id, icon, type, enabled, sort_order, private, description, hide_in_cards)
-               VALUES ($1,$2,$3,$4,$5,$6::metric_type,$7,$8,$9,$10,$11) RETURNING id""",
+               (user_id, slug, name, category_id, icon, type, enabled, sort_order, private, description,
+                hide_in_cards, is_checkpoint, interval_binding)
+               VALUES ($1,$2,$3,$4,$5,$6::metric_type,$7,$8,$9,$10,$11,$12,$13) RETURNING id""",
             self.user_id, slug, name, category_id, icon,
-            metric_type, enabled, sort_order, is_private, description, hide_in_cards,
+            metric_type, enabled, sort_order, is_private, description, hide_in_cards, is_checkpoint,
+            interval_binding,
         )
 
     async def get_scale_config(self, metric_id: int) -> asyncpg.Record | None:

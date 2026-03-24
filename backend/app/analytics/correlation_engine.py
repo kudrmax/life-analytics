@@ -55,6 +55,7 @@ class CorrelationEngine:
 
     _SLOT_MINMAX_TYPES = {"number", "scale", "duration", "time"}
     _ROLLING_AVG_ELIGIBLE_TYPES = {"number", "scale", "duration", "time"}
+    _DELTA_ELIGIBLE_TYPES = {"number", "scale", "duration", "bool"}
 
     def __init__(
         self,
@@ -155,14 +156,18 @@ class CorrelationEngine:
                 opts = self._enum_opts_by_metric.get(mid, [])
                 metric_slots = self._slots_by_metric.get(mid, [])
                 for opt in opts:
-                    self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"]), "enum_bool"))
+                    if len(metric_slots) > 1:
+                        self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"]), "enum_bool"))
                     if metric_slots:
                         for s in metric_slots:
                             self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"], slot_id=s["id"]), "enum_bool"))
+                    else:
+                        self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"]), "enum_bool"))
                 continue
             metric_slots = self._slots_by_metric.get(mid, [])
             if metric_slots:
-                self._sources.append((SourceKey(metric_id=mid), mt))
+                if len(metric_slots) > 1:
+                    self._sources.append((SourceKey(metric_id=mid), mt))
                 for s in metric_slots:
                     self._sources.append((SourceKey(metric_id=mid, slot_id=s["id"]), mt))
             else:
@@ -205,6 +210,11 @@ class CorrelationEngine:
             if sk.slot_id is not None and sk.metric_id is not None and not sk.is_auto:
                 self._slot_source_indices_by_metric[sk.metric_id].append(i)
 
+        # Single-slot metrics: treat per-slot as aggregate for auto-source generation
+        for mid, indices in self._slot_source_indices_by_metric.items():
+            if len(indices) == 1 and mid not in self._aggregate_indices:
+                self._aggregate_indices[mid] = indices[0]
+
         self._add_auto_source_definitions()
         await self._compute_auto_source_data()
 
@@ -223,6 +233,34 @@ class CorrelationEngine:
                     self._sources.append((SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=mid), m["type"]))
                 if _auto.slot_min:
                     self._sources.append((SourceKey(auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=mid), m["type"]))
+
+        # Delta, trend, range — only for checkpoint metrics with delta-eligible types
+        for m in self._metrics_rows:
+            mid = m["id"]
+            if not m.get("is_checkpoint"):
+                continue
+            if m["type"] not in self._DELTA_ELIGIBLE_TYPES:
+                continue
+            if mid not in self._slot_source_indices_by_metric:
+                continue
+            sorted_slots = sorted(self._slots_by_metric[mid], key=lambda s: s["sort_order"])
+            if _auto.delta:
+                for i_slot in range(len(sorted_slots) - 1):
+                    self._sources.append((
+                        SourceKey(auto_type=AutoSourceType.DELTA, auto_parent_metric_id=mid, auto_option_id=sorted_slots[i_slot]["id"]),
+                        m["type"],
+                    ))
+            if len(sorted_slots) >= 2:
+                if _auto.trend:
+                    self._sources.append((
+                        SourceKey(auto_type=AutoSourceType.TREND, auto_parent_metric_id=mid),
+                        m["type"],
+                    ))
+                if _auto.range:
+                    self._sources.append((
+                        SourceKey(auto_type=AutoSourceType.RANGE, auto_parent_metric_id=mid),
+                        m["type"],
+                    ))
 
         if _auto.note_count:
             for m in self._metrics_rows:
@@ -300,6 +338,22 @@ class CorrelationEngine:
             if not sk.is_auto or idx in self._source_data:
                 continue
 
+            # Delta: special handling with start/end slot data
+            if sk.auto_type == AutoSourceType.DELTA:
+                start_data = self._get_slot_source_data(sk.auto_parent_metric_id, sk.auto_option_id)
+                end_slot_id = self._get_next_slot_id(sk.auto_parent_metric_id, sk.auto_option_id)
+                end_data = self._get_slot_source_data(sk.auto_parent_metric_id, end_slot_id) if end_slot_id else {}
+                inp = AutoSourceInput(all_dates=all_dates, start_slot_data=start_data, end_slot_data=end_data)
+                self._source_data[idx] = compute_auto_source(sk.auto_type, inp)
+                continue
+
+            # Trend/Range: use ordered slot data
+            if sk.auto_type in (AutoSourceType.TREND, AutoSourceType.RANGE):
+                slot_data = self._resolve_ordered_slot_data(sk)
+                inp = AutoSourceInput(all_dates=all_dates, slot_data=slot_data)
+                self._source_data[idx] = compute_auto_source(sk.auto_type, inp)
+                continue
+
             # Prepare input based on auto source type
             parent_data = self._resolve_parent_data(sk, all_dates)
             slot_data = self._resolve_slot_data(sk)
@@ -348,6 +402,37 @@ class CorrelationEngine:
         if not slot_indices:
             return None
         return [self._source_data.get(si, {}) for si in slot_indices]
+
+    def _get_slot_source_data(self, metric_id: int | None, slot_id: int | None) -> dict[str, float]:
+        """Find source_data for a specific slot of a metric."""
+        if metric_id is None or slot_id is None:
+            return {}
+        for si in self._slot_source_indices_by_metric.get(metric_id, []):
+            sk, _ = self._sources[si]
+            if sk.slot_id == slot_id:
+                return self._source_data.get(si, {})
+        return {}
+
+    def _get_next_slot_id(self, metric_id: int | None, start_slot_id: int | None) -> int | None:
+        """Find slot_id of the next checkpoint after start_slot_id."""
+        if metric_id is None or start_slot_id is None:
+            return None
+        sorted_slots = sorted(self._slots_by_metric[metric_id], key=lambda s: s["sort_order"])
+        for i, s in enumerate(sorted_slots):
+            if s["id"] == start_slot_id and i + 1 < len(sorted_slots):
+                return sorted_slots[i + 1]["id"]
+        return None
+
+    def _resolve_ordered_slot_data(self, sk: SourceKey) -> list[dict[str, float]] | None:
+        """Resolve slot data ordered by checkpoint sort_order."""
+        if sk.auto_parent_metric_id is None:
+            return None
+        sorted_slots = sorted(self._slots_by_metric[sk.auto_parent_metric_id], key=lambda s: s["sort_order"])
+        result = []
+        for s in sorted_slots:
+            data = self._get_slot_source_data(sk.auto_parent_metric_id, s["id"])
+            result.append(data)
+        return result if result else None
 
     # ─── Phase 5: Pre-compute quality flags ────────────────────────
 

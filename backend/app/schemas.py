@@ -12,16 +12,19 @@ class MeasurementSlotOut(BaseModel):
 
 class SlotCreate(BaseModel):
     label: str
+    description: str | None = None
 
 
 class SlotUpdate(BaseModel):
     label: str | None = None
+    description: str | None = None
 
 
 class SlotOut(BaseModel):
     id: int
     label: str
     sort_order: int
+    description: str | None = None
     usage_count: int = 0
     usage_metric_names: list[str] = []
 
@@ -72,6 +75,9 @@ class MetricDefinitionCreate(BaseModel):
     multi_select: bool | None = None
     private: bool = False
     hide_in_cards: bool = False
+    is_checkpoint: bool = False
+    interval_binding: str = "daily"
+    interval_start_slot_id: int | None = None
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None
@@ -95,6 +101,9 @@ class MetricDefinitionUpdate(BaseModel):
     multi_select: bool | None = None
     private: bool | None = None
     hide_in_cards: bool | None = None
+    is_checkpoint: bool | None = None
+    interval_binding: str | None = None
+    interval_start_slot_id: int | None = None
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None
@@ -129,6 +138,9 @@ class MetricDefinitionOut(BaseModel):
     multi_select: bool | None = None
     private: bool = False
     hide_in_cards: bool = False
+    is_checkpoint: bool = False
+    interval_binding: str = "daily"
+    interval_start_slot_id: int | None = None
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None

@@ -62,12 +62,12 @@ class AnalyticsRepository(BaseRepository):
             metric_id, start, end, self.user_id,
         )
 
-    async def has_enabled_slots(self, metric_id: int) -> bool:
-        row = await self.conn.fetchrow(
-            "SELECT 1 FROM metric_slots WHERE metric_id = $1 AND enabled = TRUE LIMIT 1",
+    async def has_multiple_enabled_slots(self, metric_id: int) -> bool:
+        count = await self.conn.fetchval(
+            "SELECT COUNT(*) FROM metric_slots WHERE metric_id = $1 AND enabled = TRUE",
             metric_id,
         )
-        return row is not None
+        return count >= 2
 
     async def get_enum_entries(
         self, metric_id: int, start: date_type, end: date_type,
@@ -197,11 +197,11 @@ class AnalyticsRepository(BaseRepository):
         )
         return {r["id"]: r["label"] for r in rows}
 
-    async def get_metrics_with_slots(self, metric_ids: list[int]) -> set[int]:
+    async def get_metrics_with_multiple_slots(self, metric_ids: list[int]) -> set[int]:
         if not metric_ids:
             return set()
         rows = await self.conn.fetch(
-            "SELECT DISTINCT metric_id FROM metric_slots WHERE metric_id = ANY($1) AND enabled = TRUE",
+            "SELECT metric_id FROM metric_slots WHERE metric_id = ANY($1) AND enabled = TRUE GROUP BY metric_id HAVING COUNT(*) >= 2",
             list(metric_ids),
         )
         return {r["metric_id"] for r in rows}
@@ -228,6 +228,17 @@ class AnalyticsRepository(BaseRepository):
             """SELECT ms.id FROM metric_slots msl
                JOIN measurement_slots ms ON ms.id = msl.slot_id
                WHERE msl.metric_id = $1 AND msl.enabled = TRUE""",
+            metric_id,
+        )
+        return [r["id"] for r in rows]
+
+    async def get_ordered_slot_ids(self, metric_id: int) -> list[int]:
+        """Return slot IDs ordered by sort_order for a metric."""
+        rows = await self.conn.fetch(
+            """SELECT ms.id FROM metric_slots msl
+               JOIN measurement_slots ms ON ms.id = msl.slot_id
+               WHERE msl.metric_id = $1 AND msl.enabled = TRUE
+               ORDER BY ms.sort_order""",
             metric_id,
         )
         return [r["id"] for r in rows]

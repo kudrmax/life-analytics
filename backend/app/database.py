@@ -215,7 +215,7 @@ async def _init_db_schema(conn):
         CREATE TABLE IF NOT EXISTS metric_slots (
             id SERIAL PRIMARY KEY,
             metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
-            slot_id INTEGER NOT NULL REFERENCES measurement_slots(id) ON DELETE RESTRICT,
+            slot_id INTEGER NOT NULL REFERENCES measurement_slots(id) ON DELETE CASCADE,
             sort_order INTEGER NOT NULL DEFAULT 0,
             enabled BOOLEAN NOT NULL DEFAULT TRUE,
             category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
@@ -275,6 +275,18 @@ async def _init_db_schema(conn):
     """)
     await conn.execute("""
         ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS hide_in_cards BOOLEAN NOT NULL DEFAULT FALSE
+    """)
+    await conn.execute("""
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS is_checkpoint BOOLEAN NOT NULL DEFAULT FALSE
+    """)
+    await conn.execute("""
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS interval_binding VARCHAR(20) NOT NULL DEFAULT 'daily'
+    """)
+    await conn.execute("""
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS interval_start_slot_id INTEGER REFERENCES measurement_slots(id) ON DELETE SET NULL
+    """)
+    await conn.execute("""
+        ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS description TEXT
     """)
 
     # Add category_id column to metric_definitions (for existing DBs that had category/fill_time columns)

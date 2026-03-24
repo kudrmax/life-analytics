@@ -60,7 +60,7 @@ class ExportService:
             'slot_labels', 'formula', 'result_type', 'provider', 'metric_key', 'value_type',
             'filter_name', 'filter_query', 'enum_options', 'multi_select', 'private',
             'condition_metric_slug', 'condition_type', 'condition_value',
-            'description', 'hide_in_cards',
+            'description', 'hide_in_cards', 'is_checkpoint', 'interval_binding',
         ])
 
         for m in metrics:
@@ -102,6 +102,8 @@ class ExportService:
                 cond["condition_value"] if cond and cond["condition_value"] is not None else '',
                 m.get("description") or '',
                 1 if m.get("hide_in_cards") else 0,
+                1 if m.get("is_checkpoint") else 0,
+                m.get("interval_binding", "daily"),
             ])
 
         zip_file.writestr('metrics.csv', metrics_csv.getvalue())

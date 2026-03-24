@@ -11,7 +11,7 @@ from app.analytics.value_converter import ValueConverter
 from app.repositories.daily_repository import DailyRepository
 from app.services.daily_helpers import (
     evaluate_visibility, compute_formulas, build_auto_metrics,
-    calculate_progress, split_by_slot_categories,
+    calculate_progress, split_by_checkpoints, build_interval_label_map,
 )
 from app.timing import QueryTimer
 
@@ -32,9 +32,11 @@ class DailyService:
         compute_formulas(result, data["metrics_by_id"])
         auto_metrics = build_auto_metrics(result, data["metrics_by_id"], data["notes_count_map"], d)
         progress = calculate_progress(result)
-        result = split_by_slot_categories(result)
+        all_user_slots = data.get("all_user_slots", [])
+        result = split_by_checkpoints(result, all_user_slots)
         qt.mark("build"); qt.log()
-        return {"date": date_str, "metrics": result, "auto_metrics": auto_metrics, "progress": progress}
+        checkpoints = [{"id": s["id"], "label": s["label"]} for s in all_user_slots]
+        return {"date": date_str, "metrics": result, "checkpoints": checkpoints, "auto_metrics": auto_metrics, "progress": progress}
 
     async def _load_daily_data(self, d: date_type, qt: QueryTimer) -> dict:
         metrics = await self.repo.get_enabled_metrics_with_config()
@@ -73,6 +75,10 @@ class DailyService:
         text_ids = [m["id"] for m in metrics if m["type"] == MetricType.text]
         notes_count, notes_by = await self.repo.get_notes_for_date(text_ids, d)
 
+        # Load all user slots for interval label mapping
+        all_user_slots = await self.repo.get_all_user_slots()
+        interval_label_map = self._build_interval_label_map(all_user_slots)
+
         return {
             "metrics": metrics, "metrics_by_id": {m["id"]: m for m in metrics},
             "enabled_slots": enabled_slots, "disabled_with_entries": disabled_with_entries,
@@ -80,6 +86,8 @@ class DailyService:
             "values_map": values_map, "scale_context_map": scale_ctx,
             "enum_options_by_metric": enum_opts,
             "notes_count_map": notes_count, "notes_by_metric": notes_by,
+            "interval_label_map": interval_label_map,
+            "all_user_slots": all_user_slots,
         }
 
     def _build_metric_responses(self, data: dict, d: date_type, privacy_mode: bool) -> list[dict]:
@@ -98,6 +106,8 @@ class DailyService:
                 "scale_min": m["scale_min"], "scale_max": m["scale_max"], "scale_step": m["scale_step"],
                 "scale_labels": json.loads(m["scale_labels"]) if m.get("scale_labels") is not None else None,
                 "private": m_private, "hide_in_cards": m.get("hide_in_cards", False),
+                "is_checkpoint": m.get("is_checkpoint", False),
+                "interval_binding": m.get("interval_binding", "daily"),
                 "entry": None, "slots": None,
                 "formula": _parse_formula(m.get("formula")) or None,
                 "result_type": m.get("result_type"), "provider": m.get("provider"),
@@ -126,13 +136,20 @@ class DailyService:
             result.append(item)
         return result
 
+    @staticmethod
+    def _build_interval_label_map(all_user_slots: list) -> dict[int, str]:
+        return build_interval_label_map(all_user_slots)
+
     def _fill_slots(self, item, m, entries, slots, extra, data) -> None:
         mid = m["id"]
         all_vis = sorted(list(slots) + list(extra), key=lambda s: s["sort_order"])
         by_slot = {e["slot_id"]: e for e in entries if e["slot_id"] is not None}
+        interval_labels = data.get("interval_label_map", {})
+        is_interval = m.get("interval_binding", "daily") in ("fixed", "floating")
         items = []
         for s in all_vis:
-            si: dict = {"slot_id": s["id"], "label": s["label"], "category_id": s.get("category_id"), "entry": None}
+            label = interval_labels.get(s["id"], s["label"]) if is_interval else s["label"]
+            si: dict = {"slot_id": s["id"], "label": label, "category_id": s.get("category_id"), "entry": None}
             e = by_slot.get(s["id"])
             if e:
                 v = data["values_map"].get(e["id"])

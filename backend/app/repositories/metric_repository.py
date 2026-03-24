@@ -147,15 +147,18 @@ class MetricRepository(BaseRepository):
         self, slug: str, name: str, category_id: int | None,
         icon: str | None, metric_type: str, enabled: bool,
         sort_order: int, private: bool, description: str | None,
-        hide_in_cards: bool,
+        hide_in_cards: bool, is_checkpoint: bool = False,
+        interval_binding: str = "daily", interval_start_slot_id: int | None = None,
     ) -> int:
         return await self.conn.fetchval(
             """INSERT INTO metric_definitions
-               (user_id, slug, name, category_id, icon, type, enabled, sort_order, private, description, hide_in_cards)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+               (user_id, slug, name, category_id, icon, type, enabled, sort_order, private, description,
+                hide_in_cards, is_checkpoint, interval_binding, interval_start_slot_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                RETURNING id""",
             self.user_id, slug, name, category_id, icon, metric_type,
-            enabled, sort_order, private, description, hide_in_cards,
+            enabled, sort_order, private, description, hide_in_cards, is_checkpoint,
+            interval_binding, interval_start_slot_id,
         )
 
     # ── Update ─────────────────────────────────────────────────────────
@@ -221,6 +224,15 @@ class MetricRepository(BaseRepository):
                             "UPDATE metric_slots SET category_id = $1 WHERE metric_id = $2 AND enabled = TRUE",
                             cat_id, metric_id,
                         )
+
+    # ── Measurement slots (for interval binding) ────────────────────────
+
+    async def get_user_slots_ordered(self) -> list[asyncpg.Record]:
+        """Return all user's measurement_slots sorted by sort_order."""
+        return await self.conn.fetch(
+            "SELECT id, label, sort_order FROM measurement_slots WHERE user_id = $1 ORDER BY sort_order",
+            self.user_id,
+        )
 
     # ── Integration checks ─────────────────────────────────────────────
 

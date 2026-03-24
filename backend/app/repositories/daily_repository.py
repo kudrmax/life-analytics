@@ -26,6 +26,13 @@ class DailyRepository(BaseRepository):
             d, self.user_id,
         )
 
+    async def get_all_user_slots(self) -> list[asyncpg.Record]:
+        """Return all user's measurement_slots sorted by sort_order."""
+        return await self.conn.fetch(
+            "SELECT id, label, sort_order FROM measurement_slots WHERE user_id = $1 ORDER BY sort_order",
+            self.user_id,
+        )
+
     async def get_enabled_slots(self, metric_ids: list[int]) -> list[asyncpg.Record]:
         if not metric_ids:
             return []

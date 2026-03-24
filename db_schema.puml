@@ -52,6 +52,9 @@ entity "metric_definitions" as md {
     * icon : VARCHAR(600)
     * private : BOOLEAN
     * hide_in_cards : BOOLEAN
+    * is_checkpoint : BOOLEAN
+    * interval_binding : VARCHAR(20)
+    interval_start_slot_id : INTEGER <<FK>>
     description : TEXT
     * created_at : TIMESTAMPTZ
     --
@@ -80,6 +83,7 @@ entity "measurement_slots" as slots {
     * user_id : INTEGER <<FK>>
     * label : VARCHAR(100)
     * sort_order : INTEGER
+    description : TEXT
     --
     <<UNIQUE INDEX>> (user_id, LOWER(label))
 }

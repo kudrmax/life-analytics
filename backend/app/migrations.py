@@ -398,6 +398,22 @@ MIGRATIONS = [
     (16, "add_hide_in_cards_to_metrics", """
         ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS hide_in_cards BOOLEAN NOT NULL DEFAULT FALSE;
     """),
+    (17, "add_checkpoints", """
+        ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS description TEXT;
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS is_checkpoint BOOLEAN NOT NULL DEFAULT FALSE;
+
+        UPDATE metric_definitions SET is_checkpoint = TRUE
+        WHERE id IN (SELECT DISTINCT metric_id FROM metric_slots WHERE enabled = TRUE);
+    """),
+    (18, "fix_metric_slots_cascade", """
+        ALTER TABLE metric_slots DROP CONSTRAINT IF EXISTS metric_slots_slot_id_fkey;
+        ALTER TABLE metric_slots ADD CONSTRAINT metric_slots_slot_id_fkey
+            FOREIGN KEY (slot_id) REFERENCES measurement_slots(id) ON DELETE CASCADE;
+    """),
+    (19, "add_interval_binding", """
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS interval_binding VARCHAR(20) NOT NULL DEFAULT 'daily';
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS interval_start_slot_id INTEGER REFERENCES measurement_slots(id) ON DELETE SET NULL;
+    """),
 ]
 
 

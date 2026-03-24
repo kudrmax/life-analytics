@@ -9,7 +9,7 @@ from app.analytics.value_fetcher import ValueFetcher
 from app.domain.constants import SECONDS_PER_HOUR
 from app.domain.enums import MetricType
 from app.formula import get_referenced_metric_ids
-from app.source_key import AutoSourceType, SourceKey, STREAK_TYPES
+from app.source_key import AutoSourceType, SourceKey, STREAK_TYPES, _DELTA_TYPES
 
 if TYPE_CHECKING:
     from app.repositories.analytics_repository import AnalyticsRepository
@@ -74,6 +74,16 @@ class SourceReconstructor:
             for i in range((end_date - start_date).days + 1)
         ]
 
+        # Delta: fetch start/end checkpoint slot data
+        if sk.auto_type == AutoSourceType.DELTA:
+            return await self._reconstruct_delta(sk, start_date, end_date, user_id, all_dates)
+
+        # Trend/Range: fetch ordered slot data
+        if sk.auto_type in (AutoSourceType.TREND, AutoSourceType.RANGE):
+            slot_data = await self._fetch_ordered_slot_data(sk, start_date, end_date, user_id)
+            inp = AutoSourceInput(all_dates=all_dates, slot_data=slot_data)
+            return compute_auto_source(sk.auto_type, inp)
+
         parent_data = await self._fetch_parent_data(sk, start_date, end_date, user_id)
         slot_data = await self._fetch_slot_data(sk, start_date, end_date, user_id)
 
@@ -84,6 +94,52 @@ class SourceReconstructor:
             option_id=sk.auto_option_id,
         )
         return compute_auto_source(sk.auto_type, inp)
+
+    async def _reconstruct_delta(
+        self, sk: SourceKey, start_date: date_type, end_date: date_type,
+        user_id: int, all_dates: list[str],
+    ) -> dict[str, float]:
+        """Reconstruct delta auto-source from DB."""
+        if sk.auto_parent_metric_id is None or sk.auto_option_id is None:
+            return {}
+        parent = await self._repo.get_metric_type_by_id(sk.auto_parent_metric_id)
+        if not parent:
+            return {}
+        ordered_slots = await self._repo.get_ordered_slot_ids(sk.auto_parent_metric_id)
+        if sk.auto_option_id not in ordered_slots:
+            return {}
+        start_idx = ordered_slots.index(sk.auto_option_id)
+        if start_idx + 1 >= len(ordered_slots):
+            return {}
+        end_slot_id = ordered_slots[start_idx + 1]
+        start_data = await self._fetcher.values_by_date_for_slot(
+            parent["id"], parent["type"], start_date, end_date, user_id, slot_id=sk.auto_option_id,
+        )
+        end_data = await self._fetcher.values_by_date_for_slot(
+            parent["id"], parent["type"], start_date, end_date, user_id, slot_id=end_slot_id,
+        )
+        inp = AutoSourceInput(all_dates=all_dates, start_slot_data=start_data, end_slot_data=end_data)
+        return compute_auto_source(AutoSourceType.DELTA, inp)
+
+    async def _fetch_ordered_slot_data(
+        self, sk: SourceKey, start_date: date_type, end_date: date_type, user_id: int,
+    ) -> list[dict[str, float]] | None:
+        """Fetch slot data ordered by sort_order for trend/range."""
+        if sk.auto_parent_metric_id is None:
+            return None
+        parent = await self._repo.get_metric_type_by_id(sk.auto_parent_metric_id)
+        if not parent:
+            return None
+        ordered_slots = await self._repo.get_ordered_slot_ids(sk.auto_parent_metric_id)
+        if not ordered_slots:
+            return None
+        result: list[dict[str, float]] = []
+        for sid in ordered_slots:
+            sd = await self._fetcher.values_by_date_for_slot(
+                parent["id"], parent["type"], start_date, end_date, user_id, slot_id=sid,
+            )
+            result.append(sd)
+        return result
 
     async def _fetch_parent_data(
         self, sk: SourceKey, start_date: date_type, end_date: date_type, user_id: int,

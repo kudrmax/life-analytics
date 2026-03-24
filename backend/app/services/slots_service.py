@@ -13,21 +13,24 @@ class SlotsService:
         rows = await self.repo.get_all_with_usage()
         return [SlotOut(**dict(r)) for r in rows]
 
-    async def create(self, label: str) -> SlotOut:
+    async def create(self, label: str, description: str | None = None) -> SlotOut:
         label = label.strip()
         if not label:
             raise InvalidOperationError("label is required")
+        description = description.strip() if description else None
         sort_order = await self.repo.get_next_sort_order()
-        slot_id = await self.repo.create(label, sort_order)
-        return SlotOut(id=slot_id, label=label, sort_order=sort_order)
+        slot_id = await self.repo.create(label, sort_order, description)
+        return SlotOut(id=slot_id, label=label, sort_order=sort_order, description=description)
 
-    async def update(self, slot_id: int, label: str | None) -> SlotOut:
+    async def update(self, slot_id: int, label: str | None, description: str | None = None) -> SlotOut:
         await self.repo.get_by_id(slot_id)
         if label is not None:
             label = label.strip()
             if not label:
                 raise InvalidOperationError("label is required")
             await self.repo.update_label(slot_id, label)
+        if description is not None:
+            await self.repo.update_description(slot_id, description.strip() or None)
         updated = await self.repo.get_updated(slot_id)
         return SlotOut(**dict(updated))
 

@@ -59,7 +59,7 @@ class AnalyticsService:
         qt.mark("values")
         points = [{"date": d, "value": v} for d, v in sorted(aggregated.items())]
         display_name = metric["name"]
-        if mt == MetricType.bool and await self.repo.has_enabled_slots(metric_id):
+        if mt == MetricType.bool and await self.repo.has_multiple_enabled_slots(metric_id):
             display_name = f"{display_name} (хоть раз)"
         qt.mark("display_name"); qt.log()
         return {"metric_id": metric_id, "metric_name": display_name, "start": start, "end": end, "points": points}

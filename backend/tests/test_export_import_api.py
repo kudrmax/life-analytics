@@ -879,22 +879,18 @@ class TestRoundTripTextNotes:
 
 class TestRoundTripSlotsWithCategories:
 
-    async def test_slots_with_categories_round_trip(
+    async def test_slots_round_trip(
         self, client: AsyncClient, user_a: dict, user_b: dict,
     ) -> None:
-        # Create 2 categories
-        cat_morning = await _create_category(client, user_a["token"], "Morning Routine")
-        cat_evening = await _create_category(client, user_a["token"], "Evening Routine")
-
-        # Create global slots, then metric with slot_configs
+        # Create global slots, then metric with slot_configs (no category_id)
         slot_m = await create_slot(client, user_a["token"], "Morning")
         slot_e = await create_slot(client, user_a["token"], "Evening")
         metric = await create_metric(
             client, user_a["token"], name="Mood Slotted", metric_type="bool",
             slug="mood_slotted",
             slot_configs=[
-                {"slot_id": slot_m["id"], "category_id": cat_morning["id"]},
-                {"slot_id": slot_e["id"], "category_id": cat_evening["id"]},
+                {"slot_id": slot_m["id"]},
+                {"slot_id": slot_e["id"]},
             ],
         )
 
@@ -905,17 +901,14 @@ class TestRoundTripSlotsWithCategories:
         assert export_resp.status_code == 200
         files = parse_export_zip(export_resp.content)
 
-        # Verify slot_labels in metrics.csv has extended format with category_path
+        # Verify slot_labels in metrics.csv is simple format (list of strings)
         metrics_rows = parse_csv_rows(files["metrics.csv"])
         assert len(metrics_rows) == 1
         slot_data = json.loads(metrics_rows[0]["slot_labels"])
         assert len(slot_data) == 2
-        # Extended format: list of dicts with label and category_path
-        assert isinstance(slot_data[0], dict)
-        assert slot_data[0]["label"] == "Morning"
-        assert slot_data[0]["category_path"] == "Morning Routine"
-        assert slot_data[1]["label"] == "Evening"
-        assert slot_data[1]["category_path"] == "Evening Routine"
+        assert isinstance(slot_data[0], str)
+        assert slot_data[0] == "Morning"
+        assert slot_data[1] == "Evening"
 
         # Import into user_b
         zip_buf = build_zip(files["metrics.csv"], files["entries.csv"])
@@ -927,7 +920,7 @@ class TestRoundTripSlotsWithCategories:
         assert import_resp.status_code == 200
         assert import_resp.json()["metrics"]["imported"] == 1
 
-        # Verify slots recreated with categories for user_b
+        # Verify slots recreated for user_b
         resp_b = await client.get(
             "/api/metrics", headers=auth_headers(user_b["token"]),
         )
@@ -935,19 +928,6 @@ class TestRoundTripSlotsWithCategories:
         assert len(metric_b["slots"]) == 2
         slot_labels_b = [s["label"] for s in metric_b["slots"]]
         assert slot_labels_b == ["Morning", "Evening"]
-
-        # Verify categories were created for user_b
-        cats_resp = await client.get(
-            "/api/categories", headers=auth_headers(user_b["token"]),
-        )
-        assert cats_resp.status_code == 200
-        cat_names_b = {c["name"] for c in cats_resp.json()}
-        assert "Morning Routine" in cat_names_b
-        assert "Evening Routine" in cat_names_b
-
-        # Verify slots point to valid category_ids
-        for slot in metric_b["slots"]:
-            assert slot["category_id"] is not None
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 """Pure helper functions for daily service — conditions, auto-metrics, progress."""
 
+from collections.abc import Mapping
 from datetime import date as date_type
 
 from app.domain.enums import MetricType
@@ -8,6 +9,16 @@ from app.domain.formatters import format_display_value
 from app.analytics.value_converter import ValueConverter
 
 _parse_formula = ValueConverter.parse_formula
+
+
+def build_interval_label_map(all_user_slots: list[Mapping]) -> dict[int, str]:
+    """Build slot_id → interval label mapping (e.g. slot_id(Утро) → "Утро → День")."""
+    sorted_slots = sorted(all_user_slots, key=lambda s: s["sort_order"])
+    result: dict[int, str] = {}
+    for i, s in enumerate(sorted_slots):
+        if i + 1 < len(sorted_slots):
+            result[s["id"]] = f"{s['label']} → {sorted_slots[i + 1]['label']}"
+    return result
 
 
 def extract_dep_value(item: dict):
@@ -160,4 +171,37 @@ def split_by_slot_categories(result: list[dict]) -> list[dict]:
             for cat_id, cat_slots in groups.items():
                 split = {**item, "category_id": cat_id, "slots": cat_slots, "is_slot_split": True}
                 final.append(split)
+    return final
+
+
+def split_by_checkpoints(result: list[dict], all_user_slots: list) -> list[dict]:
+    """Split multi-slot metrics into per-checkpoint items for checkpoint-based page layout.
+
+    Each metric with slots becomes N separate cards — one per checkpoint section.
+    Daily metrics (no slots) get checkpoint_section_id = None.
+    """
+    # Build slot_id → label mapping
+    slot_labels = {s["id"]: s["label"] for s in all_user_slots}
+
+    final: list[dict] = []
+    for item in result:
+        if not item.get("slots"):
+            # Daily metric — no checkpoint section
+            item["checkpoint_section_id"] = None
+            item["checkpoint_section_label"] = None
+            final.append(item)
+            continue
+
+        # Split each slot into its own item
+        for s in item["slots"]:
+            slot_id = s["slot_id"]
+            split = {
+                **item,
+                "checkpoint_section_id": slot_id,
+                "checkpoint_section_label": slot_labels.get(slot_id, s.get("label", "")),
+                "slots": [s],
+                "is_slot_split": True,
+            }
+            final.append(split)
+
     return final

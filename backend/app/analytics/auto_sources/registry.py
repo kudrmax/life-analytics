@@ -27,6 +27,8 @@ class AutoSourceInput:
     slot_data: list[dict[str, float]] | None = None
     option_id: int | None = None
     target_value: bool | None = None  # for streak: True=streak_true, False=streak_false
+    start_slot_data: dict[str, float] | None = None  # for delta: start checkpoint values
+    end_slot_data: dict[str, float] | None = None  # for delta: end checkpoint values
 
 
 def compute_auto_source(
@@ -49,6 +51,12 @@ def compute_auto_source(
         return _compute_is_workday(inp)
     if auto_type in (AutoSourceType.SLOT_MAX, AutoSourceType.SLOT_MIN):
         return _compute_slot_agg(auto_type, inp)
+    if auto_type == AutoSourceType.DELTA:
+        return _compute_delta(inp)
+    if auto_type == AutoSourceType.TREND:
+        return _compute_trend(inp)
+    if auto_type == AutoSourceType.RANGE:
+        return _compute_range(inp)
     if auto_type == AutoSourceType.ROLLING_AVG:
         return _compute_rolling_avg(inp)
     if auto_type in STREAK_TYPES:
@@ -112,6 +120,34 @@ def _compute_slot_agg(auto_type: AutoSourceType, inp: AutoSourceInput) -> dict[s
         if vals:
             result[d] = agg_fn(vals)
     return result
+
+
+def _compute_delta(inp: AutoSourceInput) -> dict[str, float]:
+    """Delta = end_checkpoint_value - start_checkpoint_value per day."""
+    if not inp.start_slot_data or not inp.end_slot_data:
+        return {}
+    return {
+        d: inp.end_slot_data[d] - inp.start_slot_data[d]
+        for d in inp.start_slot_data
+        if d in inp.end_slot_data
+    }
+
+
+def _compute_trend(inp: AutoSourceInput) -> dict[str, float]:
+    """Trend = last checkpoint - first checkpoint per day."""
+    if not inp.slot_data or len(inp.slot_data) < 2:
+        return {}
+    first, last = inp.slot_data[0], inp.slot_data[-1]
+    return {d: last[d] - first[d] for d in first if d in last}
+
+
+def _compute_range(inp: AutoSourceInput) -> dict[str, float]:
+    """Range = max - min across all checkpoints per day."""
+    if not inp.slot_data:
+        return {}
+    max_d = _compute_slot_agg(AutoSourceType.SLOT_MAX, inp)
+    min_d = _compute_slot_agg(AutoSourceType.SLOT_MIN, inp)
+    return {d: max_d[d] - min_d[d] for d in max_d if d in min_d}
 
 
 def _compute_rolling_avg(inp: AutoSourceInput) -> dict[str, float]:

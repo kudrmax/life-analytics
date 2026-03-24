@@ -11,7 +11,7 @@ class SlotsRepository(BaseRepository):
 
     async def get_all_with_usage(self) -> list[asyncpg.Record]:
         return await self.conn.fetch(
-            """SELECT ms.id, ms.label, ms.sort_order,
+            """SELECT ms.id, ms.label, ms.sort_order, ms.description,
                       COALESCE(cnt.c, 0) AS usage_count,
                       COALESCE(cnt.names, ARRAY[]::text[]) AS usage_metric_names
                FROM measurement_slots ms
@@ -38,12 +38,12 @@ class SlotsRepository(BaseRepository):
         )
         return val + 1
 
-    async def create(self, label: str, sort_order: int) -> int:
+    async def create(self, label: str, sort_order: int, description: str | None = None) -> int:
         try:
             return await self.conn.fetchval(
-                """INSERT INTO measurement_slots (user_id, label, sort_order)
-                   VALUES ($1, $2, $3) RETURNING id""",
-                self.user_id, label, sort_order,
+                """INSERT INTO measurement_slots (user_id, label, sort_order, description)
+                   VALUES ($1, $2, $3, $4) RETURNING id""",
+                self.user_id, label, sort_order, description,
             )
         except Exception:
             raise DuplicateEntityError("measurement_slots", "label", label)
@@ -57,9 +57,15 @@ class SlotsRepository(BaseRepository):
         except Exception:
             raise DuplicateEntityError("measurement_slots", "label", label)
 
+    async def update_description(self, slot_id: int, description: str | None) -> None:
+        await self.conn.execute(
+            "UPDATE measurement_slots SET description = $1 WHERE id = $2 AND user_id = $3",
+            description, slot_id, self.user_id,
+        )
+
     async def get_updated(self, slot_id: int) -> asyncpg.Record:
         return await self.conn.fetchrow(
-            "SELECT id, label, sort_order FROM measurement_slots WHERE id = $1",
+            "SELECT id, label, sort_order, description FROM measurement_slots WHERE id = $1",
             slot_id,
         )
 

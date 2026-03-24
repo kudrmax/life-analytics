@@ -1,7 +1,7 @@
 """Blacklist for correlation pairs that should be skipped."""
 
 from app.source_key import (
-    AutoSourceType, SourceKey, _CALENDAR_TYPES, STREAK_TYPES, _ROLLING_AVG_TYPES,
+    AutoSourceType, SourceKey, _CALENDAR_TYPES, STREAK_TYPES, _ROLLING_AVG_TYPES, _DELTA_TYPES,
 )
 
 # Pairs of auto-source type groups that should not be correlated.
@@ -11,6 +11,8 @@ _SKIP_AUTO_PAIRS: list[tuple[frozenset[AutoSourceType], frozenset[AutoSourceType
     (_CALENDAR_TYPES, _CALENDAR_TYPES),    # calendar × calendar
     (STREAK_TYPES, STREAK_TYPES),          # streak × streak
     (STREAK_TYPES, _ROLLING_AVG_TYPES),    # streak × rolling_avg
+    (_DELTA_TYPES, _DELTA_TYPES),          # delta × delta / trend × range / etc.
+    (_DELTA_TYPES, _ROLLING_AVG_TYPES),    # delta × rolling_avg (derived series)
 ]
 
 

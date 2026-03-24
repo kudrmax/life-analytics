@@ -359,25 +359,29 @@ class TestMultiSlot:
         )
 
         daily = await _get_daily(client, user_a["token"])
-        item = await _find_metric(daily, metric["id"])
 
-        assert item is not None
-        assert item["slots"] is not None
-        assert len(item["slots"]) == 2
+        # Multi-slot metrics are now split into per-checkpoint items
+        items = [m for m in daily["metrics"] if m["metric_id"] == metric["id"]]
+        assert len(items) == 2
 
-        slot_am = next(s for s in item["slots"] if s["label"] == "AM")
-        slot_pm = next(s for s in item["slots"] if s["label"] == "PM")
+        for item in items:
+            assert item["is_slot_split"] is True
+            assert item["checkpoint_section_id"] is not None
+            assert len(item["slots"]) == 1
 
-        assert slot_am["entry"] is not None
-        assert slot_am["entry"]["value"] is True
+        am_item = next(i for i in items if i["slots"][0]["label"] == "AM")
+        pm_item = next(i for i in items if i["slots"][0]["label"] == "PM")
 
-        assert slot_pm["entry"] is not None
-        assert slot_pm["entry"]["value"] is False
+        assert am_item["slots"][0]["entry"] is not None
+        assert am_item["slots"][0]["entry"]["value"] is True
+
+        assert pm_item["slots"][0]["entry"] is not None
+        assert pm_item["slots"][0]["entry"]["value"] is False
 
     async def test_slots_structure(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Multi-slot metric returns slots array, main entry is null."""
+        """Multi-slot metric splits into per-checkpoint items, main entry is null."""
         slot_m = await create_slot(client, user_a["token"], "Morning")
         slot_e = await create_slot(client, user_a["token"], "Evening")
         metric = await create_metric(
@@ -385,14 +389,18 @@ class TestMultiSlot:
             slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
         )
         daily = await _get_daily(client, user_a["token"])
-        item = await _find_metric(daily, metric["id"])
 
-        assert item is not None
-        assert item["entry"] is None
-        assert item["slots"] is not None
-        assert len(item["slots"]) == 2
-        # Both slots have no entries yet
-        for s in item["slots"]:
+        # Multi-slot metrics are split into per-checkpoint items
+        items = [m for m in daily["metrics"] if m["metric_id"] == metric["id"]]
+        assert len(items) == 2
+
+        for item in items:
+            assert item["entry"] is None
+            assert item["is_slot_split"] is True
+            assert item["checkpoint_section_id"] is not None
+            assert item["checkpoint_section_label"] is not None
+            assert len(item["slots"]) == 1
+            s = item["slots"][0]
             assert s["entry"] is None
             assert "label" in s
             assert "slot_id" in s
@@ -803,27 +811,10 @@ class TestConditionEqualsEnum:
 
 class TestSlotCategorySplit:
 
-    async def test_split_by_slot_category(
+    async def test_split_by_checkpoints(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Metric with slots in different categories splits into 2 items."""
-        # Create two categories
-        resp1 = await client.post(
-            "/api/categories",
-            json={"name": "Cat1"},
-            headers=auth_headers(user_a["token"]),
-        )
-        assert resp1.status_code == 201, resp1.text
-        cat1_id = resp1.json()["id"]
-
-        resp2 = await client.post(
-            "/api/categories",
-            json={"name": "Cat2"},
-            headers=auth_headers(user_a["token"]),
-        )
-        assert resp2.status_code == 201, resp2.text
-        cat2_id = resp2.json()["id"]
-
+        """Metric with 2 slots splits into 2 per-checkpoint items."""
         # Create global slots, then metric with slot_configs
         slot_m = await create_slot(client, user_a["token"], "Morning")
         slot_e = await create_slot(client, user_a["token"], "Evening")
@@ -833,8 +824,8 @@ class TestSlotCategorySplit:
                 "name": "SplitSlots",
                 "type": "bool",
                 "slot_configs": [
-                    {"slot_id": slot_m["id"], "category_id": cat1_id},
-                    {"slot_id": slot_e["id"], "category_id": cat2_id},
+                    {"slot_id": slot_m["id"]},
+                    {"slot_id": slot_e["id"]},
                 ],
             },
             headers=auth_headers(user_a["token"]),
@@ -852,11 +843,13 @@ class TestSlotCategorySplit:
 
         assert len(items) == 2
 
-        cat_ids = {item["category_id"] for item in items}
-        assert cat_ids == {cat1_id, cat2_id}
+        # Each item has a checkpoint_section_id matching the slot_id
+        checkpoint_ids = {item["checkpoint_section_id"] for item in items}
+        assert checkpoint_ids == {slot_m["id"], slot_e["id"]}
 
         for item in items:
             assert item["is_slot_split"] is True
+            assert item["checkpoint_section_label"] is not None
             assert len(item["slots"]) == 1
 
 

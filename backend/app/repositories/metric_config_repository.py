@@ -174,7 +174,10 @@ class MetricConfigRepository(BaseRepository):
         self, metric_id: int, slot_id: int, sort_order: int, category_id: int | None,
     ) -> None:
         await self.conn.execute(
-            "INSERT INTO metric_slots (metric_id, slot_id, sort_order, category_id) VALUES ($1, $2, $3, $4)",
+            """INSERT INTO metric_slots (metric_id, slot_id, sort_order, category_id, enabled)
+               VALUES ($1, $2, $3, $4, TRUE)
+               ON CONFLICT (metric_id, slot_id)
+               DO UPDATE SET sort_order = $3, category_id = $4, enabled = TRUE""",
             metric_id, slot_id, sort_order, category_id,
         )
 
