@@ -14,7 +14,7 @@ class CorrelationRepository(BaseRepository):
 
     async def load_enabled_metrics(self) -> list[asyncpg.Record]:
         return await self.conn.fetch(
-            """SELECT md.id, md.name, md.type, ic.value_type AS ic_value_type
+            """SELECT md.id, md.name, md.type, md.is_checkpoint, ic.value_type AS ic_value_type
                FROM metric_definitions md
                LEFT JOIN integration_config ic ON ic.metric_id = md.id
                WHERE md.user_id = $1 AND md.enabled = TRUE ORDER BY md.sort_order""",
@@ -25,7 +25,7 @@ class CorrelationRepository(BaseRepository):
         if not metric_ids:
             return []
         return await self.conn.fetch(
-            """SELECT ms.id, msl.metric_id, ms.label
+            """SELECT ms.id, msl.metric_id, ms.label, ms.sort_order
                FROM metric_slots msl
                JOIN measurement_slots ms ON ms.id = msl.slot_id
                WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE

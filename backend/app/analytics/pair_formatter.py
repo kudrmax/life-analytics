@@ -49,12 +49,16 @@ class PairFormatter:
         parent_names: dict[int, str],
         privacy_mode: bool = False,
         metrics_with_slots: set[int] | None = None,
+        slot_labels: dict[int, str] | None = None,
+        slot_ordering: dict[int, list[int]] | None = None,
     ) -> None:
         self._icons = metric_icons
         self._enum_labels = enum_labels
         self._parent_names = parent_names
         self._privacy_mode = privacy_mode
         self._metrics_with_slots = metrics_with_slots or set()
+        self._slot_labels = slot_labels or {}
+        self._slot_ordering = slot_ordering or {}
 
     def format_pair(self, p: dict[str, Any]) -> dict[str, Any]:
         """Полное форматирование одной пары: лейблы, иконки, хинты, CI, quality."""
@@ -74,10 +78,12 @@ class PairFormatter:
         label_a = PRIVATE_MASK if blocked_a else self.build_display_label(
             p["source_key_a"], p["name_a"], self._parent_names.get(sk_a.auto_parent_metric_id),
             metric_type=p["type_a"], has_slots=(p["metric_a_id"] in self._metrics_with_slots if p["metric_a_id"] else False),
+            slot_labels=self._slot_labels, slot_ordering=self._slot_ordering,
         )
         label_b = PRIVATE_MASK if blocked_b else self.build_display_label(
             p["source_key_b"], p["name_b"], self._parent_names.get(sk_b.auto_parent_metric_id),
             metric_type=p["type_b"], has_slots=(p["metric_b_id"] in self._metrics_with_slots if p["metric_b_id"] else False),
+            slot_labels=self._slot_labels, slot_ordering=self._slot_ordering,
         )
         icon_a = PRIVATE_ICON if blocked_a else self.resolve_icon(p["source_key_a"], p["icon_a"])
         icon_b = PRIVATE_ICON if blocked_b else self.resolve_icon(p["source_key_b"], p["icon_b"])
@@ -150,6 +156,8 @@ class PairFormatter:
         parent_metric_name: str | None,
         metric_type: str | None = None,
         has_slots: bool = False,
+        slot_labels: dict[int, str] | None = None,
+        slot_ordering: dict[int, list[int]] | None = None,
     ) -> str:
         """Build human-readable label for a correlation source."""
         sk = SourceKey.parse(source_key_str)
@@ -175,6 +183,22 @@ class PairFormatter:
                 return f"{parent_metric_name}: серия подряд (да)"
             if sk.auto_type == AutoSourceType.STREAK_FALSE and parent_metric_name:
                 return f"{parent_metric_name}: серия подряд (нет)"
+            if sk.auto_type == AutoSourceType.DELTA and parent_metric_name:
+                if slot_labels and slot_ordering and sk.auto_parent_metric_id is not None:
+                    ordered = slot_ordering.get(sk.auto_parent_metric_id, [])
+                    start_label = slot_labels.get(sk.auto_option_id, "?") if sk.auto_option_id else "?"
+                    end_label = "?"
+                    if sk.auto_option_id is not None:
+                        for idx_s, sid in enumerate(ordered):
+                            if sid == sk.auto_option_id and idx_s + 1 < len(ordered):
+                                end_label = slot_labels.get(ordered[idx_s + 1], "?")
+                                break
+                    return f"{parent_metric_name}: Δ {start_label} → {end_label}"
+                return f"{parent_metric_name}: Δ"
+            if sk.auto_type == AutoSourceType.TREND and parent_metric_name:
+                return f"{parent_metric_name}: тренд"
+            if sk.auto_type == AutoSourceType.RANGE and parent_metric_name:
+                return f"{parent_metric_name}: размах"
             return "Авто-источник"
         # Bool aggregate with slots — annotate "(хоть раз)"
         if metric_type == MetricType.bool and has_slots and sk.slot_id is None:

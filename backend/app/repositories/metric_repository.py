@@ -147,15 +147,15 @@ class MetricRepository(BaseRepository):
         self, slug: str, name: str, category_id: int | None,
         icon: str | None, metric_type: str, enabled: bool,
         sort_order: int, private: bool, description: str | None,
-        hide_in_cards: bool,
+        hide_in_cards: bool, is_checkpoint: bool = False,
     ) -> int:
         return await self.conn.fetchval(
             """INSERT INTO metric_definitions
-               (user_id, slug, name, category_id, icon, type, enabled, sort_order, private, description, hide_in_cards)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+               (user_id, slug, name, category_id, icon, type, enabled, sort_order, private, description, hide_in_cards, is_checkpoint)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                RETURNING id""",
             self.user_id, slug, name, category_id, icon, metric_type,
-            enabled, sort_order, private, description, hide_in_cards,
+            enabled, sort_order, private, description, hide_in_cards, is_checkpoint,
         )
 
     # ── Update ─────────────────────────────────────────────────────────

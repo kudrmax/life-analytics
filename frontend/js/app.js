@@ -3725,7 +3725,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     html += '<div class="settings-actions">';
     html += '<button class="btn-primary" id="add-metric"><i data-lucide="plus"></i> Новая метрика</button>';
     html += '<button class="btn-small" id="manage-categories-btn"><i data-lucide="folders"></i> Категории</button>';
-    html += '<button class="btn-small" id="manage-slots-btn"><i data-lucide="clock"></i> Время замера</button>';
+    html += '<button class="btn-small" id="manage-slots-btn"><i data-lucide="clock"></i> Контрольные точки</button>';
     html += '<button class="btn-small" id="export-btn"><i data-lucide="download"></i> Экспорт</button>';
     html += '<button class="btn-small" id="import-btn"><i data-lucide="upload"></i> Импорт</button>';
     html += '<button class="btn-small" id="copy-metrics-btn"><i data-lucide="copy"></i> Копировать</button>';
@@ -4590,7 +4590,7 @@ async function renderSlotManager(container) {
 
     let html = '<div class="cat-manager-header">';
     html += '<button class="btn-icon" id="slot-back-btn"><i data-lucide="arrow-left"></i></button>';
-    html += '<h2>Время замера</h2>';
+    html += '<h2>Контрольные точки</h2>';
     html += '<button class="btn-small btn-primary" id="slot-add-btn"><i data-lucide="plus"></i> Добавить</button>';
     html += '</div>';
 
@@ -4602,9 +4602,10 @@ async function renderSlotManager(container) {
             const used = slot.usage_count > 0;
             const delClass = used ? 'btn-icon slot-del-disabled' : 'btn-icon btn-icon-danger slot-del';
             const delTitle = used ? `title="Используется в ${slot.usage_count} метриках"` : '';
+            const descHtml = slot.description ? `<div class="slot-description">${_escapeHtml(slot.description)}</div>` : '';
             html += `<div class="cat-item" data-slot-id="${slot.id}">
                 <span class="drag-handle">⠿</span>
-                <span class="cat-item-name">${_escapeHtml(slot.label)}</span>
+                <div class="cat-item-info"><span class="cat-item-name">${_escapeHtml(slot.label)}</span>${descHtml}</div>
                 <div class="cat-item-actions">
                     <button class="btn-icon slot-edit" data-slot-id="${slot.id}"><i data-lucide="pencil"></i></button>
                     <button class="${delClass}" data-slot-id="${slot.id}" ${delTitle}><i data-lucide="trash-2"></i></button>
@@ -4619,10 +4620,11 @@ async function renderSlotManager(container) {
     document.getElementById('slot-back-btn').addEventListener('click', () => navigateTo('settings'));
 
     document.getElementById('slot-add-btn').addEventListener('click', async () => {
-        const label = prompt('Название замера:');
+        const label = prompt('Название контрольной точки:');
         if (!label || !label.trim()) return;
+        const description = prompt('Описание (необязательно):');
         try {
-            await api.createSlot({ label: label.trim() });
+            await api.createSlot({ label: label.trim(), description: description?.trim() || null });
             await renderSlotManager(container);
         } catch (e) { alert('Ошибка: ' + e.message); }
     });
@@ -4630,12 +4632,18 @@ async function renderSlotManager(container) {
     container.querySelectorAll('.slot-edit').forEach(btn => {
         btn.addEventListener('click', async () => {
             const slotId = parseInt(btn.dataset.slotId);
+            const slot = slots.find(s => s.id === slotId);
             const nameEl = btn.closest('.cat-item').querySelector('.cat-item-name');
             const currentLabel = nameEl?.textContent?.trim() || '';
             const newLabel = prompt('Новое название:', currentLabel);
-            if (!newLabel || !newLabel.trim() || newLabel.trim() === currentLabel) return;
+            if (newLabel === null) return;
+            const updateData = {};
+            if (newLabel.trim() && newLabel.trim() !== currentLabel) updateData.label = newLabel.trim();
+            const newDesc = prompt('Описание:', slot?.description || '');
+            if (newDesc !== null) updateData.description = newDesc.trim() || null;
+            if (Object.keys(updateData).length === 0) return;
             try {
-                await api.updateSlot(slotId, { label: newLabel.trim() });
+                await api.updateSlot(slotId, updateData);
                 await renderSlotManager(container);
             } catch (e) {
                 if (e.status === 409) {
@@ -4666,7 +4674,7 @@ async function renderSlotManager(container) {
     container.querySelectorAll('.slot-del').forEach(btn => {
         btn.addEventListener('click', async () => {
             const slotId = parseInt(btn.dataset.slotId);
-            if (!confirm('Удалить время замера?')) return;
+            if (!confirm('Удалить контрольную точку?')) return;
             try {
                 await api.deleteSlot(slotId);
                 await renderSlotManager(container);
@@ -5674,6 +5682,23 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 </div>
                 ` : ''}
                 ${currentType !== 'computed' && currentType !== 'integration' && currentType !== 'text' ? `
+                <div class="form-section" id="nm-checkpoint-section">
+                    <span class="label-text">Роль метрики</span>
+                    <div class="slots-choice-grid">
+                        <label class="slots-choice-card ${!existingMetric?.is_checkpoint ? 'selected' : ''}" data-role="fact">
+                            <input type="radio" name="nm-metric-role" value="fact" ${!existingMetric?.is_checkpoint ? 'checked' : ''}>
+                            <div class="slots-choice-icon"><i data-lucide="zap"></i></div>
+                            <span class="slots-choice-title">Факт</span>
+                            <span class="slots-choice-desc">Действие или событие</span>
+                        </label>
+                        <label class="slots-choice-card ${existingMetric?.is_checkpoint ? 'selected' : ''}" data-role="assessment">
+                            <input type="radio" name="nm-metric-role" value="assessment" ${existingMetric?.is_checkpoint ? 'checked' : ''}>
+                            <div class="slots-choice-icon"><i data-lucide="activity"></i></div>
+                            <span class="slots-choice-title">Оценка</span>
+                            <span class="slots-choice-desc">Состояние в контрольных точках</span>
+                        </label>
+                    </div>
+                </div>
                 <div class="form-section" id="nm-slots-section">
                     <span class="label-text">Сколько раз в день замерять?</span>
                     <div class="slots-choice-grid">
@@ -5690,7 +5715,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     </div>
                     <div class="slots-config" id="nm-slots-config" style="display:${existingMetric?.slots?.length ? 'flex' : 'none'}">
                         <div class="slot-labels-list" id="nm-slot-labels"></div>
-                        <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить время замера</button>
+                        <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить контрольную точку</button>
                         <select class="slot-add-dropdown" id="nm-slot-dropdown" style="display:none">
                             <option value="">Выберите...</option>
                         </select>
@@ -5857,7 +5882,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     </div>
                     <div class="slots-config" id="nm-slots-config" style="display:none">
                         <div class="slot-labels-list" id="nm-slot-labels"></div>
-                        <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить время замера</button>
+                        <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить контрольную точку</button>
                         <select class="slot-add-dropdown" id="nm-slot-dropdown" style="display:none">
                             <option value="">Выберите...</option>
                         </select>
@@ -6641,7 +6666,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 const hideInCardsCb = document.getElementById('nm-hide-in-cards');
                 const descriptionEl = document.getElementById('nm-description');
                 const hasSlotConfigs = slotConfigs.length >= 2;
-                const updateData = { name, category_id: hasSlotConfigs ? 0 : (categoryIdVal ? parseInt(categoryIdVal) : 0), private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, description: descriptionEl ? descriptionEl.value.trim() || null : null };
+                const roleRadio = document.querySelector('input[name="nm-metric-role"]:checked');
+                const isCheckpoint = roleRadio ? roleRadio.value === 'assessment' : false;
+                const updateData = { name, category_id: hasSlotConfigs ? 0 : (categoryIdVal ? parseInt(categoryIdVal) : 0), private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, is_checkpoint: isCheckpoint, description: descriptionEl ? descriptionEl.value.trim() || null : null };
                 if (icon !== undefined) updateData.icon = icon;
                 if (existingMetric.type === 'computed') {
                     if (formulaTokens.length === 0) {
@@ -6712,7 +6739,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 const privateCb = document.getElementById('nm-private');
                 const hideInCardsCb = document.getElementById('nm-hide-in-cards');
                 const descriptionEl = document.getElementById('nm-description');
-                const createData = { name, icon, type: selectedType, private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, description: descriptionEl ? descriptionEl.value.trim() || null : null };
+                const roleRadio2 = document.querySelector('input[name="nm-metric-role"]:checked');
+                const isCheckpoint2 = roleRadio2 ? roleRadio2.value === 'assessment' : false;
+                const createData = { name, icon, type: selectedType, private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, is_checkpoint: isCheckpoint2, description: descriptionEl ? descriptionEl.value.trim() || null : null };
                 if (categoryIdVal) createData.category_id = parseInt(categoryIdVal);
 
                 if (selectedType === 'scale') {

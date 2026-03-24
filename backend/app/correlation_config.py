@@ -23,6 +23,9 @@ class AutoSourcesConfig:
     month: bool = True
     is_workday: bool = True
     aw_active: bool = True
+    delta: bool = True
+    trend: bool = True
+    range: bool = True
 
 
 @dataclass(frozen=True)

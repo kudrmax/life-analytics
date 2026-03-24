@@ -115,11 +115,15 @@ class CorrelationService:
                     all_mids.add(mid)
         mws = await self.repo.get_metrics_with_slots(list(all_mids))
 
+        # Load slot labels and ordering for delta display labels
+        slot_labels, slot_ordering = await self._load_slot_info(list(all_mids | all_parent_ids))
+
         return {
             "pairs": [PairFormatter(
                 metric_icons=metric_icons, enum_labels=enum_labels,
                 parent_names=parent_names, privacy_mode=privacy_mode,
                 metrics_with_slots=mws,
+                slot_labels=slot_labels, slot_ordering=slot_ordering,
             ).format_pair(p) for p in pairs],
             "total": total, "has_more": offset + limit < total,
         }
@@ -163,14 +167,19 @@ class CorrelationService:
 
         ma_name = await self.repo.get_metric_name(row["metric_a_id"]) if row["metric_a_id"] else None
         mb_name = await self.repo.get_metric_name(row["metric_b_id"]) if row["metric_b_id"] else None
-        chart_mws = await self.repo.get_metrics_with_slots([mid for mid in (row["metric_a_id"], row["metric_b_id"]) if mid])
+        all_chart_mids = [mid for mid in (row["metric_a_id"], row["metric_b_id"]) if mid]
+        all_chart_mids += list(parent_ids)
+        chart_mws = await self.repo.get_metrics_with_slots(all_chart_mids)
+        slot_labels, slot_ordering = await self._load_slot_info(all_chart_mids)
 
         label_a = PRIVATE_MASK if blocked_a else PairFormatter.build_display_label(
             row["source_key_a"], ma_name, parent_names.get(sk_a.auto_parent_metric_id),
-            metric_type=type_a, has_slots=(row["metric_a_id"] in chart_mws if row["metric_a_id"] else False))
+            metric_type=type_a, has_slots=(row["metric_a_id"] in chart_mws if row["metric_a_id"] else False),
+            slot_labels=slot_labels, slot_ordering=slot_ordering)
         label_b = PRIVATE_MASK if blocked_b else PairFormatter.build_display_label(
             row["source_key_b"], mb_name, parent_names.get(sk_b.auto_parent_metric_id),
-            metric_type=type_b, has_slots=(row["metric_b_id"] in chart_mws if row["metric_b_id"] else False))
+            metric_type=type_b, has_slots=(row["metric_b_id"] in chart_mws if row["metric_b_id"] else False),
+            slot_labels=slot_labels, slot_ordering=slot_ordering)
 
         return {
             "dates": common if not (blocked_a or blocked_b) else [],
@@ -205,6 +214,25 @@ class CorrelationService:
                 if sk.auto_type in STREAK_TYPES and sk.auto_option_id is not None:
                     enum_ids.add(sk.auto_option_id)
         return parent_ids, enum_ids
+
+    async def _load_slot_info(self, metric_ids: list[int]) -> tuple[dict[int, str], dict[int, list[int]]]:
+        """Load slot labels and ordering for metrics (for delta display labels)."""
+        if not metric_ids:
+            return {}, {}
+        rows = await self.conn.fetch(
+            """SELECT ms.id, ms.label, ms.sort_order, msl.metric_id
+               FROM metric_slots msl
+               JOIN measurement_slots ms ON ms.id = msl.slot_id
+               WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE
+               ORDER BY msl.metric_id, ms.sort_order""",
+            list(set(metric_ids)),
+        )
+        labels: dict[int, str] = {}
+        ordering: dict[int, list[int]] = {}
+        for r in rows:
+            labels[r["id"]] = r["label"]
+            ordering.setdefault(r["metric_id"], []).append(r["id"])
+        return labels, ordering
 
     async def _batch_load_parents(self, parent_ids: set[int]) -> tuple[dict, dict]:
         icons: dict[int, str] = {}

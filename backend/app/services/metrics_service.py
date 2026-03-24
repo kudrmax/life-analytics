@@ -53,7 +53,8 @@ class MetricsService:
 
         metric_id = await self.repo.create_metric(
             slug, data.name, cat_id, icon, data.type.value,
-            data.enabled, data.sort_order, data.private, data.description, data.hide_in_cards,
+            data.enabled, data.sort_order, data.private, data.description,
+            data.hide_in_cards, data.is_checkpoint,
         )
         await self._create_type_config(metric_id, data)
         await self._create_slot_configs(metric_id, data)
@@ -210,7 +211,7 @@ class MetricsService:
 
     async def _apply_field_updates(self, metric_id: int, row, data: MetricDefinitionUpdate) -> None:
         updates = {}
-        for field in ("name", "enabled", "sort_order", "private", "hide_in_cards"):
+        for field in ("name", "enabled", "sort_order", "private", "hide_in_cards", "is_checkpoint"):
             val = getattr(data, field)
             if val is not None:
                 updates[field] = val

@@ -39,6 +39,9 @@ class AutoSourceType(str, Enum):
     WEEK_NUMBER = "week_number"  # kept for backward compat parsing old reports
     AW_ACTIVE = "aw_active"
     IS_WORKDAY = "is_workday"
+    DELTA = "delta"
+    TREND = "trend"
+    RANGE = "range"
 
 
 ROLLING_AVG_WINDOWS: list[int] = [3, 7, 14]
@@ -83,6 +86,12 @@ _CALENDAR_TYPES: frozenset[AutoSourceType] = frozenset({
 })
 
 _ROLLING_AVG_TYPES: frozenset[AutoSourceType] = frozenset({AutoSourceType.ROLLING_AVG})
+
+_DELTA_TYPES: frozenset[AutoSourceType] = frozenset({
+    AutoSourceType.DELTA,
+    AutoSourceType.TREND,
+    AutoSourceType.RANGE,
+})
 
 
 @dataclass(frozen=True, slots=True)

@@ -232,6 +232,17 @@ class AnalyticsRepository(BaseRepository):
         )
         return [r["id"] for r in rows]
 
+    async def get_ordered_slot_ids(self, metric_id: int) -> list[int]:
+        """Return slot IDs ordered by sort_order for a metric."""
+        rows = await self.conn.fetch(
+            """SELECT ms.id FROM metric_slots msl
+               JOIN measurement_slots ms ON ms.id = msl.slot_id
+               WHERE msl.metric_id = $1 AND msl.enabled = TRUE
+               ORDER BY ms.sort_order""",
+            metric_id,
+        )
+        return [r["id"] for r in rows]
+
     async def get_computed_config(self, metric_id: int) -> asyncpg.Record | None:
         return await self.conn.fetchrow(
             "SELECT formula, result_type FROM computed_config WHERE metric_id = $1",

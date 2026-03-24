@@ -20,12 +20,12 @@ async def list_slots(db=Depends(get_db), current_user: dict = Depends(get_curren
 
 @router.post("", response_model=SlotOut, status_code=201)
 async def create_slot(data: SlotCreate, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return await _service(db, current_user).create(data.label)
+    return await _service(db, current_user).create(data.label, data.description)
 
 
 @router.patch("/{slot_id}", response_model=SlotOut)
 async def update_slot(slot_id: int, data: SlotUpdate, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return await _service(db, current_user).update(slot_id, data.label)
+    return await _service(db, current_user).update(slot_id, data.label, data.description)
 
 
 @router.delete("/{slot_id}", status_code=204)
