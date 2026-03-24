@@ -1,12 +1,48 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from statistics import mean, stdev
+from typing import Protocol
 
 from app.domain.constants import Z_SCORE_95
 
 
 BINARY_TYPES: frozenset[str] = frozenset({"bool", "enum_bool"})
+
+
+@dataclass(frozen=True, slots=True)
+class CorrelationMethodResult:
+    """Unified result from any correlation method."""
+
+    r: float | None
+    n: int
+    p_value: float
+    ci_lower: float | None
+    ci_upper: float | None
+
+
+class CorrelationMethod(Protocol):
+    """Protocol for pluggable correlation methods."""
+
+    def compute(self, a: dict[str, float], b: dict[str, float]) -> CorrelationMethodResult: ...
+
+
+class PearsonMethod:
+    """Pearson correlation with p-value and 95% CI."""
+
+    def compute(self, a: dict[str, float], b: dict[str, float]) -> CorrelationMethodResult:
+        calc = CorrelationCalculator(a, b)
+        r, n = calc.pearson()
+        if r is None:
+            return CorrelationMethodResult(r=None, n=n, p_value=1.0, ci_lower=None, ci_upper=None)
+        p_val = p_value_from_r(r, n)
+        ci = confidence_interval_from_r(r, n)
+        return CorrelationMethodResult(
+            r=r, n=n, p_value=p_val,
+            ci_lower=ci[0] if ci else None,
+            ci_upper=ci[1] if ci else None,
+        )
 
 
 class CorrelationCalculator:

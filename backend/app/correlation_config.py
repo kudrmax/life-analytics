@@ -38,9 +38,23 @@ class QualityFiltersConfig:
 
 
 @dataclass(frozen=True)
+class ThresholdsConfig:
+    min_data_points: int = 10
+    p_value_significance: float = 0.05
+    ci_width: float = 0.5
+    strong_correlation: float = 0.7
+    moderate_correlation: float = 0.3
+    binary_var_threshold: float = 0.10
+    zero_var_eps: float = 1e-9
+    min_binary_group_size: int = 5
+
+
+@dataclass(frozen=True)
 class CorrelationConfig:
     auto_sources: AutoSourcesConfig = field(default_factory=AutoSourcesConfig)
     quality_filters: QualityFiltersConfig = field(default_factory=QualityFiltersConfig)
+    thresholds: ThresholdsConfig = field(default_factory=ThresholdsConfig)
+    method: str = "pearson"
 
 
 def _parse_auto_sources(tables: dict[str, dict[str, object]]) -> AutoSourcesConfig:
@@ -76,6 +90,15 @@ def _parse_quality_filters(tables: dict[str, dict[str, object]]) -> QualityFilte
     return QualityFiltersConfig(**kwargs)  # type: ignore[arg-type]
 
 
+def _parse_thresholds(raw_thresholds: dict[str, object]) -> ThresholdsConfig:
+    """Extract threshold values from flat TOML table."""
+    kwargs: dict[str, object] = {}
+    for name in ThresholdsConfig.__dataclass_fields__:
+        if name in raw_thresholds:
+            kwargs[name] = raw_thresholds[name]
+    return ThresholdsConfig(**kwargs)  # type: ignore[arg-type]
+
+
 def load_config(env: str | None = None, path: Path | None = None) -> CorrelationConfig:
     """Load config: prod as base, local overrides on top (if env=local)."""
     if env is None:
@@ -92,20 +115,29 @@ def load_config(env: str | None = None, path: Path | None = None) -> Correlation
     # Start with prod tables
     prod_sources = raw.get("prod", {}).get("auto_sources", {})
     prod_quality = raw.get("prod", {}).get("quality_filters", {})
+    prod_thresholds = raw.get("prod", {}).get("thresholds", {})
+    prod_method = raw.get("prod", {}).get("method", "pearson")
 
     # Merge local on top if env=local (table-level override)
     if env == "local":
         local_sources = raw.get("local", {}).get("auto_sources", {})
         local_quality = raw.get("local", {}).get("quality_filters", {})
+        local_thresholds = raw.get("local", {}).get("thresholds", {})
         merged_sources = {**prod_sources, **local_sources}
         merged_quality = {**prod_quality, **local_quality}
+        merged_thresholds = {**prod_thresholds, **local_thresholds}
+        method = raw.get("local", {}).get("method", prod_method)
     else:
         merged_sources = prod_sources
         merged_quality = prod_quality
+        merged_thresholds = prod_thresholds
+        method = prod_method
 
     return CorrelationConfig(
         auto_sources=_parse_auto_sources(merged_sources),
         quality_filters=_parse_quality_filters(merged_quality),
+        thresholds=_parse_thresholds(merged_thresholds),
+        method=method,
     )
 
 

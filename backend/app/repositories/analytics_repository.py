@@ -4,7 +4,7 @@ from datetime import date as date_type
 
 import asyncpg
 
-from app.domain.constants import CORRELATION_THRESHOLD_STRONG, CORRELATION_THRESHOLD_MODERATE
+from app.correlation_config import ThresholdsConfig
 from app.repositories.base import BaseRepository
 
 
@@ -120,14 +120,18 @@ class AnalyticsRepository(BaseRepository):
             self.user_id,
         )
 
-    async def get_report_pair_counts(self, report_id: int) -> asyncpg.Record:
+    async def get_report_pair_counts(
+        self, report_id: int, thresholds: ThresholdsConfig | None = None,
+    ) -> asyncpg.Record:
+        strong = thresholds.strong_correlation if thresholds else 0.7
+        moderate = thresholds.moderate_correlation if thresholds else 0.3
         return await self.conn.fetchrow(
             f"""SELECT
                    COUNT(*) AS total,
-                   COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) > {CORRELATION_THRESHOLD_STRONG}) AS sig_strong,
-                   COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) > {CORRELATION_THRESHOLD_MODERATE}
-                                    AND ABS(correlation) <= {CORRELATION_THRESHOLD_STRONG}) AS sig_medium,
-                   COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) <= {CORRELATION_THRESHOLD_MODERATE}) AS sig_weak,
+                   COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) > {strong}) AS sig_strong,
+                   COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) > {moderate}
+                                    AND ABS(correlation) <= {strong}) AS sig_medium,
+                   COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) <= {moderate}) AS sig_weak,
                    COUNT(*) FILTER (WHERE quality_issue IN ('wide_ci', 'fisher_exact_high_p')) AS maybe,
                    COUNT(*) FILTER (WHERE quality_issue IS NOT NULL
                                     AND quality_issue NOT IN ('wide_ci', 'fisher_exact_high_p')) AS insig

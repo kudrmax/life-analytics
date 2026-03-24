@@ -4,6 +4,7 @@ from typing import Any, ClassVar
 
 from app.analytics.correlation_math import confidence_interval_from_r, p_value_from_r
 from app.analytics.quality import QualityAssessor
+from app.correlation_config import ThresholdsConfig
 from app.domain.constants import CORRELATION_THRESHOLD_MODERATE, CORRELATION_THRESHOLD_STRONG
 from app.domain.enums import MetricType
 from app.domain.privacy import is_blocked, PRIVATE_MASK, PRIVATE_ICON
@@ -24,6 +25,21 @@ class PairFormatter:
         "insig": "AND quality_issue IS NOT NULL AND quality_issue NOT IN ('wide_ci', 'fisher_exact_high_p')",
         "all": "",
     }
+
+    @staticmethod
+    def category_filter_sql(category: str, thresholds: ThresholdsConfig) -> str:
+        """Build SQL WHERE clause for a category using configurable thresholds."""
+        strong = thresholds.strong_correlation
+        moderate = thresholds.moderate_correlation
+        filters: dict[str, str] = {
+            "sig_strong": f"AND quality_issue IS NULL AND ABS(correlation) > {strong}",
+            "sig_medium": f"AND quality_issue IS NULL AND ABS(correlation) > {moderate} AND ABS(correlation) <= {strong}",
+            "sig_weak": f"AND quality_issue IS NULL AND ABS(correlation) <= {moderate}",
+            "maybe": "AND quality_issue IN ('wide_ci', 'fisher_exact_high_p')",
+            "insig": "AND quality_issue IS NOT NULL AND quality_issue NOT IN ('wide_ci', 'fisher_exact_high_p')",
+            "all": "",
+        }
+        return filters.get(category, "")
 
     def __init__(
         self,

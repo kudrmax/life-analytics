@@ -4,7 +4,6 @@ from enum import Enum
 from typing import ClassVar
 
 from app.correlation_config import CorrelationConfig, correlation_config
-from app.domain.constants import MIN_DATA_POINTS, P_VALUE_SIGNIFICANCE_THRESHOLD
 
 
 class QualityIssue(str, Enum):
@@ -43,6 +42,7 @@ class QualityAssessor:
     def __init__(self, config: CorrelationConfig | None = None) -> None:
         cfg = config or correlation_config
         self._qf = cfg.quality_filters
+        self._thresholds = cfg.thresholds
 
     def determine_issue(
         self,
@@ -57,11 +57,11 @@ class QualityAssessor:
     ) -> str | None:
         """Определяет quality issue по приоритету. Первый match выигрывает."""
         checks = [
-            (n < MIN_DATA_POINTS and self._qf.low_data_points, QualityIssue.LOW_DATA_POINTS),
+            (n < self._thresholds.min_data_points and self._qf.low_data_points, QualityIssue.LOW_DATA_POINTS),
             (small_binary_group and self._qf.low_binary_data_points, QualityIssue.LOW_BINARY_DATA_POINTS),
             (low_streak_resets and self._qf.low_streak_resets, QualityIssue.LOW_STREAK_RESETS),
             (low_variance and self._qf.insufficient_variance, QualityIssue.INSUFFICIENT_VARIANCE),
-            (p_value >= P_VALUE_SIGNIFICANCE_THRESHOLD and self._qf.high_p_value, QualityIssue.HIGH_P_VALUE),
+            (p_value >= self._thresholds.p_value_significance and self._qf.high_p_value, QualityIssue.HIGH_P_VALUE),
             (fisher_high_p and self._qf.fisher_exact_high_p, QualityIssue.FISHER_EXACT_HIGH_P),
             (wide_ci and self._qf.wide_ci, QualityIssue.WIDE_CI),
         ]

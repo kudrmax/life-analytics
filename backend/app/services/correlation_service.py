@@ -5,13 +5,13 @@ import logging
 from datetime import date as date_type, timedelta
 
 from app import database as _db_module
-from app.analytics.correlation_math import CorrelationCalculator
+from app.analytics.correlation_math import PearsonMethod
 from app.analytics.pair_formatter import PairFormatter
 from app.analytics.source_reconstructor import SourceReconstructor
 from app.analytics.time_series import TimeSeriesTransform
 from app.analytics.value_converter import ValueConverter
 from app.analytics.value_fetcher import ValueFetcher
-from app.correlation_config import CorrelationConfig
+from app.correlation_config import CorrelationConfig, correlation_config
 from app.domain.enums import MetricType
 from app.formula import get_referenced_metric_ids
 from app.domain.privacy import is_blocked, PRIVATE_MASK
@@ -41,14 +41,14 @@ class CorrelationService:
         a_by_date = await self._fetch_values(fetcher, ma, metric_a, start_date, end_date)
         b_by_date = await self._fetch_values(fetcher, mb, metric_b, start_date, end_date)
 
-        r, n = CorrelationCalculator(a_by_date, b_by_date).pearson()
-        if r is None:
+        result = PearsonMethod().compute(a_by_date, b_by_date)
+        if result.r is None:
             return {"metric_a": metric_a, "metric_b": metric_b, "correlation": None,
                     "message": "Not enough data (need at least 3 common days)"}
         common = sorted(set(a_by_date) & set(b_by_date))
         return {
             "metric_a": metric_a, "metric_b": metric_b,
-            "correlation": r, "data_points": n,
+            "correlation": result.r, "data_points": result.n,
             "pairs": [{"date": d, "a": round(a_by_date[d], 2), "b": round(b_by_date[d], 2)} for d in common],
         }
 
@@ -72,7 +72,9 @@ class CorrelationService:
                 done_row = r
         report = None
         if done_row:
-            counts_row = await self.repo.get_report_pair_counts(done_row["id"])
+            counts_row = await self.repo.get_report_pair_counts(
+                done_row["id"], thresholds=correlation_config.thresholds,
+            )
             report = {
                 "id": done_row["id"], "status": "done",
                 "period_start": str(done_row["period_start"]), "period_end": str(done_row["period_end"]),
@@ -89,7 +91,7 @@ class CorrelationService:
         if not report_row:
             return {"pairs": [], "total": 0, "has_more": False}
 
-        cat_filter = PairFormatter.CATEGORY_FILTERS.get(category, "")
+        cat_filter = PairFormatter.category_filter_sql(category, correlation_config.thresholds)
         metric_filter = ""
         args_base: list = [report_id]
         if metric_ids_str:

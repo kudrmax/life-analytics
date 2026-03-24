@@ -7,15 +7,12 @@ from datetime import date as date_type, timedelta
 from statistics import variance
 
 from app.analytics.correlation_math import (
-    CorrelationCalculator, p_value_from_r, confidence_interval_from_r,
+    CorrelationMethodResult, PearsonMethod,
     fisher_exact_p, BINARY_TYPES,
 )
-from app.domain.constants import (
-    CONFIDENCE_INTERVAL_WIDTH_THRESHOLD,
-    P_VALUE_SIGNIFICANCE_THRESHOLD,
-    SECONDS_PER_HOUR,
-)
+from app.domain.constants import SECONDS_PER_HOUR
 from app.analytics.quality import QualityAssessor
+from app.analytics.auto_sources.registry import AutoSourceInput, compute_auto_source
 from app.analytics.time_series import TimeSeriesTransform
 from app.analytics.value_converter import ValueConverter
 from app.analytics.value_fetcher import ValueFetcher
@@ -58,9 +55,6 @@ class CorrelationEngine:
 
     _SLOT_MINMAX_TYPES = {"number", "scale", "duration", "time"}
     _ROLLING_AVG_ELIGIBLE_TYPES = {"number", "scale", "duration", "time"}
-    _BINARY_VAR_THRESHOLD = 0.10
-    _ZERO_VAR_EPS = 1e-9
-    _MIN_BINARY_GROUP_SIZE = 5
 
     def __init__(
         self,
@@ -76,6 +70,7 @@ class CorrelationEngine:
         self._start_date = start_date
         self._end_date = end_date
         self._config = config or correlation_config
+        self._method = PearsonMethod()
         self._analytics_repo = AnalyticsRepository(repo.conn, repo.user_id)
         self._fetcher = ValueFetcher(self._analytics_repo)
         self._quality = QualityAssessor(config=self._config)
@@ -291,68 +286,68 @@ class CorrelationEngine:
                 self._sources.append((SourceKey(auto_type=cal_type, auto_option_id=opt_id), "enum_bool"))
 
     async def _compute_auto_source_data(self) -> None:
-        _auto = self._config.auto_sources
-
-        # AW screen time
-        aw_rows = [] if not _auto.aw_active else await self._analytics_repo.get_aw_active_seconds(
-            self._start_date, self._end_date,
-        )
-        if aw_rows:
-            for idx, (sk, _) in enumerate(self._sources):
-                if sk.auto_type == AutoSourceType.AW_ACTIVE:
-                    self._source_data[idx] = {str(r["date"]): r["active_seconds"] / SECONDS_PER_HOUR for r in aw_rows}
-                    break
-
         all_dates = [str(self._start_date + timedelta(days=i)) for i in range((self._end_date - self._start_date).days + 1)]
+
+        # Pre-fetch DB-dependent auto source data
+        _auto = self._config.auto_sources
+        aw_data: dict[str, float] | None = None
+        if _auto.aw_active:
+            aw_rows = await self._analytics_repo.get_aw_active_seconds(self._start_date, self._end_date)
+            if aw_rows:
+                aw_data = {str(r["date"]): r["active_seconds"] / SECONDS_PER_HOUR for r in aw_rows}
 
         for idx, (sk, _mt) in enumerate(self._sources):
             if not sk.is_auto or idx in self._source_data:
                 continue
-            if sk.auto_type == AutoSourceType.NONZERO:
-                parent_data = self._source_data[self._aggregate_indices[sk.auto_parent_metric_id]]
-                self._source_data[idx] = {d: (1.0 if v > 0 else 0.0) for d, v in parent_data.items()}
-            elif sk.auto_type == AutoSourceType.NOTE_COUNT:
-                self._source_data[idx] = await self._fetcher.fetch_note_counts(
+
+            # Prepare input based on auto source type
+            parent_data = self._resolve_parent_data(sk, all_dates)
+            slot_data = self._resolve_slot_data(sk)
+
+            # DB-dependent sources: use pre-fetched data
+            if sk.auto_type == AutoSourceType.NOTE_COUNT:
+                parent_data = await self._fetcher.fetch_note_counts(
                     sk.auto_parent_metric_id, self._user_id, self._start_date, self._end_date,
                 )
-            elif sk.auto_type == AutoSourceType.DAY_OF_WEEK and sk.auto_option_id is not None:
-                self._source_data[idx] = {d: (1.0 if date_type.fromisoformat(d).isoweekday() == sk.auto_option_id else 0.0) for d in all_dates}
-            elif sk.auto_type == AutoSourceType.MONTH and sk.auto_option_id is not None:
-                self._source_data[idx] = {d: (1.0 if date_type.fromisoformat(d).month == sk.auto_option_id else 0.0) for d in all_dates}
-            elif sk.auto_type == AutoSourceType.IS_WORKDAY and sk.auto_option_id is not None:
-                if sk.auto_option_id == 1:
-                    self._source_data[idx] = {d: (1.0 if date_type.fromisoformat(d).isoweekday() <= 5 else 0.0) for d in all_dates}
-                else:
-                    self._source_data[idx] = {d: (1.0 if date_type.fromisoformat(d).isoweekday() > 5 else 0.0) for d in all_dates}
-            elif sk.auto_type in (AutoSourceType.SLOT_MAX, AutoSourceType.SLOT_MIN):
-                slot_indices = self._slot_source_indices_by_metric.get(sk.auto_parent_metric_id, [])
-                agg_fn = max if sk.auto_type == AutoSourceType.SLOT_MAX else min
-                self._source_data[idx] = TimeSeriesTransform.slot_agg(slot_indices, self._source_data, agg_fn) if slot_indices else {}
-            elif sk.auto_type == AutoSourceType.ROLLING_AVG and sk.auto_option_id is not None:
-                parent_idx = self._aggregate_indices.get(sk.auto_parent_metric_id)
-                if parent_idx is None:
-                    parent_idx = self._computed_source_indices.get(sk.auto_parent_metric_id)
-                self._source_data[idx] = TimeSeriesTransform.rolling_avg(
-                    self._source_data.get(parent_idx, {}), sk.auto_option_id,
-                ) if parent_idx is not None else {}
-            elif sk.auto_type in STREAK_TYPES:
-                if sk.auto_option_id is not None:
-                    parent_idx = None
-                    for pi, (psk, pmt) in enumerate(self._sources):
-                        if (psk.metric_id == sk.auto_parent_metric_id
-                                and psk.enum_option_id == sk.auto_option_id
-                                and psk.slot_id is None
-                                and not psk.is_auto):
-                            parent_idx = pi
-                            break
-                else:
-                    parent_idx = self._aggregate_indices.get(sk.auto_parent_metric_id)
-                if parent_idx is not None:
-                    parent_data = self._source_data.get(parent_idx, {})
-                    target = sk.auto_type == AutoSourceType.STREAK_TRUE
-                    self._source_data[idx] = TimeSeriesTransform.streak(parent_data, all_dates, target)
-                else:
-                    self._source_data[idx] = {}
+            elif sk.auto_type == AutoSourceType.AW_ACTIVE:
+                parent_data = aw_data
+
+            inp = AutoSourceInput(
+                all_dates=all_dates,
+                parent_data=parent_data,
+                slot_data=slot_data,
+                option_id=sk.auto_option_id,
+            )
+            self._source_data[idx] = compute_auto_source(sk.auto_type, inp)
+
+    def _resolve_parent_data(self, sk: SourceKey, all_dates: list[str]) -> dict[str, float] | None:
+        """Resolve parent time-series data from engine cache for an auto source."""
+        if sk.auto_parent_metric_id is None:
+            return None
+        if sk.auto_type in STREAK_TYPES and sk.auto_option_id is not None:
+            # Streak for enum option — find parent by metric_id + enum_option_id
+            for pi, (psk, _) in enumerate(self._sources):
+                if (psk.metric_id == sk.auto_parent_metric_id
+                        and psk.enum_option_id == sk.auto_option_id
+                        and psk.slot_id is None
+                        and not psk.is_auto):
+                    return self._source_data.get(pi, {})
+            return None
+        parent_idx = self._aggregate_indices.get(sk.auto_parent_metric_id)
+        if parent_idx is None:
+            parent_idx = self._computed_source_indices.get(sk.auto_parent_metric_id)
+        if parent_idx is not None:
+            return self._source_data.get(parent_idx, {})
+        return None
+
+    def _resolve_slot_data(self, sk: SourceKey) -> list[dict[str, float]] | None:
+        """Resolve slot time-series data from engine cache for slot_max/slot_min."""
+        if sk.auto_type not in (AutoSourceType.SLOT_MAX, AutoSourceType.SLOT_MIN):
+            return None
+        slot_indices = self._slot_source_indices_by_metric.get(sk.auto_parent_metric_id, [])
+        if not slot_indices:
+            return None
+        return [self._source_data.get(si, {}) for si in slot_indices]
 
     # ─── Phase 5: Pre-compute quality flags ────────────────────────
 
@@ -373,11 +368,11 @@ class CorrelationEngine:
                 self._low_var_sources.add(idx)
                 continue
             var = variance(vals)
-            if var < self._ZERO_VAR_EPS:
+            if var < self._config.thresholds.zero_var_eps:
                 self._low_var_sources.add(idx)
                 continue
             is_binary = all(v == 0.0 or v == 1.0 for v in vals)
-            if is_binary and var <= self._BINARY_VAR_THRESHOLD:
+            if is_binary and var <= self._config.thresholds.binary_var_threshold:
                 self._low_var_sources.add(idx)
 
         for idx in range(len(self._sources)):
@@ -427,15 +422,15 @@ class CorrelationEngine:
         idx_a: int, idx_b: int, lag: int,
         low_var: bool, both_binary: bool,
     ) -> CorrelationPairResult | None:
-        calc = CorrelationCalculator(data_a, data_b)
-        r, n = calc.pearson()
+        result = self._method.compute(data_a, data_b)
+        r, n = result.r, result.n
         if r is None:
             return None
         small_group = self._check_small_binary_group(data_a, data_b, idx_a, idx_b)
-        p_val = round(p_value_from_r(r, n), 4)
-        ci = confidence_interval_from_r(r, n)
-        wide_ci = ci is not None and (ci[1] - ci[0]) > CONFIDENCE_INTERVAL_WIDTH_THRESHOLD
-        fisher_hp = both_binary and fisher_exact_p(data_a, data_b) >= P_VALUE_SIGNIFICANCE_THRESHOLD
+        p_val = round(result.p_value, 4)
+        wide_ci = (result.ci_lower is not None and result.ci_upper is not None
+                   and (result.ci_upper - result.ci_lower) > self._config.thresholds.ci_width)
+        fisher_hp = both_binary and fisher_exact_p(data_a, data_b) >= self._config.thresholds.p_value_significance
         streak_reset = self._check_low_streak_resets(data_a, data_b, idx_a, idx_b)
         qi = self._quality.determine_issue(n, p_val, low_variance=low_var, small_binary_group=small_group, wide_ci=wide_ci, fisher_high_p=fisher_hp, low_streak_resets=streak_reset)
         return CorrelationPairResult(
@@ -461,7 +456,7 @@ class CorrelationEngine:
                 continue
             count_true = sum(1 for d in common if data.get(d) == 1.0)
             count_false = len(common) - count_true
-            if min(count_true, count_false) < self._MIN_BINARY_GROUP_SIZE:
+            if min(count_true, count_false) < self._config.thresholds.min_binary_group_size:
                 return True
         return False
 
