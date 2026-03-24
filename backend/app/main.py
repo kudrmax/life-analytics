@@ -3,12 +3,14 @@ import os
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from app.database import create_pool, close_pool, init_db, pool as app_pool
+from app.domain.exceptions import EntityNotFoundError, DuplicateEntityError, InvalidOperationError, ConflictError
 from app.migrations import run_migrations
 from app.routers import metrics, entries, daily, analytics, auth, export_import, integrations, categories, notes, insights, slots
 
@@ -51,6 +53,28 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Life Analytics API", version="2.0.0", lifespan=lifespan)
+
+
+# ─── Domain exception → HTTP response mapping ────────────────────
+@app.exception_handler(EntityNotFoundError)
+async def entity_not_found_handler(_request: FastAPIRequest, exc: EntityNotFoundError) -> JSONResponse:
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(DuplicateEntityError)
+async def duplicate_entity_handler(_request: FastAPIRequest, exc: DuplicateEntityError) -> JSONResponse:
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(InvalidOperationError)
+async def invalid_operation_handler(_request: FastAPIRequest, exc: InvalidOperationError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": exc.detail})
+
+
+@app.exception_handler(ConflictError)
+async def conflict_handler(_request: FastAPIRequest, exc: ConflictError) -> JSONResponse:
+    return JSONResponse(status_code=409, content={"detail": exc.detail})
+
 
 app.add_middleware(
     CORSMiddleware,

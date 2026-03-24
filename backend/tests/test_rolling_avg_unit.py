@@ -2,7 +2,9 @@
 
 import unittest
 
-from app.routers.analytics import _compute_rolling_avg
+from app.analytics.time_series import TimeSeriesTransform
+
+_compute_rolling_avg = TimeSeriesTransform.rolling_avg
 
 
 class TestComputeRollingAvgEmpty(unittest.TestCase):

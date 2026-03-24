@@ -15,6 +15,9 @@ Evaluation uses recursive descent with standard operator precedence:
   factor     = '(' expr ')' | metric_ref | number
 """
 
+from app.domain.constants import MINUTES_PER_DAY
+from app.domain.enums import MetricType
+
 
 class _MissingValue(Exception):
     pass
@@ -69,11 +72,11 @@ def validate_formula(
             if mid not in source_metrics:
                 return f"Метрика с id={mid} не найдена"
             mt = source_metrics[mid]
-            if mt == "computed":
+            if mt == MetricType.computed:
                 return "Нельзя ссылаться на другие вычисляемые метрики"
-            if mt == "time":
+            if mt == MetricType.time:
                 has_time = True
-            elif mt == "duration":
+            elif mt == MetricType.duration:
                 has_duration = True
             else:
                 has_other_numeric = True
@@ -123,20 +126,20 @@ def convert_metric_value(
 ) -> float | None:
     if raw_value is None:
         return None
-    if metric_type == "bool":
+    if metric_type == MetricType.bool:
         return 1.0 if raw_value else 0.0
-    if metric_type == "number":
+    if metric_type == MetricType.number:
         return float(raw_value)
-    if metric_type == "scale":
+    if metric_type == MetricType.scale:
         v = float(raw_value)
         s_min = float(scale_min) if scale_min is not None else 1.0
         s_max = float(scale_max) if scale_max is not None else 5.0
         if s_max == s_min:
             return 0.0
         return (v - s_min) / (s_max - s_min)
-    if metric_type == "duration":
+    if metric_type == MetricType.duration:
         return float(raw_value)
-    if metric_type == "time":
+    if metric_type == MetricType.time:
         # raw_value is "HH:MM" string
         if isinstance(raw_value, str) and ":" in raw_value:
             parts = raw_value.split(":")
@@ -160,18 +163,18 @@ def evaluate_formula(
 
 
 def _format_result(value: float, result_type: str):
-    if result_type == "bool":
+    if result_type == MetricType.bool:
         return value > 0
     if result_type == "int":
         return round(value)
     if result_type == "float":
         return round(value, 4)
-    if result_type == "time":
-        minutes = int(value) % 1440
+    if result_type == MetricType.time:
+        minutes = int(value) % MINUTES_PER_DAY
         if minutes < 0:
-            minutes += 1440
+            minutes += MINUTES_PER_DAY
         return f"{minutes // 60:02d}:{minutes % 60:02d}"
-    if result_type == "duration":
+    if result_type == MetricType.duration:
         total = max(0, int(round(value)))
         h, m = divmod(total, 60)
         return f"{h}ч {m}м"

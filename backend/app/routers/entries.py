@@ -1,27 +1,16 @@
-from datetime import date as date_type
-
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.database import get_db
 from app.schemas import EntryCreate, EntryUpdate, EntryOut
 from app.auth import get_current_user
-from app.metric_helpers import get_entry_value, insert_value, update_value, get_metric_type, resolve_storage_type
+from app.repositories.entry_repository import EntryRepository
+from app.services.entries_service import EntriesService
 
 router = APIRouter(prefix="/api/entries", tags=["entries"])
 
 
-async def _entry_to_out(conn, entry_row, metric_type: str = "bool") -> EntryOut:
-    value = await get_entry_value(conn, entry_row["id"], metric_type)
-    default = False if metric_type == "bool" else None
-    return EntryOut(
-        id=entry_row["id"],
-        metric_id=entry_row["metric_id"],
-        date=str(entry_row["date"]),
-        recorded_at=str(entry_row["recorded_at"]),
-        value=value if value is not None else default,
-        slot_id=entry_row["slot_id"],
-        slot_label=entry_row.get("slot_label") or "",
-    )
+def _service(db, user) -> EntriesService:
+    return EntriesService(EntryRepository(db, user["id"]))
 
 
 @router.get("", response_model=list[EntryOut])
@@ -31,123 +20,19 @@ async def list_entries(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    d = date_type.fromisoformat(date)
-    if metric_id:
-        rows = await db.fetch(
-            """SELECT e.*, ms.label AS slot_label
-               FROM entries e
-               LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
-               WHERE e.date = $1 AND e.metric_id = $2 AND e.user_id = $3""",
-            d, metric_id, current_user["id"],
-        )
-    else:
-        rows = await db.fetch(
-            """SELECT e.*, ms.label AS slot_label
-               FROM entries e
-               LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
-               WHERE e.date = $1 AND e.user_id = $2
-               ORDER BY e.metric_id""",
-            d, current_user["id"],
-        )
-
-    # Build metric_id -> type lookup (resolve integration to actual storage type)
-    metric_ids = list({r["metric_id"] for r in rows})
-    type_lookup = {}
-    if metric_ids:
-        type_rows = await db.fetch(
-            "SELECT id, type FROM metric_definitions WHERE id = ANY($1) AND user_id = $2",
-            metric_ids, current_user["id"],
-        )
-        for tr in type_rows:
-            type_lookup[tr["id"]] = await resolve_storage_type(db, tr["id"], tr["type"])
-
-    return [await _entry_to_out(db, r, type_lookup.get(r["metric_id"], "bool")) for r in rows]
+    return await _service(db, current_user).list_by_date(date, metric_id)
 
 
 @router.post("", response_model=EntryOut, status_code=201)
-async def create_entry(
-    data: EntryCreate,
-    db=Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    metric = await db.fetchrow(
-        "SELECT * FROM metric_definitions WHERE id = $1 AND user_id = $2",
-        data.metric_id, current_user["id"],
-    )
-    if not metric:
-        raise HTTPException(404, "Metric not found")
-
-    d = date_type.fromisoformat(data.date)
-
-    # Check for duplicate based on slot_id
-    if data.slot_id is not None:
-        existing = await db.fetchval(
-            "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND slot_id = $4",
-            data.metric_id, current_user["id"], d, data.slot_id,
-        )
-    else:
-        existing = await db.fetchval(
-            "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND slot_id IS NULL",
-            data.metric_id, current_user["id"], d,
-        )
-    if existing:
-        raise HTTPException(409, "Entry already exists for this metric/date/slot. Use PUT to update.")
-
-    mt = await resolve_storage_type(db, data.metric_id, metric["type"])
-    async with db.transaction():
-        entry_id = await db.fetchval(
-            "INSERT INTO entries (metric_id, user_id, date, slot_id) VALUES ($1, $2, $3, $4) RETURNING id",
-            data.metric_id, current_user["id"], d, data.slot_id,
-        )
-        await insert_value(db, entry_id, data.value, mt, entry_date=d, metric_id=data.metric_id)
-
-    row = await db.fetchrow(
-        """SELECT e.*, ms.label AS slot_label
-           FROM entries e
-           LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
-           WHERE e.id = $1""",
-        entry_id,
-    )
-    return await _entry_to_out(db, row, mt)
+async def create_entry(data: EntryCreate, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return await _service(db, current_user).create(data.metric_id, data.date, data.value, data.slot_id)
 
 
 @router.put("/{entry_id}", response_model=EntryOut)
-async def update_entry(
-    entry_id: int,
-    data: EntryUpdate,
-    db=Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    row = await db.fetchrow(
-        """SELECT e.*, ms.label AS slot_label
-           FROM entries e
-           LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
-           WHERE e.id = $1 AND e.user_id = $2""",
-        entry_id, current_user["id"],
-    )
-    if not row:
-        raise HTTPException(404, "Entry not found")
-
-    raw_mt = await get_metric_type(db, row["metric_id"], current_user["id"]) or "bool"
-    mt = await resolve_storage_type(db, row["metric_id"], raw_mt)
-    await update_value(db, entry_id, data.value, mt, entry_date=row["date"], metric_id=row["metric_id"])
-
-    return await _entry_to_out(db, row, mt)
+async def update_entry(entry_id: int, data: EntryUpdate, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    return await _service(db, current_user).update(entry_id, data.value)
 
 
 @router.delete("/{entry_id}", status_code=204)
-async def delete_entry(
-    entry_id: int,
-    db=Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    row = await db.fetchval(
-        "SELECT id FROM entries WHERE id = $1 AND user_id = $2",
-        entry_id, current_user["id"],
-    )
-    if not row:
-        raise HTTPException(404, "Entry not found")
-    await db.execute(
-        "DELETE FROM entries WHERE id = $1 AND user_id = $2",
-        entry_id, current_user["id"],
-    )
+async def delete_entry(entry_id: int, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await _service(db, current_user).delete(entry_id)

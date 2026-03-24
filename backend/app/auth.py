@@ -121,7 +121,5 @@ async def get_privacy_mode(
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ) -> bool:
-    row = await db.fetchrow(
-        "SELECT privacy_mode FROM users WHERE id = $1", current_user["id"]
-    )
-    return row["privacy_mode"] if row else False
+    from app.repositories.auth_repository import AuthRepository
+    return await AuthRepository(db).get_privacy_mode(current_user["id"])
