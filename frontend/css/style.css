@@ -329,7 +329,7 @@ h3 {
 
 /* ─── Checkpoint sandwich ─── */
 .checkpoint-sandwich {
-    margin: 16px 0 0;
+    margin: 32px 0 0;
 }
 .checkpoint-sandwich-line {
     display: flex;
@@ -361,9 +361,12 @@ h3 {
     margin-bottom: 0;
 }
 .checkpoint-interval-facts {
-    padding: 8px 0;
+    padding: 40px 0 8px;
 }
 .checkpoint-interval-facts .category {
+    margin-bottom: 0;
+}
+.checkpoint-interval-facts .metric-card:last-child {
     margin-bottom: 0;
 }
 
