@@ -3,16 +3,21 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date as date_type
 from statistics import mean
+from typing import TYPE_CHECKING
 
 from app.analytics.value_converter import ValueConverter
+from app.domain.enums import MetricType
 from app.formula import evaluate_formula
+
+if TYPE_CHECKING:
+    from app.repositories.analytics_repository import AnalyticsRepository
 
 
 class ValueFetcher:
     """Извлекает значения метрик из БД, возвращает dict[str, float] (date->value)."""
 
-    def __init__(self, conn) -> None:  # asyncpg.Connection
-        self._conn = conn
+    def __init__(self, repo: AnalyticsRepository) -> None:
+        self._repo = repo
 
     async def values_by_date_for_slot(
         self,
@@ -25,20 +30,8 @@ class ValueFetcher:
     ) -> dict[str, float]:
         """Get values by date for a metric, optionally filtered by slot."""
         value_table, extra_cols = ValueConverter.get_value_table(metric_type)
-        slot_filter = ""
-        params: list = [metric_id, start_date, end_date, user_id]
-        if slot_id is not None:
-            slot_filter = " AND e.slot_id = $5"
-            params.append(slot_id)
-
-        rows = await self._conn.fetch(
-            f"""SELECT e.date, v.value{extra_cols}
-                FROM entries e
-                JOIN {value_table} v ON v.entry_id = e.id
-                WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
-                  AND e.user_id = $4{slot_filter}
-                ORDER BY e.date""",
-            *params,
+        rows = await self._repo.fetch_entries_values_with_slot(
+            metric_id, value_table, extra_cols, start_date, end_date, slot_id,
         )
         return ValueConverter.aggregate_by_date(rows, metric_type)
 
@@ -54,32 +47,21 @@ class ValueFetcher:
         value_table, extra_cols = ValueConverter.get_value_table(metric_type)
 
         scale_min, scale_max = None, None
-        if metric_type == "scale":
-            cfg = await self._conn.fetchrow(
-                "SELECT scale_min, scale_max FROM scale_config WHERE metric_id = $1",
-                metric_id,
-            )
-            if cfg:
-                scale_min, scale_max = cfg["scale_min"], cfg["scale_max"]
+        if metric_type == MetricType.scale:
+            scale_min, scale_max = await self._repo.get_scale_config_bounds(metric_id)
 
-        rows = await self._conn.fetch(
-            f"""SELECT e.date, v.value{extra_cols}
-                FROM entries e
-                JOIN {value_table} v ON v.entry_id = e.id
-                WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
-                  AND e.user_id = $4
-                ORDER BY e.date""",
-            metric_id, start_date, end_date, user_id,
+        rows = await self._repo.fetch_entries_values_with_slot(
+            metric_id, value_table, extra_cols, start_date, end_date,
         )
 
         day_values: dict[str, list[float]] = defaultdict(list)
         for r in rows:
             raw = r["value"]
-            if metric_type == "time":
+            if metric_type == MetricType.time:
                 cv = raw.hour * 60 + raw.minute if raw else None
-            elif metric_type == "bool":
+            elif metric_type == MetricType.bool:
                 cv = 1.0 if raw else 0.0
-            elif metric_type == "scale":
+            elif metric_type == MetricType.scale:
                 s_min = r.get("scale_min", scale_min) if r.get("scale_min") is not None else scale_min
                 s_max = r.get("scale_max", scale_max) if r.get("scale_max") is not None else scale_max
                 s_min_f = float(s_min) if s_min is not None else 1.0
@@ -92,7 +74,7 @@ class ValueFetcher:
 
         result: dict[str, float] = {}
         for d, vals in day_values.items():
-            if metric_type == "bool":
+            if metric_type == MetricType.bool:
                 result[d] = 1.0 if any(v == 1.0 for v in vals) else 0.0
             else:
                 result[d] = mean(vals) if vals else 0.0
@@ -111,11 +93,7 @@ class ValueFetcher:
         if not ref_ids:
             return {}
 
-        source_rows = await self._conn.fetch(
-            "SELECT id, type FROM metric_definitions WHERE id = ANY($1) AND user_id = $2",
-            ref_ids, user_id,
-        )
-        source_types = {r["id"]: r["type"] for r in source_rows}
+        source_types = await self._repo.get_metric_types_by_ids(ref_ids)
 
         source_data: dict[int, dict[str, float]] = {}
         for mid in ref_ids:
@@ -135,15 +113,15 @@ class ValueFetcher:
             values_for_day = {mid: source_data.get(mid, {}).get(d) for mid in ref_ids}
             raw = evaluate_formula(formula, values_for_day, result_type)
             if raw is not None:
-                if result_type == "bool":
+                if result_type == MetricType.bool:
                     result[d] = 1.0 if raw else 0.0
-                elif result_type == "time":
+                elif result_type == MetricType.time:
                     if isinstance(raw, str) and ":" in raw:
                         h, m = map(int, raw.split(":"))
                         result[d] = float(h * 60 + m)
                     else:
                         result[d] = float(raw)
-                elif result_type == "duration":
+                elif result_type == MetricType.duration:
                     if isinstance(raw, str) and "ч" in raw:
                         parts = raw.replace("м", "").split("ч")
                         result[d] = float(int(parts[0].strip()) * 60 + int(parts[1].strip()))
@@ -163,20 +141,8 @@ class ValueFetcher:
         slot_id: int | None = None,
     ) -> dict[str, float]:
         """For a single enum option, return 1.0 if selected, 0.0 if entry exists but not selected."""
-        slot_filter = ""
-        params: list = [metric_id, start_date, end_date, user_id]
-        if slot_id is not None:
-            slot_filter = " AND e.slot_id = $5"
-            params.append(slot_id)
-
-        rows = await self._conn.fetch(
-            f"""SELECT e.date, ve.selected_option_ids
-                FROM entries e
-                JOIN values_enum ve ON ve.entry_id = e.id
-                WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
-                  AND e.user_id = $4{slot_filter}
-                ORDER BY e.date""",
-            *params,
+        rows = await self._repo.fetch_enum_entries_with_slot(
+            metric_id, start_date, end_date, slot_id,
         )
 
         day_values: dict[str, list[bool]] = defaultdict(list)
@@ -196,10 +162,5 @@ class ValueFetcher:
         end_date: date_type,
     ) -> dict[str, float]:
         """Count notes per day for a text metric."""
-        rows = await self._conn.fetch(
-            """SELECT date, COUNT(*) as cnt FROM notes
-               WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4
-               GROUP BY date""",
-            metric_id, user_id, start_date, end_date,
-        )
+        rows = await self._repo.fetch_note_counts(metric_id, start_date, end_date)
         return {str(r["date"]): float(r["cnt"]) for r in rows}

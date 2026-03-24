@@ -21,14 +21,13 @@ async def list_integrations(db=Depends(get_db), current_user: dict = Depends(get
 
 @router.get("/todoist/auth-url")
 async def todoist_auth_url(current_user: dict = Depends(get_current_user)):
-    svc = IntegrationService(None, None)  # type: ignore[arg-type]
-    url = svc.get_todoist_auth_url(current_user["id"])
+    url = IntegrationService.get_todoist_auth_url(current_user["id"])
     return {"url": url}
 
 
 @router.get("/todoist/callback")
 async def todoist_callback(code: str = Query(...), state: str = Query(...), db=Depends(get_db)):
-    svc = IntegrationService(None, db)  # type: ignore[arg-type]
+    svc = IntegrationService(IntegrationsRepository(db, 0), db)
     await svc.todoist_callback(code, state)
     return RedirectResponse("/")
 

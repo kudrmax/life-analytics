@@ -36,7 +36,7 @@ class AnalyticsService:
         if metric["type"] == MetricType.computed:
             formula = ValueConverter.parse_formula(metric.get("formula"))
             ref_ids = get_referenced_metric_ids(formula)
-            aggregated = await ValueFetcher(self.conn).values_by_date_for_computed(
+            aggregated = await ValueFetcher(self.repo).values_by_date_for_computed(
                 formula, metric.get("result_type") or "float", ref_ids, start_d, end_d, self.user_id)
         elif mt == MetricType.text:
             rows = await self.repo.get_notes_by_date(metric_id, start_d, end_d)
@@ -47,7 +47,7 @@ class AnalyticsService:
             opts = await self.repo.get_enum_options_enabled(metric_id)
             option_series = {}
             for o in opts:
-                series = await ValueFetcher(self.conn).values_by_date_for_enum_option(metric_id, o["id"], start_d, end_d, self.user_id)
+                series = await ValueFetcher(self.repo).values_by_date_for_enum_option(metric_id, o["id"], start_d, end_d, self.user_id)
                 option_series[o["label"]] = [{"date": d, "value": v} for d, v in sorted(series.items())]
             qt.mark("values"); qt.log()
             return {"metric_id": metric_id, "metric_name": metric["name"], "metric_type": "enum",
@@ -103,7 +103,7 @@ class AnalyticsService:
         if mt not in {"number", "duration", "scale", "time", "int", "float"}:
             return {"not_applicable": True, "reason": f"Type '{mt}' does not support distribution"}
         start_date, end_date = date_type.fromisoformat(start), date_type.fromisoformat(end)
-        fetcher = ValueFetcher(self.conn)
+        fetcher = ValueFetcher(self.repo)
         if metric["type"] == MetricType.computed:
             formula = ValueConverter.parse_formula(metric.get("formula"))
             ref_ids = get_referenced_metric_ids(formula)
@@ -149,18 +149,18 @@ class AnalyticsService:
         formula = ValueConverter.parse_formula(metric.get("formula"))
         rt = metric.get("result_type") or "float"
         ref_ids = get_referenced_metric_ids(formula)
-        aggregated = await ValueFetcher(self.conn).values_by_date_for_computed(formula, rt, ref_ids, start_date, end_date, self.user_id)
+        aggregated = await ValueFetcher(self.repo).values_by_date_for_computed(formula, rt, ref_ids, start_date, end_date, self.user_id)
         te = len(aggregated)
         fr = round(te / total_days * 100, 1) if total_days > 0 else 0
         result: dict = {"metric_id": metric_id, "metric_type": "computed", "result_type": rt, "total_entries": te, "total_days": total_days, "fill_rate": fr}
         values = sorted(aggregated.values())
-        if rt == "bool":
+        if rt == MetricType.bool:
             yc = sum(1 for v in values if v == 1.0)
             result.update({"yes_percent": round(yc / te * 100, 1) if te else 0, "yes_count": yc, "no_count": te - yc})
-        elif rt == "time" and values:
+        elif rt == MetricType.time and values:
             avg = mean(values)
             result.update({"average": f"{int(avg)//60:02d}:{int(avg)%60:02d}", "earliest": f"{int(min(values))//60:02d}:{int(min(values))%60:02d}", "latest": f"{int(max(values))//60:02d}:{int(max(values))%60:02d}"})
-        elif rt == "duration" and values:
+        elif rt == MetricType.duration and values:
             _f = lambda m: f"{int(round(m))//60}ч {int(round(m))%60}м"
             result.update({"average": _f(mean(values)), "min": _f(min(values)), "max": _f(max(values))})
         elif values:

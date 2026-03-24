@@ -1,4 +1,5 @@
-"""Unit tests for metric_helpers.py — pure functions and async functions with mocks."""
+"""Unit tests for domain/privacy, domain/formatters, services/metric_builder,
+repositories/entry_repository, repositories/metric_repository — pure functions and async functions with mocks."""
 
 import json
 import unittest
@@ -7,21 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.metric_helpers import (
-    mask_name,
-    mask_icon,
-    is_blocked,
-    format_display_value,
-    _parse_time,
-    build_metric_out,
-    get_entry_value,
-    insert_value,
-    update_value,
-    resolve_storage_type,
-    get_metric_type,
-    get_metric_slots,
-    get_enum_options,
-)
+from app.domain.privacy import mask_name, mask_icon, is_blocked
+from app.domain.formatters import format_display_value
+from app.services.metric_builder import build_metric_out
+from app.repositories.entry_repository import EntryRepository
+from app.repositories.metric_repository import MetricRepository
 
 
 # ===================================================================
@@ -265,30 +256,30 @@ class TestFormatDisplayValueEdgeCases(unittest.TestCase):
 
 
 class TestParseTime(unittest.TestCase):
-    """Tests for _parse_time(value, entry_date)."""
+    """Tests for EntryRepository._parse_time(value, entry_date)."""
 
     def test_with_specific_date(self) -> None:
         """Parse HH:MM with a specific date."""
-        result = _parse_time("14:30", date(2026, 3, 15))
+        result = EntryRepository._parse_time("14:30", date(2026, 3, 15))
         expected = datetime(2026, 3, 15, 14, 30, tzinfo=timezone.utc)
         assert result == expected
 
     def test_with_none_date_uses_today(self) -> None:
         """Parse HH:MM with None date uses today."""
-        result = _parse_time("08:00", None)
+        result = EntryRepository._parse_time("08:00", None)
         today = date.today()
         expected = datetime(today.year, today.month, today.day, 8, 0, tzinfo=timezone.utc)
         assert result == expected
 
     def test_midnight(self) -> None:
         """Parse midnight time."""
-        result = _parse_time("00:00", date(2026, 1, 1))
+        result = EntryRepository._parse_time("00:00", date(2026, 1, 1))
         expected = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
         assert result == expected
 
     def test_end_of_day(self) -> None:
         """Parse 23:59."""
-        result = _parse_time("23:59", date(2026, 12, 31))
+        result = EntryRepository._parse_time("23:59", date(2026, 12, 31))
         expected = datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc)
         assert result == expected
 
@@ -508,7 +499,10 @@ class TestBuildMetricOut:
 
 
 class TestGetEntryValue:
-    """Tests for get_entry_value with mocked asyncpg connection."""
+    """Tests for EntryRepository.get_entry_value with mocked asyncpg connection."""
+
+    def _make_repo(self, conn: AsyncMock) -> EntryRepository:
+        return EntryRepository(conn, user_id=1)
 
     @pytest.mark.asyncio
     async def test_time_type_returns_formatted(self) -> None:
@@ -518,70 +512,70 @@ class TestGetEntryValue:
         ts.minute = 5
         conn = AsyncMock()
         conn.fetchrow.return_value = {"value": ts}
-        result = await get_entry_value(conn, entry_id=1, metric_type="time")
+        result = await self._make_repo(conn).get_entry_value(entry_id=1, metric_type="time")
         assert result == "14:05"
 
     @pytest.mark.asyncio
     async def test_time_type_no_row_returns_none(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = None
-        result = await get_entry_value(conn, entry_id=1, metric_type="time")
+        result = await self._make_repo(conn).get_entry_value(entry_id=1, metric_type="time")
         assert result is None
 
     @pytest.mark.asyncio
     async def test_number_type_returns_value(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = {"value": 42}
-        result = await get_entry_value(conn, entry_id=1, metric_type="number")
+        result = await self._make_repo(conn).get_entry_value(entry_id=1, metric_type="number")
         assert result == 42
 
     @pytest.mark.asyncio
     async def test_number_type_no_row_returns_none(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = None
-        result = await get_entry_value(conn, entry_id=1, metric_type="number")
+        result = await self._make_repo(conn).get_entry_value(entry_id=1, metric_type="number")
         assert result is None
 
     @pytest.mark.asyncio
     async def test_scale_type_returns_value(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = {"value": 3}
-        result = await get_entry_value(conn, entry_id=1, metric_type="scale")
+        result = await self._make_repo(conn).get_entry_value(entry_id=1, metric_type="scale")
         assert result == 3
 
     @pytest.mark.asyncio
     async def test_scale_type_no_row_returns_none(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = None
-        result = await get_entry_value(conn, entry_id=1, metric_type="scale")
+        result = await self._make_repo(conn).get_entry_value(entry_id=1, metric_type="scale")
         assert result is None
 
     @pytest.mark.asyncio
     async def test_duration_type_returns_value(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = {"value": 90}
-        result = await get_entry_value(conn, entry_id=1, metric_type="duration")
+        result = await self._make_repo(conn).get_entry_value(entry_id=1, metric_type="duration")
         assert result == 90
 
     @pytest.mark.asyncio
     async def test_duration_type_no_row_returns_none(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = None
-        result = await get_entry_value(conn, entry_id=1, metric_type="duration")
+        result = await self._make_repo(conn).get_entry_value(entry_id=1, metric_type="duration")
         assert result is None
 
     @pytest.mark.asyncio
     async def test_enum_type_returns_list(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = {"selected_option_ids": [1, 3, 5]}
-        result = await get_entry_value(conn, entry_id=1, metric_type="enum")
+        result = await self._make_repo(conn).get_entry_value(entry_id=1, metric_type="enum")
         assert result == [1, 3, 5]
 
     @pytest.mark.asyncio
     async def test_enum_type_no_row_returns_none(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = None
-        result = await get_entry_value(conn, entry_id=1, metric_type="enum")
+        result = await self._make_repo(conn).get_entry_value(entry_id=1, metric_type="enum")
         assert result is None
 
     @pytest.mark.asyncio
@@ -589,14 +583,14 @@ class TestGetEntryValue:
         """Default (bool) branch returns value."""
         conn = AsyncMock()
         conn.fetchrow.return_value = {"value": True}
-        result = await get_entry_value(conn, entry_id=1, metric_type="bool")
+        result = await self._make_repo(conn).get_entry_value(entry_id=1, metric_type="bool")
         assert result is True
 
     @pytest.mark.asyncio
     async def test_bool_type_no_row_returns_none(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = None
-        result = await get_entry_value(conn, entry_id=1, metric_type="bool")
+        result = await self._make_repo(conn).get_entry_value(entry_id=1, metric_type="bool")
         assert result is None
 
 
@@ -606,12 +600,15 @@ class TestGetEntryValue:
 
 
 class TestInsertValue:
-    """Tests for insert_value with mocked asyncpg connection."""
+    """Tests for EntryRepository.insert_value with mocked asyncpg connection."""
+
+    def _make_repo(self, conn: AsyncMock) -> EntryRepository:
+        return EntryRepository(conn, user_id=1)
 
     @pytest.mark.asyncio
     async def test_insert_time(self) -> None:
         conn = AsyncMock()
-        await insert_value(conn, entry_id=1, value="14:30", metric_type="time",
+        await self._make_repo(conn).insert_value(entry_id=1, value="14:30", metric_type="time",
                            entry_date=date(2026, 3, 15))
         conn.execute.assert_called_once()
         args = conn.execute.call_args
@@ -620,7 +617,7 @@ class TestInsertValue:
     @pytest.mark.asyncio
     async def test_insert_number(self) -> None:
         conn = AsyncMock()
-        await insert_value(conn, entry_id=1, value=42, metric_type="number")
+        await self._make_repo(conn).insert_value(entry_id=1, value=42, metric_type="number")
         conn.execute.assert_called_once()
         args = conn.execute.call_args
         assert "values_number" in args[0][0]
@@ -631,7 +628,7 @@ class TestInsertValue:
         """Scale insert reads config from scale_config table."""
         conn = AsyncMock()
         conn.fetchrow.return_value = {"scale_min": 1, "scale_max": 10, "scale_step": 2}
-        await insert_value(conn, entry_id=1, value=5, metric_type="scale", metric_id=10)
+        await self._make_repo(conn).insert_value(entry_id=1, value=5, metric_type="scale", metric_id=10)
         conn.fetchrow.assert_called_once()
         conn.execute.assert_called_once()
         args = conn.execute.call_args
@@ -647,7 +644,7 @@ class TestInsertValue:
         """Scale insert without config uses defaults (1, 5, 1)."""
         conn = AsyncMock()
         conn.fetchrow.return_value = None
-        await insert_value(conn, entry_id=1, value=3, metric_type="scale", metric_id=10)
+        await self._make_repo(conn).insert_value(entry_id=1, value=3, metric_type="scale", metric_id=10)
         args = conn.execute.call_args
         # defaults: scale_min=1, scale_max=5, scale_step=1
         assert args[0][3] == 1
@@ -657,7 +654,7 @@ class TestInsertValue:
     @pytest.mark.asyncio
     async def test_insert_duration(self) -> None:
         conn = AsyncMock()
-        await insert_value(conn, entry_id=1, value=90, metric_type="duration")
+        await self._make_repo(conn).insert_value(entry_id=1, value=90, metric_type="duration")
         conn.execute.assert_called_once()
         args = conn.execute.call_args
         assert "values_duration" in args[0][0]
@@ -665,7 +662,7 @@ class TestInsertValue:
     @pytest.mark.asyncio
     async def test_insert_enum_list(self) -> None:
         conn = AsyncMock()
-        await insert_value(conn, entry_id=1, value=[1, 2], metric_type="enum")
+        await self._make_repo(conn).insert_value(entry_id=1, value=[1, 2], metric_type="enum")
         conn.execute.assert_called_once()
         args = conn.execute.call_args
         assert "values_enum" in args[0][0]
@@ -675,14 +672,14 @@ class TestInsertValue:
     async def test_insert_enum_single_value(self) -> None:
         """Non-list value for enum wraps in a list."""
         conn = AsyncMock()
-        await insert_value(conn, entry_id=1, value=5, metric_type="enum")
+        await self._make_repo(conn).insert_value(entry_id=1, value=5, metric_type="enum")
         args = conn.execute.call_args
         assert args[0][2] == [5]
 
     @pytest.mark.asyncio
     async def test_insert_bool(self) -> None:
         conn = AsyncMock()
-        await insert_value(conn, entry_id=1, value=True, metric_type="bool")
+        await self._make_repo(conn).insert_value(entry_id=1, value=True, metric_type="bool")
         conn.execute.assert_called_once()
         args = conn.execute.call_args
         assert "values_bool" in args[0][0]
@@ -695,12 +692,15 @@ class TestInsertValue:
 
 
 class TestUpdateValue:
-    """Tests for update_value with mocked asyncpg connection."""
+    """Tests for EntryRepository.update_value with mocked asyncpg connection."""
+
+    def _make_repo(self, conn: AsyncMock) -> EntryRepository:
+        return EntryRepository(conn, user_id=1)
 
     @pytest.mark.asyncio
     async def test_update_time(self) -> None:
         conn = AsyncMock()
-        await update_value(conn, entry_id=1, value="08:15", metric_type="time",
+        await self._make_repo(conn).update_value(entry_id=1, value="08:15", metric_type="time",
                            entry_date=date(2026, 3, 15))
         conn.execute.assert_called_once()
         args = conn.execute.call_args
@@ -709,7 +709,7 @@ class TestUpdateValue:
     @pytest.mark.asyncio
     async def test_update_number(self) -> None:
         conn = AsyncMock()
-        await update_value(conn, entry_id=1, value=99, metric_type="number")
+        await self._make_repo(conn).update_value(entry_id=1, value=99, metric_type="number")
         conn.execute.assert_called_once()
         args = conn.execute.call_args
         assert "UPDATE values_number" in args[0][0]
@@ -717,7 +717,7 @@ class TestUpdateValue:
     @pytest.mark.asyncio
     async def test_update_scale(self) -> None:
         conn = AsyncMock()
-        await update_value(conn, entry_id=1, value=4, metric_type="scale")
+        await self._make_repo(conn).update_value(entry_id=1, value=4, metric_type="scale")
         conn.execute.assert_called_once()
         args = conn.execute.call_args
         assert "UPDATE values_scale" in args[0][0]
@@ -725,7 +725,7 @@ class TestUpdateValue:
     @pytest.mark.asyncio
     async def test_update_duration(self) -> None:
         conn = AsyncMock()
-        await update_value(conn, entry_id=1, value=45, metric_type="duration")
+        await self._make_repo(conn).update_value(entry_id=1, value=45, metric_type="duration")
         conn.execute.assert_called_once()
         args = conn.execute.call_args
         assert "UPDATE values_duration" in args[0][0]
@@ -733,7 +733,7 @@ class TestUpdateValue:
     @pytest.mark.asyncio
     async def test_update_enum_list(self) -> None:
         conn = AsyncMock()
-        await update_value(conn, entry_id=1, value=[2, 3], metric_type="enum")
+        await self._make_repo(conn).update_value(entry_id=1, value=[2, 3], metric_type="enum")
         conn.execute.assert_called_once()
         args = conn.execute.call_args
         assert "UPDATE values_enum" in args[0][0]
@@ -743,14 +743,14 @@ class TestUpdateValue:
     async def test_update_enum_single_value(self) -> None:
         """Non-list value for enum wraps in a list."""
         conn = AsyncMock()
-        await update_value(conn, entry_id=1, value=7, metric_type="enum")
+        await self._make_repo(conn).update_value(entry_id=1, value=7, metric_type="enum")
         args = conn.execute.call_args
         assert args[0][1] == [7]
 
     @pytest.mark.asyncio
     async def test_update_bool(self) -> None:
         conn = AsyncMock()
-        await update_value(conn, entry_id=1, value=False, metric_type="bool")
+        await self._make_repo(conn).update_value(entry_id=1, value=False, metric_type="bool")
         conn.execute.assert_called_once()
         args = conn.execute.call_args
         assert "UPDATE values_bool" in args[0][0]
@@ -762,12 +762,15 @@ class TestUpdateValue:
 
 
 class TestResolveStorageType:
-    """Tests for resolve_storage_type."""
+    """Tests for EntryRepository.resolve_storage_type."""
+
+    def _make_repo(self, conn: AsyncMock) -> EntryRepository:
+        return EntryRepository(conn, user_id=1)
 
     @pytest.mark.asyncio
     async def test_non_integration_returns_type_as_is(self) -> None:
         conn = AsyncMock()
-        result = await resolve_storage_type(conn, metric_id=1, metric_type="bool")
+        result = await self._make_repo(conn).resolve_storage_type(metric_id=1, metric_type="bool")
         assert result == "bool"
         conn.fetchrow.assert_not_called()
 
@@ -775,14 +778,14 @@ class TestResolveStorageType:
     async def test_integration_returns_value_type(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = {"value_type": "duration"}
-        result = await resolve_storage_type(conn, metric_id=1, metric_type="integration")
+        result = await self._make_repo(conn).resolve_storage_type(metric_id=1, metric_type="integration")
         assert result == "duration"
 
     @pytest.mark.asyncio
     async def test_integration_no_config_returns_number(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = None
-        result = await resolve_storage_type(conn, metric_id=1, metric_type="integration")
+        result = await self._make_repo(conn).resolve_storage_type(metric_id=1, metric_type="integration")
         assert result == "number"
 
 
@@ -792,20 +795,23 @@ class TestResolveStorageType:
 
 
 class TestGetMetricType:
-    """Tests for get_metric_type."""
+    """Tests for EntryRepository.get_metric_type."""
+
+    def _make_repo(self, conn: AsyncMock) -> EntryRepository:
+        return EntryRepository(conn, user_id=1)
 
     @pytest.mark.asyncio
     async def test_found(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = {"type": "scale"}
-        result = await get_metric_type(conn, metric_id=1, user_id=1)
+        result = await self._make_repo(conn).get_metric_type(metric_id=1)
         assert result == "scale"
 
     @pytest.mark.asyncio
     async def test_not_found(self) -> None:
         conn = AsyncMock()
         conn.fetchrow.return_value = None
-        result = await get_metric_type(conn, metric_id=999, user_id=1)
+        result = await self._make_repo(conn).get_metric_type(metric_id=999)
         assert result is None
 
 
@@ -815,7 +821,10 @@ class TestGetMetricType:
 
 
 class TestGetMetricSlots:
-    """Tests for get_metric_slots."""
+    """Tests for MetricRepository.get_slots_for_metrics."""
+
+    def _make_repo(self, conn: AsyncMock) -> MetricRepository:
+        return MetricRepository(conn, user_id=1)
 
     @pytest.mark.asyncio
     async def test_returns_grouped_slots(self) -> None:
@@ -824,7 +833,7 @@ class TestGetMetricSlots:
         row3 = {"metric_id": 2, "id": 20, "label": "Daily", "sort_order": 0, "category_id": 5}
         conn = AsyncMock()
         conn.fetch.return_value = [_make_record(row1), _make_record(row2), _make_record(row3)]
-        result = await get_metric_slots(conn, metric_ids=[1, 2])
+        result = await self._make_repo(conn).get_slots_for_metrics(metric_ids=[1, 2])
         assert len(result[1]) == 2
         assert len(result[2]) == 1
         assert result[1][0]["label"] == "Morning"
@@ -834,7 +843,7 @@ class TestGetMetricSlots:
     async def test_empty_result(self) -> None:
         conn = AsyncMock()
         conn.fetch.return_value = []
-        result = await get_metric_slots(conn, metric_ids=[1])
+        result = await self._make_repo(conn).get_slots_for_metrics(metric_ids=[1])
         assert len(result) == 0
 
     @pytest.mark.asyncio
@@ -842,7 +851,7 @@ class TestGetMetricSlots:
         """enabled_only=True adds AND msl.enabled = TRUE condition."""
         conn = AsyncMock()
         conn.fetch.return_value = []
-        await get_metric_slots(conn, metric_ids=[1], enabled_only=True)
+        await self._make_repo(conn).get_slots_for_metrics(metric_ids=[1], enabled_only=True)
         query = conn.fetch.call_args[0][0]
         assert "AND msl.enabled = TRUE" in query
 
@@ -851,7 +860,7 @@ class TestGetMetricSlots:
         """enabled_only=False does not add enabled condition."""
         conn = AsyncMock()
         conn.fetch.return_value = []
-        await get_metric_slots(conn, metric_ids=[1], enabled_only=False)
+        await self._make_repo(conn).get_slots_for_metrics(metric_ids=[1], enabled_only=False)
         query = conn.fetch.call_args[0][0]
         assert "AND msl.enabled = TRUE" not in query
 
@@ -862,7 +871,10 @@ class TestGetMetricSlots:
 
 
 class TestGetEnumOptions:
-    """Tests for get_enum_options."""
+    """Tests for MetricRepository.get_enum_options_for_metrics."""
+
+    def _make_repo(self, conn: AsyncMock) -> MetricRepository:
+        return MetricRepository(conn, user_id=1)
 
     @pytest.mark.asyncio
     async def test_returns_grouped_options(self) -> None:
@@ -870,7 +882,7 @@ class TestGetEnumOptions:
         row2 = {"metric_id": 1, "id": 101, "label": "Bad", "sort_order": 1, "enabled": True}
         conn = AsyncMock()
         conn.fetch.return_value = [_make_record(row1), _make_record(row2)]
-        result = await get_enum_options(conn, metric_ids=[1])
+        result = await self._make_repo(conn).get_enum_options_for_metrics(metric_ids=[1])
         assert len(result[1]) == 2
         assert result[1][0]["label"] == "Good"
         assert result[1][1]["label"] == "Bad"
@@ -879,14 +891,14 @@ class TestGetEnumOptions:
     async def test_empty_result(self) -> None:
         conn = AsyncMock()
         conn.fetch.return_value = []
-        result = await get_enum_options(conn, metric_ids=[1])
+        result = await self._make_repo(conn).get_enum_options_for_metrics(metric_ids=[1])
         assert len(result) == 0
 
     @pytest.mark.asyncio
     async def test_enabled_only_true(self) -> None:
         conn = AsyncMock()
         conn.fetch.return_value = []
-        await get_enum_options(conn, metric_ids=[1], enabled_only=True)
+        await self._make_repo(conn).get_enum_options_for_metrics(metric_ids=[1], enabled_only=True)
         query = conn.fetch.call_args[0][0]
         assert "AND eo.enabled = TRUE" in query
 
@@ -894,7 +906,7 @@ class TestGetEnumOptions:
     async def test_enabled_only_false(self) -> None:
         conn = AsyncMock()
         conn.fetch.return_value = []
-        await get_enum_options(conn, metric_ids=[1], enabled_only=False)
+        await self._make_repo(conn).get_enum_options_for_metrics(metric_ids=[1], enabled_only=False)
         query = conn.fetch.call_args[0][0]
         assert "AND eo.enabled = TRUE" not in query
 

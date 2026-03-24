@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from statistics import mean, stdev
 
+from app.domain.constants import Z_SCORE_95
+
 
 BINARY_TYPES: frozenset[str] = frozenset({"bool", "enum_bool"})
 
@@ -104,8 +106,8 @@ def confidence_interval_from_r(r: float, n: int) -> tuple[float, float] | None:
         return (r, r)
     z = math.atanh(r)
     se = 1.0 / math.sqrt(n - 3)
-    z_lower = z - 1.96 * se
-    z_upper = z + 1.96 * se
+    z_lower = z - Z_SCORE_95 * se
+    z_upper = z + Z_SCORE_95 * se
     return (round(math.tanh(z_lower), 4), round(math.tanh(z_upper), 4))
 
 

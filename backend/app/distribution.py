@@ -6,6 +6,8 @@ import math
 from dataclasses import dataclass
 from statistics import mean, median, stdev, variance
 
+from app.domain.enums import MetricType
+
 
 @dataclass
 class HistogramBin:
@@ -43,17 +45,17 @@ class DistributionResult:
 
 def format_value(value: float, metric_type: str) -> str:
     """Format a single numeric value according to metric type."""
-    if metric_type == "time":
+    if metric_type == MetricType.time:
         minutes = int(round(value))
         h = minutes // 60
         m = minutes % 60
         return f"{h:02d}:{m:02d}"
-    elif metric_type == "duration":
+    elif metric_type == MetricType.duration:
         minutes = int(round(value))
         h = minutes // 60
         m = minutes % 60
         return f"{h}ч {m}м"
-    elif metric_type == "scale":
+    elif metric_type == MetricType.scale:
         return f"{value:.0f}%"
     else:
         if value == int(value):
@@ -200,7 +202,7 @@ def _format_stat(value: float, metric_type: str, is_variance: bool = False) -> s
     For duration: same logic.
     For scale: append %.
     """
-    if metric_type == "time":
+    if metric_type == MetricType.time:
         if is_variance:
             # Variance is in min² — take sqrt to show as time spread
             minutes = int(round(math.sqrt(value)))
@@ -209,7 +211,7 @@ def _format_stat(value: float, metric_type: str, is_variance: bool = False) -> s
         h = minutes // 60
         m = minutes % 60
         return f"{h:02d}:{m:02d}"
-    elif metric_type == "duration":
+    elif metric_type == MetricType.duration:
         if is_variance:
             minutes = int(round(math.sqrt(value)))
         else:
@@ -217,7 +219,7 @@ def _format_stat(value: float, metric_type: str, is_variance: bool = False) -> s
         h = minutes // 60
         m = minutes % 60
         return f"{h}ч {m}м"
-    elif metric_type == "scale":
+    elif metric_type == MetricType.scale:
         return f"{value:.1f}%"
     else:
         return f"{value:.2f}"

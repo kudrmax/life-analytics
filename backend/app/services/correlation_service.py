@@ -1,19 +1,25 @@
 """Service layer for correlation reports and pair charts — extracted from AnalyticsService."""
 
 import asyncio
+import logging
 from datetime import date as date_type, timedelta
 
+from app import database as _db_module
 from app.analytics.correlation_math import CorrelationCalculator
 from app.analytics.pair_formatter import PairFormatter
 from app.analytics.source_reconstructor import SourceReconstructor
 from app.analytics.time_series import TimeSeriesTransform
 from app.analytics.value_converter import ValueConverter
 from app.analytics.value_fetcher import ValueFetcher
+from app.correlation_config import CorrelationConfig
 from app.domain.enums import MetricType
 from app.formula import get_referenced_metric_ids
 from app.domain.privacy import is_blocked, PRIVATE_MASK
 from app.repositories.analytics_repository import AnalyticsRepository
+from app.repositories.correlation_repository import CorrelationRepository
 from app.source_key import SourceKey, STREAK_TYPES
+
+logger = logging.getLogger(__name__)
 
 
 class CorrelationService:
@@ -30,7 +36,7 @@ class CorrelationService:
 
         start_date = date_type.fromisoformat(start)
         end_date = date_type.fromisoformat(end)
-        fetcher = ValueFetcher(self.conn)
+        fetcher = ValueFetcher(self.repo)
 
         a_by_date = await self._fetch_values(fetcher, ma, metric_a, start_date, end_date)
         b_by_date = await self._fetch_values(fetcher, mb, metric_b, start_date, end_date)
@@ -47,7 +53,6 @@ class CorrelationService:
         }
 
     async def create_report(self, start: str, end: str, config) -> dict:
-        from app.analytics.correlation_engine import run_correlation_report
         start_date = date_type.fromisoformat(start)
         end_date = date_type.fromisoformat(end)
         report_id = await self.repo.create_report(start_date, end_date)
@@ -126,7 +131,7 @@ class CorrelationService:
         priv_b = await self.repo.get_metric_privacy(row["metric_b_id"]) if row["metric_b_id"] else False
         blocked_a, blocked_b = is_blocked(priv_a, privacy_mode), is_blocked(priv_b, privacy_mode)
 
-        recon = SourceReconstructor(self.conn)
+        recon = SourceReconstructor(self.repo)
         data_a = await recon.reconstruct(row["source_key_a"], row["type_a"], row["period_start"], row["period_end"], self.user_id)
         data_b = await recon.reconstruct(row["source_key_b"], row["type_b"], row["period_start"], row["period_end"], self.user_id)
 
@@ -209,3 +214,30 @@ class CorrelationService:
                 if r["icon"]:
                     icons[r["id"]] = r["icon"]
         return icons, names
+
+
+async def run_correlation_report(
+    report_id: int, user_id: int, start: str, end: str,
+    config: CorrelationConfig | None = None,
+) -> None:
+    """Top-level entry point for asyncio.create_task. Acquires connection and runs engine."""
+    from app.analytics.correlation_engine import CorrelationEngine
+
+    try:
+        async with _db_module.pool.acquire() as conn:
+            repo = CorrelationRepository(conn, user_id)
+            engine = CorrelationEngine(
+                repo, report_id,
+                date_type.fromisoformat(start),
+                date_type.fromisoformat(end),
+                config=config,
+            )
+            await engine.run()
+    except Exception:
+        logger.exception("Error computing correlation report %s", report_id)
+        try:
+            async with _db_module.pool.acquire() as conn:
+                repo = CorrelationRepository(conn, user_id)
+                await repo.mark_report_error(report_id)
+        except Exception:
+            logger.exception("Failed to update report status to error")

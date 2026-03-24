@@ -4,6 +4,8 @@ from typing import Any, ClassVar
 
 from app.analytics.correlation_math import confidence_interval_from_r, p_value_from_r
 from app.analytics.quality import QualityAssessor
+from app.domain.constants import CORRELATION_THRESHOLD_MODERATE, CORRELATION_THRESHOLD_STRONG
+from app.domain.enums import MetricType
 from app.domain.privacy import is_blocked, PRIVATE_MASK, PRIVATE_ICON
 from app.source_key import (
     AutoSourceType, SourceKey, AUTO_DISPLAY_NAMES, AUTO_ICONS,
@@ -15,9 +17,9 @@ class PairFormatter:
     """Форматирование корреляционных пар для отображения."""
 
     CATEGORY_FILTERS: ClassVar[dict[str, str]] = {
-        "sig_strong": "AND quality_issue IS NULL AND ABS(correlation) > 0.7",
-        "sig_medium": "AND quality_issue IS NULL AND ABS(correlation) > 0.3 AND ABS(correlation) <= 0.7",
-        "sig_weak": "AND quality_issue IS NULL AND ABS(correlation) <= 0.3",
+        "sig_strong": f"AND quality_issue IS NULL AND ABS(correlation) > {CORRELATION_THRESHOLD_STRONG}",
+        "sig_medium": f"AND quality_issue IS NULL AND ABS(correlation) > {CORRELATION_THRESHOLD_MODERATE} AND ABS(correlation) <= {CORRELATION_THRESHOLD_STRONG}",
+        "sig_weak": f"AND quality_issue IS NULL AND ABS(correlation) <= {CORRELATION_THRESHOLD_MODERATE}",
         "maybe": "AND quality_issue IN ('wide_ci', 'fisher_exact_high_p')",
         "insig": "AND quality_issue IS NOT NULL AND quality_issue NOT IN ('wide_ci', 'fisher_exact_high_p')",
         "all": "",
@@ -159,18 +161,18 @@ class PairFormatter:
                 return f"{parent_metric_name}: серия подряд (нет)"
             return "Авто-источник"
         # Bool aggregate with slots — annotate "(хоть раз)"
-        if metric_type == "bool" and has_slots and sk.slot_id is None:
+        if metric_type == MetricType.bool and has_slots and sk.slot_id is None:
             return f"{metric_name} (хоть раз)" if metric_name else "Удалённая метрика"
         return metric_name or "Удалённая метрика"
 
     @staticmethod
     def corr_type_words(type_: str) -> tuple[str, str]:
         """Return (positive_word, negative_word) for a metric type in correlation context."""
-        if type_ in ("bool", "enum_bool"):
+        if type_ in (MetricType.bool, "enum_bool"):
             return ("да", "нет")
-        if type_ == "time":
+        if type_ == MetricType.time:
             return ("позже", "раньше")
-        if type_ == "scale":
+        if type_ == MetricType.scale:
             return ("выше", "ниже")
         return ("больше", "меньше")
 
@@ -191,22 +193,22 @@ class PairFormatter:
         rows: list[dict[str, str]] = []
         rows.append({"label": "Заполнение", "value": f"{stats['fill_rate']}%"})
         rt = stats.get("result_type")
-        if mt == "bool" or (mt == "computed" and rt == "bool"):
+        if mt == MetricType.bool or (mt == MetricType.computed and rt == MetricType.bool):
             if "yes_percent" in stats:
                 rows.append({"label": "Да", "value": f"{stats['yes_percent']}%"})
-        elif mt == "time" or (mt == "computed" and rt == "time"):
+        elif mt == MetricType.time or (mt == MetricType.computed and rt == MetricType.time):
             if stats.get("average"):
                 rows.append({"label": "Среднее", "value": str(stats["average"])})
-        elif mt == "scale":
+        elif mt == MetricType.scale:
             if stats.get("average") is not None:
                 rows.append({"label": "Среднее", "value": f"{stats['average']}%"})
-        elif mt == "duration" or (mt == "computed" and rt == "duration"):
+        elif mt == MetricType.duration or (mt == MetricType.computed and rt == MetricType.duration):
             if stats.get("average"):
                 rows.append({"label": "Среднее", "value": str(stats["average"])})
-        elif mt == "text":
+        elif mt == MetricType.text:
             if stats.get("average_per_day") is not None:
                 rows.append({"label": "Среднее/день", "value": str(stats["average_per_day"])})
-        elif mt == "enum":
+        elif mt == MetricType.enum:
             if stats.get("most_common"):
                 rows.append({"label": "Частый", "value": str(stats["most_common"])})
         else:

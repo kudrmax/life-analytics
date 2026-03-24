@@ -5,6 +5,8 @@ from collections import defaultdict
 from statistics import mean
 from typing import Any
 
+from app.domain.enums import MetricType
+
 
 class ValueConverter:
     """Конвертация значений метрик из БД-формата в числовой."""
@@ -29,12 +31,12 @@ class ValueConverter:
         if not value_row:
             return None
         v = value_row["value"]
-        if metric_type == "time":
+        if metric_type == MetricType.time:
             # v is a datetime (TIMESTAMPTZ)
             return v.hour * 60 + v.minute
-        elif metric_type == "number" or metric_type == "duration":
+        elif metric_type == MetricType.number or metric_type == MetricType.duration:
             return float(v)
-        elif metric_type == "scale":
+        elif metric_type == MetricType.scale:
             v_min = value_row["scale_min"]
             v_max = value_row["scale_max"]
             if v_max == v_min:
@@ -57,7 +59,7 @@ class ValueConverter:
 
         result: dict[str, float] = {}
         for d, vals in day_values.items():
-            if metric_type == "bool":
+            if metric_type == MetricType.bool:
                 result[d] = 1.0 if any(v == 1.0 for v in vals) else 0.0
             else:
                 result[d] = mean(vals)
@@ -66,14 +68,14 @@ class ValueConverter:
     @staticmethod
     def get_value_table(mt: str) -> tuple[str, str]:
         """Return (table_name, extra_cols) for a metric type."""
-        if mt == "time":
+        if mt == MetricType.time:
             return "values_time", ""
-        elif mt == "number":
+        elif mt == MetricType.number:
             return "values_number", ""
-        elif mt == "duration":
+        elif mt == MetricType.duration:
             return "values_duration", ""
-        elif mt == "scale":
+        elif mt == MetricType.scale:
             return "values_scale", ", v.scale_min, v.scale_max, v.scale_step"
-        elif mt == "enum":
+        elif mt == MetricType.enum:
             return "values_enum", ""
         return "values_bool", ""

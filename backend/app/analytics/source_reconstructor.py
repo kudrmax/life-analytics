@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 from datetime import date as date_type, timedelta
+from typing import TYPE_CHECKING
 
 from app.analytics.time_series import TimeSeriesTransform
 from app.analytics.value_converter import ValueConverter
 from app.analytics.value_fetcher import ValueFetcher
+from app.domain.constants import SECONDS_PER_HOUR
+from app.domain.enums import MetricType
 from app.formula import get_referenced_metric_ids
 from app.source_key import AutoSourceType, SourceKey, STREAK_TYPES
+
+if TYPE_CHECKING:
+    from app.repositories.analytics_repository import AnalyticsRepository
 
 
 class SourceReconstructor:
     """Восстанавливает time-series по source_key для графика корреляционной пары."""
 
-    def __init__(self, conn) -> None:  # asyncpg.Connection
-        self._conn = conn
-        self._fetcher = ValueFetcher(conn)
+    def __init__(self, repo: AnalyticsRepository) -> None:
+        self._repo = repo
+        self._fetcher = ValueFetcher(repo)
 
     async def reconstruct(
         self,
@@ -37,11 +43,8 @@ class SourceReconstructor:
             )
 
         # Computed metric
-        if source_type == "computed" and sk.metric_id is not None:
-            cfg = await self._conn.fetchrow(
-                "SELECT formula, result_type FROM computed_config WHERE metric_id = $1",
-                sk.metric_id,
-            )
+        if source_type == MetricType.computed and sk.metric_id is not None:
+            cfg = await self._repo.get_computed_config(sk.metric_id)
             if not cfg or not cfg["formula"]:
                 return {}
             formula = ValueConverter.parse_formula(cfg["formula"])
@@ -88,17 +91,10 @@ class SourceReconstructor:
         if sk.auto_type == AutoSourceType.WEEK_NUMBER:
             return {}  # deprecated, kept for backward compat
         if sk.auto_type == AutoSourceType.AW_ACTIVE:
-            rows = await self._conn.fetch(
-                """SELECT date, active_seconds FROM activitywatch_daily_summary
-                   WHERE user_id = $1 AND date >= $2 AND date <= $3""",
-                user_id, start_date, end_date,
-            )
-            return {str(r["date"]): r["active_seconds"] / 3600.0 for r in rows}
+            rows = await self._repo.get_aw_active_seconds(start_date, end_date)
+            return {str(r["date"]): r["active_seconds"] / SECONDS_PER_HOUR for r in rows}
         if sk.auto_type == AutoSourceType.NONZERO and sk.auto_parent_metric_id is not None:
-            parent = await self._conn.fetchrow(
-                "SELECT id, type FROM metric_definitions WHERE id = $1",
-                sk.auto_parent_metric_id,
-            )
+            parent = await self._repo.get_metric_type_by_id(sk.auto_parent_metric_id)
             if not parent:
                 return {}
             raw = await self._fetcher.values_by_date_for_slot(
@@ -110,24 +106,16 @@ class SourceReconstructor:
                 sk.auto_parent_metric_id, user_id, start_date, end_date,
             )
         if sk.auto_type in (AutoSourceType.SLOT_MAX, AutoSourceType.SLOT_MIN) and sk.auto_parent_metric_id is not None:
-            parent = await self._conn.fetchrow(
-                "SELECT id, type FROM metric_definitions WHERE id = $1",
-                sk.auto_parent_metric_id,
-            )
+            parent = await self._repo.get_metric_type_by_id(sk.auto_parent_metric_id)
             if not parent:
                 return {}
-            slot_rows = await self._conn.fetch(
-                """SELECT ms.id FROM metric_slots msl
-                   JOIN measurement_slots ms ON ms.id = msl.slot_id
-                   WHERE msl.metric_id = $1 AND msl.enabled = TRUE""",
-                sk.auto_parent_metric_id,
-            )
-            if not slot_rows:
+            slot_ids = await self._repo.get_enabled_slot_ids(sk.auto_parent_metric_id)
+            if not slot_ids:
                 return {}
             slot_data: list[dict[str, float]] = []
-            for sr in slot_rows:
+            for sid in slot_ids:
                 sd = await self._fetcher.values_by_date_for_slot(
-                    parent["id"], parent["type"], start_date, end_date, user_id, slot_id=sr["id"],
+                    parent["id"], parent["type"], start_date, end_date, user_id, slot_id=sid,
                 )
                 slot_data.append(sd)
             all_dates_set: set[str] = set()
@@ -141,18 +129,12 @@ class SourceReconstructor:
                     result[d] = agg_fn(vals)
             return result
         if sk.auto_type == AutoSourceType.ROLLING_AVG and sk.auto_parent_metric_id is not None and sk.auto_option_id is not None:
-            parent = await self._conn.fetchrow(
-                "SELECT id, type FROM metric_definitions WHERE id = $1",
-                sk.auto_parent_metric_id,
-            )
+            parent = await self._repo.get_metric_type_by_id(sk.auto_parent_metric_id)
             if not parent:
                 return {}
             parent_type = parent["type"]
-            if parent_type == "computed":
-                cfg = await self._conn.fetchrow(
-                    "SELECT formula, result_type FROM computed_config WHERE metric_id = $1",
-                    sk.auto_parent_metric_id,
-                )
+            if parent_type == MetricType.computed:
+                cfg = await self._repo.get_computed_config(sk.auto_parent_metric_id)
                 if not cfg or not cfg["formula"]:
                     return {}
                 formula = ValueConverter.parse_formula(cfg["formula"])
@@ -167,10 +149,7 @@ class SourceReconstructor:
                 )
             return TimeSeriesTransform.rolling_avg(parent_data, sk.auto_option_id)
         if sk.auto_type in STREAK_TYPES and sk.auto_parent_metric_id is not None:
-            parent = await self._conn.fetchrow(
-                "SELECT id, type FROM metric_definitions WHERE id = $1",
-                sk.auto_parent_metric_id,
-            )
+            parent = await self._repo.get_metric_type_by_id(sk.auto_parent_metric_id)
             if not parent:
                 return {}
             if sk.auto_option_id is not None:

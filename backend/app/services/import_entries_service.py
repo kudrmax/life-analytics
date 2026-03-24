@@ -62,7 +62,7 @@ class EntryImporter:
                     skipped += 1
                     continue
 
-                async with self.conn.transaction():
+                async with self.repo.transaction():
                     entry_id = await self.repo.create_entry(metric_id, d, slot_id)
                     await self.entry_repo.insert_value(entry_id, value, mt, entry_date=d, metric_id=metric_id)
                 imported += 1

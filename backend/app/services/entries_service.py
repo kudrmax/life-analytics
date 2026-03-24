@@ -47,7 +47,7 @@ class EntriesService:
             raise ConflictError("Entry already exists for this metric/date/slot. Use PUT to update.")
 
         mt = await self.repo.resolve_storage_type(metric_id, metric["type"])
-        async with self.repo.conn.transaction():
+        async with self.repo.transaction():
             entry_id = await self.repo.create(metric_id, d, slot_id)
             await self.repo.insert_value(entry_id, value, mt, entry_date=d, metric_id=metric_id)
 

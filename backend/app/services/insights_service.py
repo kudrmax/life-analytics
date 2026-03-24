@@ -39,7 +39,7 @@ class InsightsService:
 
     async def create(self, data: InsightCreate) -> InsightOut:
         text = data.text.strip()
-        async with self.repo.conn.transaction():
+        async with self.repo.transaction():
             row = await self.repo.create(text)
             insight_id = row["id"]
             metrics_out: list[InsightMetricOut] = []
@@ -71,7 +71,7 @@ class InsightsService:
 
     async def update(self, insight_id: int, data: InsightUpdate) -> InsightOut:
         await self.repo.get_by_id(insight_id)
-        async with self.repo.conn.transaction():
+        async with self.repo.transaction():
             if data.text is not None:
                 await self.repo.update_text(insight_id, data.text.strip())
             if data.metrics is not None:

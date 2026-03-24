@@ -76,6 +76,15 @@ class MetricsService:
     def conversion_service(self) -> MetricConversionService:
         return MetricConversionService(self.cfg_repo, self.conn)
 
+    async def convert_preview(self, metric_id: int, target_type) -> dict:
+        row = await self.repo.get_by_id_columns(metric_id, "id, type")
+        return await self.conversion_service().preview(metric_id, row["type"], target_type)
+
+    async def convert(self, metric_id: int, data) -> dict:
+        async with self.repo.transaction():
+            row = await self.repo.get_by_id_for_update(metric_id)
+            return await self.conversion_service().convert(metric_id, row["type"], data)
+
     # ── Markdown export ───────────────────────────────────────────
 
     async def export_markdown(self) -> str:

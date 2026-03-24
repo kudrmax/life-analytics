@@ -85,10 +85,7 @@ async def convert_preview(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    svc = _service(db, current_user)
-    repo = MetricRepository(db, current_user["id"])
-    row = await repo.get_by_id_columns(metric_id, "id, type")
-    return await svc.conversion_service().preview(metric_id, row["type"], target_type)
+    return await _service(db, current_user).convert_preview(metric_id, target_type)
 
 
 @router.post("/{metric_id}/convert", response_model=MetricConvertResponse)
@@ -98,8 +95,4 @@ async def convert_metric(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    svc = _service(db, current_user)
-    repo = MetricRepository(db, current_user["id"])
-    async with db.transaction():
-        row = await repo.get_by_id_for_update(metric_id)
-        return await svc.conversion_service().convert(metric_id, row["type"], data)
+    return await _service(db, current_user).convert(metric_id, data)

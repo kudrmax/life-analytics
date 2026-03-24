@@ -1,40 +1,30 @@
-from datetime import date as date_type
+from __future__ import annotations
 
-import asyncpg
+from datetime import date as date_type
+from typing import TYPE_CHECKING
 
 from app.encryption import decrypt_token
 from app.integrations.todoist.client import TodoistClient
 from app.repositories.entry_repository import EntryRepository
 
+if TYPE_CHECKING:
+    from app.repositories.integrations_repository import IntegrationsRepository
 
-async def fetch_and_store(conn: asyncpg.Connection, user_id: int, for_date: date_type, metric_id: int | None = None) -> dict:
+
+async def fetch_and_store(repo: IntegrationsRepository, for_date: date_type, metric_id: int | None = None) -> dict:
     """Fetch data from Todoist and upsert entries for enabled Todoist metrics.
 
     If metric_id is given, only that metric is fetched.
     Returns {"results": [...], "errors": [...]}.
     """
-    row = await conn.fetchrow(
-        "SELECT encrypted_token FROM user_integrations WHERE user_id = $1 AND provider = 'todoist' AND enabled = TRUE",
-        user_id,
-    )
+    row = await repo.get_todoist_token()
     if not row:
         raise ValueError("Todoist not connected")
 
     access_token = decrypt_token(row["encrypted_token"])
-    entry_repo = EntryRepository(conn, user_id)
+    entry_repo = EntryRepository(repo.conn, repo.user_id)
 
-    query = """SELECT md.id, ic.metric_key, ic.value_type,
-                  ifc.filter_name, iqc.filter_query
-           FROM metric_definitions md
-           JOIN integration_config ic ON ic.metric_id = md.id
-           LEFT JOIN integration_filter_config ifc ON ifc.metric_id = md.id
-           LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
-           WHERE md.user_id = $1 AND ic.provider = 'todoist' AND md.enabled = TRUE"""
-    params = [user_id]
-    if metric_id is not None:
-        query += " AND md.id = $2"
-        params.append(metric_id)
-    metric_rows = await conn.fetch(query, *params)
+    metric_rows = await repo.get_todoist_metrics(metric_id)
     if not metric_rows:
         raise ValueError("No Todoist metrics found")
 
@@ -46,7 +36,7 @@ async def fetch_and_store(conn: asyncpg.Connection, user_id: int, for_date: date
     errors = []
 
     for mr in metric_rows:
-        metric_id = mr["id"]
+        mid = mr["id"]
         metric_key = mr["metric_key"]
         storage_type = mr["value_type"]
         value = None
@@ -60,44 +50,38 @@ async def fetch_and_store(conn: asyncpg.Connection, user_id: int, for_date: date
             elif metric_key == "filter_tasks_count":
                 filter_name = mr["filter_name"]
                 if not filter_name:
-                    errors.append({"metric_id": metric_id, "error": "Имя фильтра не задано"})
+                    errors.append({"metric_id": mid, "error": "Имя фильтра не задано"})
                     continue
                 query = await client.get_filter_query_by_name(filter_name)
                 if query is None:
-                    errors.append({"metric_id": metric_id, "error": f"Фильтр '{filter_name}' не найден в Todoist"})
+                    errors.append({"metric_id": mid, "error": f"Фильтр '{filter_name}' не найден в Todoist"})
                     continue
                 value = await client.get_tasks_count_by_query(query)
 
             elif metric_key == "query_tasks_count":
                 filter_query = mr["filter_query"]
                 if not filter_query:
-                    errors.append({"metric_id": metric_id, "error": "Запрос не задан"})
+                    errors.append({"metric_id": mid, "error": "Запрос не задан"})
                     continue
                 value = await client.get_tasks_count_by_query(filter_query)
 
             else:
-                errors.append({"metric_id": metric_id, "error": f"Неизвестный metric_key: {metric_key}"})
+                errors.append({"metric_id": mid, "error": f"Неизвестный metric_key: {metric_key}"})
                 continue
 
         except Exception as e:
-            errors.append({"metric_id": metric_id, "error": str(e)})
+            errors.append({"metric_id": mid, "error": str(e)})
             continue
 
         # Upsert entry
-        async with conn.transaction():
-            existing = await conn.fetchrow(
-                "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND slot_id IS NULL",
-                metric_id, user_id, for_date,
-            )
+        async with repo.conn.transaction():
+            existing = await repo.get_entry_by_metric_date(mid, for_date)
             if existing:
-                await entry_repo.update_value(existing["id"], value, storage_type, metric_id=metric_id)
+                await entry_repo.update_value(existing["id"], value, storage_type, metric_id=mid)
             else:
-                entry_id = await conn.fetchval(
-                    "INSERT INTO entries (metric_id, user_id, date) VALUES ($1, $2, $3) RETURNING id",
-                    metric_id, user_id, for_date,
-                )
-                await entry_repo.insert_value(entry_id, value, storage_type, entry_date=for_date, metric_id=metric_id)
+                entry_id = await repo.create_entry(mid, for_date)
+                await entry_repo.insert_value(entry_id, value, storage_type, entry_date=for_date, metric_id=mid)
 
-        results.append({"metric_id": metric_id, "value": value})
+        results.append({"metric_id": mid, "value": value})
 
     return {"results": results, "errors": errors}

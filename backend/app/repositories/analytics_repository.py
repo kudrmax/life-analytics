@@ -202,6 +202,104 @@ class AnalyticsRepository(BaseRepository):
         )
         return {r["metric_id"] for r in rows}
 
+    # ── Source reconstructor support ─────────────────────────────────
+
+    async def get_aw_active_seconds(
+        self, start: date_type, end: date_type,
+    ) -> list[asyncpg.Record]:
+        return await self.conn.fetch(
+            """SELECT date, active_seconds FROM activitywatch_daily_summary
+               WHERE user_id = $1 AND date >= $2 AND date <= $3""",
+            self.user_id, start, end,
+        )
+
+    async def get_metric_type_by_id(self, metric_id: int) -> asyncpg.Record | None:
+        return await self.conn.fetchrow(
+            "SELECT id, type FROM metric_definitions WHERE id = $1",
+            metric_id,
+        )
+
+    async def get_enabled_slot_ids(self, metric_id: int) -> list[int]:
+        rows = await self.conn.fetch(
+            """SELECT ms.id FROM metric_slots msl
+               JOIN measurement_slots ms ON ms.id = msl.slot_id
+               WHERE msl.metric_id = $1 AND msl.enabled = TRUE""",
+            metric_id,
+        )
+        return [r["id"] for r in rows]
+
+    async def get_computed_config(self, metric_id: int) -> asyncpg.Record | None:
+        return await self.conn.fetchrow(
+            "SELECT formula, result_type FROM computed_config WHERE metric_id = $1",
+            metric_id,
+        )
+
+    # ── Value fetcher support ────────────────────────────────────────
+
+    async def fetch_entries_values_with_slot(
+        self, metric_id: int, value_table: str, extra_cols: str,
+        start: date_type, end: date_type, slot_id: int | None = None,
+    ) -> list[asyncpg.Record]:
+        slot_filter = ""
+        params: list = [metric_id, start, end, self.user_id]
+        if slot_id is not None:
+            slot_filter = " AND e.slot_id = $5"
+            params.append(slot_id)
+        return await self.conn.fetch(
+            f"""SELECT e.date, v.value{extra_cols}
+                FROM entries e
+                JOIN {value_table} v ON v.entry_id = e.id
+                WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
+                  AND e.user_id = $4{slot_filter}
+                ORDER BY e.date""",
+            *params,
+        )
+
+    async def get_scale_config_bounds(self, metric_id: int) -> tuple[int | None, int | None]:
+        cfg = await self.conn.fetchrow(
+            "SELECT scale_min, scale_max FROM scale_config WHERE metric_id = $1",
+            metric_id,
+        )
+        if cfg:
+            return cfg["scale_min"], cfg["scale_max"]
+        return None, None
+
+    async def get_metric_types_by_ids(self, metric_ids: list[int]) -> dict[int, str]:
+        rows = await self.conn.fetch(
+            "SELECT id, type FROM metric_definitions WHERE id = ANY($1) AND user_id = $2",
+            metric_ids, self.user_id,
+        )
+        return {r["id"]: r["type"] for r in rows}
+
+    async def fetch_enum_entries_with_slot(
+        self, metric_id: int, start: date_type, end: date_type,
+        slot_id: int | None = None,
+    ) -> list[asyncpg.Record]:
+        slot_filter = ""
+        params: list = [metric_id, start, end, self.user_id]
+        if slot_id is not None:
+            slot_filter = " AND e.slot_id = $5"
+            params.append(slot_id)
+        return await self.conn.fetch(
+            f"""SELECT e.date, ve.selected_option_ids
+                FROM entries e
+                JOIN values_enum ve ON ve.entry_id = e.id
+                WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
+                  AND e.user_id = $4{slot_filter}
+                ORDER BY e.date""",
+            *params,
+        )
+
+    async def fetch_note_counts(
+        self, metric_id: int, start: date_type, end: date_type,
+    ) -> list[asyncpg.Record]:
+        return await self.conn.fetch(
+            """SELECT date, COUNT(*) as cnt FROM notes
+               WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4
+               GROUP BY date""",
+            metric_id, self.user_id, start, end,
+        )
+
     # ── Pair chart ───────────────────────────────────────────────────
 
     async def get_pair_with_report(self, pair_id: int) -> asyncpg.Record | None:

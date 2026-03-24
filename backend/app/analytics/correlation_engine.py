@@ -6,18 +6,24 @@ from dataclasses import dataclass
 from datetime import date as date_type, timedelta
 from statistics import variance
 
-from app import database as _db_module
 from app.analytics.correlation_math import (
     CorrelationCalculator, p_value_from_r, confidence_interval_from_r,
     fisher_exact_p, BINARY_TYPES,
+)
+from app.domain.constants import (
+    CONFIDENCE_INTERVAL_WIDTH_THRESHOLD,
+    P_VALUE_SIGNIFICANCE_THRESHOLD,
+    SECONDS_PER_HOUR,
 )
 from app.analytics.quality import QualityAssessor
 from app.analytics.time_series import TimeSeriesTransform
 from app.analytics.value_converter import ValueConverter
 from app.analytics.value_fetcher import ValueFetcher
 from app.correlation_blacklist import should_skip_pair
+from app.domain.enums import MetricType
 from app.correlation_config import CorrelationConfig, correlation_config
 from app.formula import get_referenced_metric_ids
+from app.repositories.analytics_repository import AnalyticsRepository
 from app.repositories.correlation_repository import CorrelationRepository
 from app.source_key import (
     AutoSourceType, SourceKey, CALENDAR_OPTION_LABELS, STREAK_TYPES,
@@ -65,13 +71,13 @@ class CorrelationEngine:
         config: CorrelationConfig | None = None,
     ) -> None:
         self._repo = repo
-        self._conn = repo.conn  # for ValueFetcher compatibility
         self._report_id = report_id
         self._user_id = repo.user_id
         self._start_date = start_date
         self._end_date = end_date
         self._config = config or correlation_config
-        self._fetcher = ValueFetcher(repo.conn)
+        self._analytics_repo = AnalyticsRepository(repo.conn, repo.user_id)
+        self._fetcher = ValueFetcher(self._analytics_repo)
         self._quality = QualityAssessor(config=self._config)
         self._qt = QueryTimer(f"correlation-report/{report_id}")
 
@@ -112,9 +118,9 @@ class CorrelationEngine:
 
         # Resolve integration types
         for i, m in enumerate(self._metrics_rows):
-            if m["type"] == "integration":
+            if m["type"] == MetricType.integration:
                 self._metrics_rows[i] = dict(m)
-                self._metrics_rows[i]["type"] = m["ic_value_type"] or "number"
+                self._metrics_rows[i]["type"] = m["ic_value_type"] or MetricType.number
 
         metric_ids = [m["id"] for m in self._metrics_rows]
 
@@ -125,12 +131,12 @@ class CorrelationEngine:
             self._slots_by_metric[s["metric_id"]].append(s)
 
         # Load computed configs
-        computed_ids = [m["id"] for m in self._metrics_rows if m["type"] == "computed"]
+        computed_ids = [m["id"] for m in self._metrics_rows if m["type"] == MetricType.computed]
         self._computed_cfgs = await repo.load_computed_configs(computed_ids)
         self._qt.mark("load_computed_cfg")
 
         # Load enum options
-        enum_metric_ids = [m["id"] for m in self._metrics_rows if m["type"] == "enum"]
+        enum_metric_ids = [m["id"] for m in self._metrics_rows if m["type"] == MetricType.enum]
         self._enum_opts_by_metric = await repo.load_enum_options(enum_metric_ids)
 
         # Identify single-select enums
@@ -145,12 +151,12 @@ class CorrelationEngine:
         for m in self._metrics_rows:
             mid = m["id"]
             mt = m["type"]
-            if mt == "text":
+            if mt == MetricType.text:
                 continue
-            if mt == "computed":
+            if mt == MetricType.computed:
                 self._sources.append((SourceKey(metric_id=mid), mt))
                 continue
-            if mt == "enum":
+            if mt == MetricType.enum:
                 opts = self._enum_opts_by_metric.get(mid, [])
                 metric_slots = self._slots_by_metric.get(mid, [])
                 for opt in opts:
@@ -175,7 +181,7 @@ class CorrelationEngine:
                 self._source_data[i] = await self._fetcher.values_by_date_for_enum_option(
                     sk.metric_id, sk.enum_option_id, self._start_date, self._end_date, self._user_id, slot_id=sk.slot_id,
                 )
-            elif mt == "computed":
+            elif mt == MetricType.computed:
                 cfg = self._computed_cfgs.get(sk.metric_id)
                 if cfg and cfg["formula"]:
                     formula = ValueConverter.parse_formula(cfg["formula"])
@@ -197,9 +203,9 @@ class CorrelationEngine:
     async def _compute_auto_sources(self) -> None:
         # Build index maps
         for i, (sk, mt) in enumerate(self._sources):
-            if sk.slot_id is None and mt != "computed" and sk.metric_id is not None:
+            if sk.slot_id is None and mt != MetricType.computed and sk.metric_id is not None:
                 self._aggregate_indices[sk.metric_id] = i
-            if mt == "computed" and sk.metric_id is not None and not sk.is_auto:
+            if mt == MetricType.computed and sk.metric_id is not None and not sk.is_auto:
                 self._computed_source_indices[sk.metric_id] = i
             if sk.slot_id is not None and sk.metric_id is not None and not sk.is_auto:
                 self._slot_source_indices_by_metric[sk.metric_id].append(i)
@@ -210,13 +216,13 @@ class CorrelationEngine:
     def _add_auto_source_definitions(self) -> None:
         _auto = self._config.auto_sources
         for m in self._metrics_rows:
-            if m["type"] == "computed":
+            if m["type"] == MetricType.computed:
                 continue
             mid = m["id"]
             if mid not in self._aggregate_indices:
                 continue
-            if _auto.nonzero and m["type"] in ("number", "duration"):
-                self._sources.append((SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=mid), "bool"))
+            if _auto.nonzero and m["type"] in (MetricType.number, MetricType.duration):
+                self._sources.append((SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=mid), MetricType.bool))
             if m["type"] in self._SLOT_MINMAX_TYPES and mid in self._slot_source_indices_by_metric:
                 if _auto.slot_max:
                     self._sources.append((SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=mid), m["type"]))
@@ -225,22 +231,22 @@ class CorrelationEngine:
 
         if _auto.note_count:
             for m in self._metrics_rows:
-                if m["type"] == "text":
-                    self._sources.append((SourceKey(auto_type=AutoSourceType.NOTE_COUNT, auto_parent_metric_id=m["id"]), "number"))
+                if m["type"] == MetricType.text:
+                    self._sources.append((SourceKey(auto_type=AutoSourceType.NOTE_COUNT, auto_parent_metric_id=m["id"]), MetricType.number))
 
         if _auto.rolling_avg:
             _ra_windows = _auto.rolling_avg_windows
             for m in self._metrics_rows:
                 mid = m["id"]
                 mt = m["type"]
-                if mt == "computed":
+                if mt == MetricType.computed:
                     cfg = self._computed_cfgs.get(mid)
                     if not cfg:
                         continue
                     rt = cfg["result_type"] or "float"
                     if rt in ("float", "int"):
-                        resolved = "number"
-                    elif rt in ("time", "duration"):
+                        resolved = MetricType.number
+                    elif rt in (MetricType.time, MetricType.duration):
                         resolved = rt
                     else:
                         continue
@@ -285,19 +291,16 @@ class CorrelationEngine:
                 self._sources.append((SourceKey(auto_type=cal_type, auto_option_id=opt_id), "enum_bool"))
 
     async def _compute_auto_source_data(self) -> None:
-        conn = self._conn
         _auto = self._config.auto_sources
 
         # AW screen time
-        aw_rows = [] if not _auto.aw_active else await conn.fetch(
-            """SELECT date, active_seconds FROM activitywatch_daily_summary
-               WHERE user_id = $1 AND date >= $2 AND date <= $3""",
-            self._user_id, self._start_date, self._end_date,
+        aw_rows = [] if not _auto.aw_active else await self._analytics_repo.get_aw_active_seconds(
+            self._start_date, self._end_date,
         )
         if aw_rows:
             for idx, (sk, _) in enumerate(self._sources):
                 if sk.auto_type == AutoSourceType.AW_ACTIVE:
-                    self._source_data[idx] = {str(r["date"]): r["active_seconds"] / 3600.0 for r in aw_rows}
+                    self._source_data[idx] = {str(r["date"]): r["active_seconds"] / SECONDS_PER_HOUR for r in aw_rows}
                     break
 
         all_dates = [str(self._start_date + timedelta(days=i)) for i in range((self._end_date - self._start_date).days + 1)]
@@ -431,8 +434,8 @@ class CorrelationEngine:
         small_group = self._check_small_binary_group(data_a, data_b, idx_a, idx_b)
         p_val = round(p_value_from_r(r, n), 4)
         ci = confidence_interval_from_r(r, n)
-        wide_ci = ci is not None and (ci[1] - ci[0]) > 0.5
-        fisher_hp = both_binary and fisher_exact_p(data_a, data_b) >= 0.05
+        wide_ci = ci is not None and (ci[1] - ci[0]) > CONFIDENCE_INTERVAL_WIDTH_THRESHOLD
+        fisher_hp = both_binary and fisher_exact_p(data_a, data_b) >= P_VALUE_SIGNIFICANCE_THRESHOLD
         streak_reset = self._check_low_streak_resets(data_a, data_b, idx_a, idx_b)
         qi = self._quality.determine_issue(n, p_val, low_variance=low_var, small_binary_group=small_group, wide_ci=wide_ci, fisher_high_p=fisher_hp, low_streak_resets=streak_reset)
         return CorrelationPairResult(
@@ -495,26 +498,3 @@ class CorrelationEngine:
         self._qt.log()
 
 
-async def run_correlation_report(
-    report_id: int, user_id: int, start: str, end: str,
-    config: CorrelationConfig | None = None,
-) -> None:
-    """Top-level entry point for asyncio.create_task. Acquires connection and runs engine."""
-    try:
-        async with _db_module.pool.acquire() as conn:
-            repo = CorrelationRepository(conn, user_id)
-            engine = CorrelationEngine(
-                repo, report_id,
-                date_type.fromisoformat(start),
-                date_type.fromisoformat(end),
-                config=config,
-            )
-            await engine.run()
-    except Exception:
-        logger.exception("Error computing correlation report %s", report_id)
-        try:
-            async with _db_module.pool.acquire() as conn:
-                repo = CorrelationRepository(conn, user_id)
-                await repo.mark_report_error(report_id)
-        except Exception:
-            logger.exception("Failed to update report status to error")

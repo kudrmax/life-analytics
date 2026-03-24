@@ -4,16 +4,19 @@ ActivityWatch integration service.
 Receives raw events from the frontend (which fetches them from localhost:5600),
 processes them into per-app summaries, and upserts into dedicated AW tables.
 """
+from __future__ import annotations
+
 from collections import defaultdict
 from datetime import date as date_type, datetime, timezone
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-import asyncpg
+if TYPE_CHECKING:
+    from app.repositories.integrations_repository import IntegrationsRepository
 
 
 async def process_and_store(
-    conn: asyncpg.Connection,
-    user_id: int,
+    repo: IntegrationsRepository,
     for_date: date_type,
     window_events: list[dict],
     afk_events: list[dict],
@@ -42,48 +45,24 @@ async def process_and_store(
     ctx_switches = _compute_context_switches(window_events, active_intervals)
     breaks = _compute_break_count(afk_events)
 
-    async with conn.transaction():
-        await conn.execute(
-            """INSERT INTO activitywatch_daily_summary
-                   (user_id, date, total_seconds, active_seconds, synced_at,
-                    first_activity_time, last_activity_time, afk_seconds,
-                    longest_session_seconds, context_switches, break_count)
-               VALUES ($1, $2, $3, $4, now(), $5, $6, $7, $8, $9, $10)
-               ON CONFLICT (user_id, date) DO UPDATE
-               SET total_seconds = EXCLUDED.total_seconds,
-                   active_seconds = EXCLUDED.active_seconds,
-                   first_activity_time = EXCLUDED.first_activity_time,
-                   last_activity_time = EXCLUDED.last_activity_time,
-                   afk_seconds = EXCLUDED.afk_seconds,
-                   longest_session_seconds = EXCLUDED.longest_session_seconds,
-                   context_switches = EXCLUDED.context_switches,
-                   break_count = EXCLUDED.break_count,
-                   synced_at = now()""",
-            user_id, for_date, total_seconds, active_seconds,
+    async with repo.conn.transaction():
+        await repo.upsert_aw_daily_summary(
+            for_date, total_seconds, active_seconds,
             first_activity, last_activity, afk_seconds,
             longest_session, ctx_switches, breaks,
         )
 
-        await conn.execute(
-            "DELETE FROM activitywatch_app_usage WHERE user_id = $1 AND date = $2",
-            user_id, for_date,
-        )
+        await repo.delete_aw_app_usage_for_date(for_date)
 
         rows = []
         for app_name, dur in app_durations.items():
             if dur > 0:
-                rows.append((user_id, for_date, app_name, "window", dur))
+                rows.append((repo.user_id, for_date, app_name, "window", dur))
         for domain, dur in domain_durations.items():
             if dur > 0:
-                rows.append((user_id, for_date, domain, "web", dur))
+                rows.append((repo.user_id, for_date, domain, "web", dur))
 
-        if rows:
-            await conn.executemany(
-                """INSERT INTO activitywatch_app_usage
-                       (user_id, date, app_name, source, duration_seconds)
-                   VALUES ($1, $2, $3, $4, $5)""",
-                rows,
-            )
+        await repo.insert_aw_app_usage_batch(rows)
 
     apps_list = [
         {"app_name": k, "duration_seconds": v}
@@ -95,7 +74,7 @@ async def process_and_store(
     ]
 
     # Compute integration metrics for this user/date
-    await compute_integration_metrics(conn, user_id, for_date)
+    await compute_integration_metrics(repo, for_date)
 
     return {
         "total_seconds": total_seconds,
@@ -255,37 +234,19 @@ def _compute_break_count(afk_events: list[dict], threshold: int = 300) -> int:
 
 
 async def compute_integration_metrics(
-    conn: asyncpg.Connection,
-    user_id: int,
+    repo: IntegrationsRepository,
     for_date: date_type,
-):
+) -> None:
     """Compute values for all AW integration metrics for this user/date."""
     from app.repositories.entry_repository import EntryRepository
-    entry_repo = EntryRepository(conn, user_id)
+    entry_repo = EntryRepository(repo.conn, repo.user_id)
 
-    rows = await conn.fetch(
-        """SELECT md.id AS metric_id, ic.metric_key, ic.value_type,
-                  icc.activitywatch_category_id, iac.app_name AS config_app_name
-           FROM metric_definitions md
-           JOIN integration_config ic ON ic.metric_id = md.id
-           LEFT JOIN integration_category_config icc ON icc.metric_id = md.id
-           LEFT JOIN integration_app_config iac ON iac.metric_id = md.id
-           WHERE md.user_id = $1 AND ic.provider = 'activitywatch' AND md.enabled = TRUE""",
-        user_id,
-    )
+    rows = await repo.get_aw_integration_metrics()
     if not rows:
         return
 
     # Load daily summary once
-    summary = await conn.fetchrow(
-        """SELECT total_seconds, active_seconds,
-                  first_activity_time, last_activity_time,
-                  afk_seconds, longest_session_seconds,
-                  context_switches, break_count
-           FROM activitywatch_daily_summary
-           WHERE user_id = $1 AND date = $2""",
-        user_id, for_date,
-    )
+    summary = await repo.get_aw_summary_full(for_date)
 
     # Unique apps count
     unique_apps = None
@@ -322,53 +283,29 @@ async def compute_integration_metrics(
             value = summary["break_count"] if summary else 0
         elif key == "unique_apps":
             if unique_apps is None:
-                unique_apps = await conn.fetchval(
-                    """SELECT COUNT(DISTINCT app_name) FROM activitywatch_app_usage
-                       WHERE user_id = $1 AND date = $2 AND source = 'window'""",
-                    user_id, for_date,
-                )
-            value = unique_apps or 0
+                unique_apps = await repo.get_unique_apps_count(for_date)
+            value = unique_apps
         elif key == "category_time":
             cat_id = r["activitywatch_category_id"]
             if cat_id:
-                secs = await conn.fetchval(
-                    """SELECT COALESCE(SUM(au.duration_seconds), 0)
-                       FROM activitywatch_app_usage au
-                       JOIN activitywatch_app_category_map acm
-                           ON acm.app_name = au.app_name AND acm.user_id = au.user_id
-                       WHERE au.user_id = $1 AND au.date = $2 AND acm.activitywatch_category_id = $3
-                             AND au.source = 'window'""",
-                    user_id, for_date, cat_id,
-                )
-                value = (secs or 0) // 60
+                secs = await repo.get_category_time_seconds(for_date, cat_id)
+                value = secs // 60
             else:
                 value = 0
         elif key == "app_time":
             app_name = r["config_app_name"]
             if app_name:
-                secs = await conn.fetchval(
-                    """SELECT COALESCE(duration_seconds, 0)
-                       FROM activitywatch_app_usage
-                       WHERE user_id = $1 AND date = $2 AND app_name = $3 AND source = 'window'""",
-                    user_id, for_date, app_name,
-                )
-                value = (secs or 0) // 60
+                secs = await repo.get_app_time_seconds(for_date, app_name)
+                value = secs // 60
             else:
                 value = 0
         else:
             continue
 
         # Upsert entry + value
-        existing = await conn.fetchrow(
-            "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND slot_id IS NULL",
-            metric_id, user_id, for_date,
-        )
+        existing = await repo.get_entry_by_metric_date(metric_id, for_date)
         if existing:
             await entry_repo.update_value(existing["id"], value, value_type, entry_date=for_date, metric_id=metric_id)
         else:
-            entry_id = await conn.fetchval(
-                """INSERT INTO entries (metric_id, user_id, date)
-                   VALUES ($1, $2, $3) RETURNING id""",
-                metric_id, user_id, for_date,
-            )
+            entry_id = await repo.create_entry(metric_id, for_date)
             await entry_repo.insert_value(entry_id, value, value_type, entry_date=for_date, metric_id=metric_id)

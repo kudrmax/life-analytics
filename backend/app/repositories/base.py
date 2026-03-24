@@ -34,6 +34,10 @@ class BaseRepository:
             raise EntityNotFoundError(table, entity_id)
         return row
 
+    def transaction(self):
+        """Return a transaction context manager for the underlying connection."""
+        return self.conn.transaction()
+
     async def _fetch_all_owned(
         self,
         table: str,

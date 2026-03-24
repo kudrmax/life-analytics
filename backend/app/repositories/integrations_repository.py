@@ -170,3 +170,132 @@ class IntegrationsRepository(BaseRepository):
                ON CONFLICT (user_id, app_name) DO UPDATE SET activitywatch_category_id = EXCLUDED.activitywatch_category_id""",
             self.user_id, app_name, category_id,
         )
+
+    # ── Todoist integration ─────────────────────────────────────────────
+
+    async def get_todoist_token(self) -> asyncpg.Record | None:
+        return await self.conn.fetchrow(
+            "SELECT encrypted_token FROM user_integrations WHERE user_id = $1 AND provider = 'todoist' AND enabled = TRUE",
+            self.user_id,
+        )
+
+    async def get_todoist_metrics(self, metric_id: int | None = None) -> list[asyncpg.Record]:
+        query = """SELECT md.id, ic.metric_key, ic.value_type,
+                      ifc.filter_name, iqc.filter_query
+               FROM metric_definitions md
+               JOIN integration_config ic ON ic.metric_id = md.id
+               LEFT JOIN integration_filter_config ifc ON ifc.metric_id = md.id
+               LEFT JOIN integration_query_config iqc ON iqc.metric_id = md.id
+               WHERE md.user_id = $1 AND ic.provider = 'todoist' AND md.enabled = TRUE"""
+        params: list = [self.user_id]
+        if metric_id is not None:
+            query += " AND md.id = $2"
+            params.append(metric_id)
+        return await self.conn.fetch(query, *params)
+
+    async def get_entry_by_metric_date(self, metric_id: int, for_date: date_type) -> asyncpg.Record | None:
+        return await self.conn.fetchrow(
+            "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND slot_id IS NULL",
+            metric_id, self.user_id, for_date,
+        )
+
+    async def create_entry(self, metric_id: int, for_date: date_type) -> int:
+        return await self.conn.fetchval(
+            "INSERT INTO entries (metric_id, user_id, date) VALUES ($1, $2, $3) RETURNING id",
+            metric_id, self.user_id, for_date,
+        )
+
+    # ── ActivityWatch sync ──────────────────────────────────────────────
+
+    async def upsert_aw_daily_summary(
+        self, for_date: date_type, total_seconds: int, active_seconds: int,
+        first_activity, last_activity, afk_seconds: int,
+        longest_session: int, ctx_switches: int, breaks: int,
+    ) -> None:
+        await self.conn.execute(
+            """INSERT INTO activitywatch_daily_summary
+                   (user_id, date, total_seconds, active_seconds, synced_at,
+                    first_activity_time, last_activity_time, afk_seconds,
+                    longest_session_seconds, context_switches, break_count)
+               VALUES ($1, $2, $3, $4, now(), $5, $6, $7, $8, $9, $10)
+               ON CONFLICT (user_id, date) DO UPDATE
+               SET total_seconds = EXCLUDED.total_seconds,
+                   active_seconds = EXCLUDED.active_seconds,
+                   first_activity_time = EXCLUDED.first_activity_time,
+                   last_activity_time = EXCLUDED.last_activity_time,
+                   afk_seconds = EXCLUDED.afk_seconds,
+                   longest_session_seconds = EXCLUDED.longest_session_seconds,
+                   context_switches = EXCLUDED.context_switches,
+                   break_count = EXCLUDED.break_count,
+                   synced_at = now()""",
+            self.user_id, for_date, total_seconds, active_seconds,
+            first_activity, last_activity, afk_seconds,
+            longest_session, ctx_switches, breaks,
+        )
+
+    async def delete_aw_app_usage_for_date(self, for_date: date_type) -> None:
+        await self.conn.execute(
+            "DELETE FROM activitywatch_app_usage WHERE user_id = $1 AND date = $2",
+            self.user_id, for_date,
+        )
+
+    async def insert_aw_app_usage_batch(self, rows: list[tuple]) -> None:
+        if rows:
+            await self.conn.executemany(
+                """INSERT INTO activitywatch_app_usage
+                       (user_id, date, app_name, source, duration_seconds)
+                   VALUES ($1, $2, $3, $4, $5)""",
+                rows,
+            )
+
+    async def get_aw_integration_metrics(self) -> list[asyncpg.Record]:
+        return await self.conn.fetch(
+            """SELECT md.id AS metric_id, ic.metric_key, ic.value_type,
+                      icc.activitywatch_category_id, iac.app_name AS config_app_name
+               FROM metric_definitions md
+               JOIN integration_config ic ON ic.metric_id = md.id
+               LEFT JOIN integration_category_config icc ON icc.metric_id = md.id
+               LEFT JOIN integration_app_config iac ON iac.metric_id = md.id
+               WHERE md.user_id = $1 AND ic.provider = 'activitywatch' AND md.enabled = TRUE""",
+            self.user_id,
+        )
+
+    async def get_aw_summary_full(self, for_date: date_type) -> asyncpg.Record | None:
+        return await self.conn.fetchrow(
+            """SELECT total_seconds, active_seconds,
+                      first_activity_time, last_activity_time,
+                      afk_seconds, longest_session_seconds,
+                      context_switches, break_count
+               FROM activitywatch_daily_summary
+               WHERE user_id = $1 AND date = $2""",
+            self.user_id, for_date,
+        )
+
+    async def get_unique_apps_count(self, for_date: date_type) -> int:
+        val = await self.conn.fetchval(
+            """SELECT COUNT(DISTINCT app_name) FROM activitywatch_app_usage
+               WHERE user_id = $1 AND date = $2 AND source = 'window'""",
+            self.user_id, for_date,
+        )
+        return val or 0
+
+    async def get_category_time_seconds(self, for_date: date_type, cat_id: int) -> int:
+        val = await self.conn.fetchval(
+            """SELECT COALESCE(SUM(au.duration_seconds), 0)
+               FROM activitywatch_app_usage au
+               JOIN activitywatch_app_category_map acm
+                   ON acm.app_name = au.app_name AND acm.user_id = au.user_id
+               WHERE au.user_id = $1 AND au.date = $2 AND acm.activitywatch_category_id = $3
+                     AND au.source = 'window'""",
+            self.user_id, for_date, cat_id,
+        )
+        return val or 0
+
+    async def get_app_time_seconds(self, for_date: date_type, app_name: str) -> int:
+        val = await self.conn.fetchval(
+            """SELECT COALESCE(duration_seconds, 0)
+               FROM activitywatch_app_usage
+               WHERE user_id = $1 AND date = $2 AND app_name = $3 AND source = 'window'""",
+            self.user_id, for_date, app_name,
+        )
+        return val or 0

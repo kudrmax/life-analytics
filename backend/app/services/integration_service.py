@@ -44,7 +44,8 @@ class IntegrationService:
         })
         return result
 
-    def get_todoist_auth_url(self, user_id: int) -> str:
+    @staticmethod
+    def get_todoist_auth_url(user_id: int) -> str:
         if not TODOIST_CLIENT_ID:
             raise InvalidOperationError("Todoist integration not configured")
         state_payload = {
@@ -105,7 +106,7 @@ class IntegrationService:
 
         if provider == "todoist":
             try:
-                result = await fetch_and_store(self.conn, self.user_id, target_date, metric_id=metric_id)
+                result = await fetch_and_store(self.repo, target_date, metric_id=metric_id)
             except ValueError as e:
                 raise InvalidOperationError(str(e))
             except Exception as e:
@@ -118,7 +119,7 @@ class IntegrationService:
         if provider == "activitywatch":
             from app.integrations.activitywatch.service import compute_integration_metrics
             try:
-                await compute_integration_metrics(self.conn, self.user_id, target_date)
+                await compute_integration_metrics(self.repo, target_date)
             except Exception as e:
                 raise InvalidOperationError(f"AW metrics error: {e}")
             return {
@@ -145,7 +146,7 @@ class IntegrationService:
     async def aw_sync(self, body) -> dict:
         target_date = date_type.fromisoformat(body.date)
         result = await aw_process_and_store(
-            self.conn, self.user_id, target_date,
+            self.repo, target_date,
             window_events=[e.model_dump() for e in body.window_events],
             afk_events=[e.model_dump() for e in body.afk_events],
             web_events=[e.model_dump() for e in body.web_events] if body.web_events else None,
