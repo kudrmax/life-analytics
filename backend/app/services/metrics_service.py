@@ -343,6 +343,8 @@ class MetricsService:
             return
         if binding == "fixed" and start_slot_id is None:
             raise InvalidOperationError("interval_start_slot_id is required for fixed binding")
+        if binding == "fixed" and not await self.cfg_repo.check_slot_ownership(start_slot_id):
+            raise InvalidOperationError(f"Slot {start_slot_id} not found")
         user_slots = await self.repo.get_user_slots_ordered()
         if len(user_slots) < 2:
             return

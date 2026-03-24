@@ -237,6 +237,70 @@ class TestDeleteSlot:
         slot_ids = [s["id"] for s in resp.json()]
         assert slot_a["id"] not in slot_ids
 
+    async def test_deleted_slot_not_on_daily_page(self, client, user_a):
+        """Soft-deleted slot should not appear in daily page checkpoints."""
+        slot_a = await create_slot(client, user_a["token"], "Утро")
+        slot_b = await create_slot(client, user_a["token"], "Вечер")
+
+        # Soft-delete slot_a
+        resp = await client.delete(
+            f"/api/slots/{slot_a['id']}",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 204
+
+        resp = await client.get("/api/daily/2026-03-24", headers=auth_headers(user_a["token"]))
+        assert resp.status_code == 200
+        checkpoints = resp.json().get("checkpoints", [])
+        cp_ids = [c["id"] for c in checkpoints]
+        assert slot_a["id"] not in cp_ids
+        assert slot_b["id"] in cp_ids
+
+    async def test_deleted_slot_cannot_bind_to_metric(self, client, user_a):
+        """Soft-deleted slot should not be assignable to new metrics."""
+        slot_a = await create_slot(client, user_a["token"], "Утро")
+        slot_b = await create_slot(client, user_a["token"], "Вечер")
+
+        # Soft-delete slot_a
+        await client.delete(
+            f"/api/slots/{slot_a['id']}",
+            headers=auth_headers(user_a["token"]),
+        )
+
+        # Try to create metric with deleted slot
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Test", "type": "bool",
+                "slot_configs": [{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}],
+            },
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 400
+
+    async def test_deleted_slot_not_in_interval_binding(self, client, user_a):
+        """Soft-deleted slot should not be used for interval binding."""
+        slot_a = await create_slot(client, user_a["token"], "Утро")
+        await create_slot(client, user_a["token"], "Вечер")
+
+        # Soft-delete slot_a
+        await client.delete(
+            f"/api/slots/{slot_a['id']}",
+            headers=auth_headers(user_a["token"]),
+        )
+
+        # Try to create fixed metric with deleted slot
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Test", "type": "bool",
+                "interval_binding": "fixed",
+                "interval_start_slot_id": slot_a["id"],
+            },
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 400
+
     async def test_delete_nonexistent(self, client, user_a):
         resp = await client.delete(
             "/api/slots/99999",
