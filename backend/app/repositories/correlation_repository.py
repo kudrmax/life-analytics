@@ -28,7 +28,7 @@ class CorrelationRepository(BaseRepository):
             """SELECT ms.id, msl.metric_id, ms.label, ms.sort_order
                FROM metric_slots msl
                JOIN measurement_slots ms ON ms.id = msl.slot_id
-               WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE
+               WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE AND ms.deleted = FALSE
                ORDER BY msl.metric_id, ms.sort_order""",
             metric_ids,
         )

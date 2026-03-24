@@ -23,7 +23,7 @@ class SlotsRepository(BaseRepository):
                    WHERE msl.enabled = TRUE
                    GROUP BY msl.slot_id
                ) cnt ON cnt.slot_id = ms.id
-               WHERE ms.user_id = $1
+               WHERE ms.user_id = $1 AND ms.deleted = FALSE
                ORDER BY ms.sort_order, ms.id""",
             self.user_id,
         )
@@ -92,7 +92,7 @@ class SlotsRepository(BaseRepository):
 
     async def delete(self, slot_id: int) -> None:
         await self.conn.execute(
-            "DELETE FROM measurement_slots WHERE id = $1 AND user_id = $2",
+            "UPDATE measurement_slots SET deleted = TRUE WHERE id = $1 AND user_id = $2",
             slot_id, self.user_id,
         )
 

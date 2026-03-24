@@ -160,7 +160,7 @@ class MetricConfigRepository(BaseRepository):
 
     async def check_slot_ownership(self, slot_id: int) -> bool:
         return bool(await self.conn.fetchval(
-            "SELECT 1 FROM measurement_slots WHERE id = $1 AND user_id = $2",
+            "SELECT 1 FROM measurement_slots WHERE id = $1 AND user_id = $2 AND deleted = FALSE",
             slot_id, self.user_id,
         ))
 

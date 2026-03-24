@@ -91,7 +91,7 @@ class MetricRepository(BaseRepository):
             f"""SELECT msl.metric_id, ms.id, ms.label, ms.sort_order, msl.category_id
                 FROM metric_slots msl
                 JOIN measurement_slots ms ON ms.id = msl.slot_id
-                WHERE msl.metric_id = ANY($1) {condition}
+                WHERE msl.metric_id = ANY($1) AND ms.deleted = FALSE {condition}
                 ORDER BY msl.metric_id, ms.sort_order""",
             metric_ids,
         )
@@ -230,7 +230,7 @@ class MetricRepository(BaseRepository):
     async def get_user_slots_ordered(self) -> list[asyncpg.Record]:
         """Return all user's measurement_slots sorted by sort_order."""
         return await self.conn.fetch(
-            "SELECT id, label, sort_order FROM measurement_slots WHERE user_id = $1 ORDER BY sort_order",
+            "SELECT id, label, sort_order FROM measurement_slots WHERE user_id = $1 AND deleted = FALSE ORDER BY sort_order",
             self.user_id,
         )
 

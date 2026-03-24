@@ -206,6 +206,37 @@ class TestDeleteSlot:
         )
         assert resp.status_code == 204
 
+    async def test_delete_slot_with_old_entries(self, client, user_a):
+        """Slot with old entries should be soft-deletable (hidden but data preserved)."""
+        slot_a = await create_slot(client, user_a["token"], "Утро")
+        slot_b = await create_slot(client, user_a["token"], "Вечер")
+        m = await create_metric(
+            client, user_a["token"],
+            name="Настроение", metric_type="bool",
+            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}],
+        )
+        # Create entries with slot references
+        await create_entry(client, user_a["token"], m["id"], "2026-01-10", True, slot_id=slot_a["id"])
+        await create_entry(client, user_a["token"], m["id"], "2026-01-10", False, slot_id=slot_b["id"])
+
+        # Delete metric — metric_slots cascade-deleted, but entries remain with slot_id
+        await client.delete(
+            f"/api/metrics/{m['id']}",
+            headers=auth_headers(user_a["token"]),
+        )
+
+        # Delete slot — should succeed (soft delete, entries preserved)
+        resp = await client.delete(
+            f"/api/slots/{slot_a['id']}",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 204
+
+        # Slot should not appear in list
+        resp = await client.get("/api/slots", headers=auth_headers(user_a["token"]))
+        slot_ids = [s["id"] for s in resp.json()]
+        assert slot_a["id"] not in slot_ids
+
     async def test_delete_nonexistent(self, client, user_a):
         resp = await client.delete(
             "/api/slots/99999",

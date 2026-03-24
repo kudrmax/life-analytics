@@ -29,7 +29,7 @@ class DailyRepository(BaseRepository):
     async def get_all_user_slots(self) -> list[asyncpg.Record]:
         """Return all user's measurement_slots sorted by sort_order."""
         return await self.conn.fetch(
-            "SELECT id, label, sort_order FROM measurement_slots WHERE user_id = $1 ORDER BY sort_order",
+            "SELECT id, label, sort_order FROM measurement_slots WHERE user_id = $1 AND deleted = FALSE ORDER BY sort_order",
             self.user_id,
         )
 
@@ -40,7 +40,7 @@ class DailyRepository(BaseRepository):
             """SELECT ms.id, msl.metric_id, ms.label, ms.sort_order, msl.category_id
                FROM metric_slots msl
                JOIN measurement_slots ms ON ms.id = msl.slot_id
-               WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE
+               WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE AND ms.deleted = FALSE
                ORDER BY msl.metric_id, ms.sort_order""",
             metric_ids,
         )

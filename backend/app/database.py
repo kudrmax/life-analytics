@@ -288,6 +288,9 @@ async def _init_db_schema(conn):
     await conn.execute("""
         ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS description TEXT
     """)
+    await conn.execute("""
+        ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE
+    """)
 
     # Add category_id column to metric_definitions (for existing DBs that had category/fill_time columns)
     await conn.execute("""

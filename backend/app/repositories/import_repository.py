@@ -130,7 +130,7 @@ class ImportRepository(BaseRepository):
 
     async def find_or_create_slot(self, label: str) -> int:
         existing = await self.conn.fetchrow(
-            "SELECT id FROM measurement_slots WHERE user_id=$1 AND LOWER(label)=LOWER($2)",
+            "SELECT id FROM measurement_slots WHERE user_id=$1 AND LOWER(label)=LOWER($2) AND deleted = FALSE",
             self.user_id, label.strip())
         if existing:
             return existing["id"]

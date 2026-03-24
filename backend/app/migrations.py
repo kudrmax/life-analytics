@@ -414,6 +414,9 @@ MIGRATIONS = [
         ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS interval_binding VARCHAR(20) NOT NULL DEFAULT 'daily';
         ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS interval_start_slot_id INTEGER REFERENCES measurement_slots(id) ON DELETE SET NULL;
     """),
+    (20, "add_deleted_to_measurement_slots", """
+        ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE;
+    """),
 ]
 
 
