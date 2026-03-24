@@ -2,7 +2,7 @@
 
 import pytest
 
-from tests.conftest import auth_headers, create_metric, create_slot
+from tests.conftest import auth_headers, create_entry, create_metric, create_slot
 
 
 @pytest.mark.anyio
@@ -394,3 +394,109 @@ class TestMultiIntervalDailyPage:
         coffee = [m for m in metrics if m["name"] == "Кофе"]
         assert len(coffee) == 1
         assert coffee[0]["slots"][0]["label"] == "Утро → День"
+
+
+@pytest.mark.anyio
+class TestIntervalBindingChangeMigration:
+    """Bug A + Bug B: entry visibility when interval_binding changes."""
+
+    async def test_bug_a_no_entries_by_interval_to_all_day_shows_no_slots(self, client, user_a):
+        """Bug A: after by_interval → all_day, daily page shows NO slot containers (no entries)."""
+        s1 = await create_slot(client, user_a["token"], "Утро")
+        s2 = await create_slot(client, user_a["token"], "День")
+
+        # Create metric as by_interval (no entries for the test date)
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Спорт", "type": "bool", "interval_binding": "by_interval",
+                  "interval_slot_ids": [s1["id"]]},
+            headers=auth_headers(user_a["token"]),
+        )
+        metric = resp.json()
+
+        # Change back to all_day
+        resp = await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"interval_binding": "all_day"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+
+        # Daily page: should show NO slot containers (slots properly disabled)
+        resp = await client.get("/api/daily/2026-03-24", headers=auth_headers(user_a["token"]))
+        assert resp.status_code == 200
+        metrics = resp.json()["metrics"]
+        sport = [m for m in metrics if m["name"] == "Спорт"]
+        assert len(sport) == 1
+        assert sport[0]["slots"] is None, "Slots should be None after switching back to all_day"
+        assert sport[0]["entry"] is None
+
+    async def test_bug_b_all_day_entry_visible_after_switch_to_by_interval(self, client, user_a):
+        """Bug B: old all_day entry (slot_id=NULL) should remain visible after switching to by_interval."""
+        s1 = await create_slot(client, user_a["token"], "Утро")
+        s2 = await create_slot(client, user_a["token"], "День")
+
+        metric = await create_metric(client, user_a["token"], name="Спорт", metric_type="bool")
+
+        # Fill entry as all_day (slot_id=NULL)
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-24", True)
+
+        # Change to by_interval → old entry should migrate to first slot
+        resp = await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"interval_binding": "by_interval", "interval_slot_ids": [s1["id"]]},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+
+        # Daily page: old entry should be visible (in first slot)
+        resp = await client.get("/api/daily/2026-03-24", headers=auth_headers(user_a["token"]))
+        assert resp.status_code == 200
+        metrics = resp.json()["metrics"]
+        sport = [m for m in metrics if m["name"] == "Спорт"]
+        assert len(sport) == 1
+        assert sport[0]["slots"] is not None
+        assert sport[0]["slots"][0]["entry"] is not None, "Old all_day entry should be visible in first slot"
+        assert sport[0]["slots"][0]["entry"]["value"] is True
+
+    async def test_full_cycle_all_day_to_by_interval_to_all_day(self, client, user_a):
+        """Full cycle: entry remains accessible through all binding changes."""
+        s1 = await create_slot(client, user_a["token"], "Утро")
+        s2 = await create_slot(client, user_a["token"], "День")
+
+        metric = await create_metric(client, user_a["token"], name="Спорт", metric_type="bool")
+
+        # Fill entry as all_day
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-24", True)
+
+        # all_day → by_interval (entry migrates to first slot)
+        await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"interval_binding": "by_interval", "interval_slot_ids": [s1["id"]]},
+            headers=auth_headers(user_a["token"]),
+        )
+
+        # by_interval → all_day
+        resp = await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"interval_binding": "all_day"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+
+        # Daily page: should show no slot containers, but entry still accessible via disabled-slot path
+        resp = await client.get("/api/daily/2026-03-24", headers=auth_headers(user_a["token"]))
+        assert resp.status_code == 200
+        metrics = resp.json()["metrics"]
+        sport = [m for m in metrics if m["name"] == "Спорт"]
+        assert len(sport) == 1
+        # After full cycle: slots are disabled, entry (now with slot_id=s1) should show via disabled-slot path
+        # The metric renders with slots=[{slot_id: s1, entry: {value: True}}]
+        # OR as a single entry depending on implementation
+        # At minimum: the entry value must be accessible somewhere
+        has_entry_in_slots = (
+            sport[0]["slots"] is not None
+            and any(s["entry"] is not None for s in sport[0]["slots"])
+        )
+        has_single_entry = sport[0]["entry"] is not None
+        assert has_entry_in_slots or has_single_entry, "Entry should be accessible after full cycle"
