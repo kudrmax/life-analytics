@@ -11,7 +11,7 @@ from app.analytics.value_converter import ValueConverter
 from app.repositories.daily_repository import DailyRepository
 from app.services.daily_helpers import (
     evaluate_visibility, compute_formulas, build_auto_metrics,
-    calculate_progress, split_by_checkpoints,
+    calculate_progress, split_by_checkpoints, build_interval_label_map,
 )
 from app.timing import QueryTimer
 
@@ -138,13 +138,7 @@ class DailyService:
 
     @staticmethod
     def _build_interval_label_map(all_user_slots: list) -> dict[int, str]:
-        """Build slot_id → interval label mapping (e.g. slot_id(Утро) → "Утро → День")."""
-        sorted_slots = sorted(all_user_slots, key=lambda s: s["sort_order"])
-        result: dict[int, str] = {}
-        for i, s in enumerate(sorted_slots):
-            if i + 1 < len(sorted_slots):
-                result[s["id"]] = f"{s['label']} → {sorted_slots[i + 1]['label']}"
-        return result
+        return build_interval_label_map(all_user_slots)
 
     def _fill_slots(self, item, m, entries, slots, extra, data) -> None:
         mid = m["id"]

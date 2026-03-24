@@ -17,6 +17,7 @@ from app.formula import get_referenced_metric_ids
 from app.domain.privacy import is_blocked, PRIVATE_MASK
 from app.repositories.analytics_repository import AnalyticsRepository
 from app.repositories.correlation_repository import CorrelationRepository
+from app.services.daily_helpers import build_interval_label_map
 from app.source_key import SourceKey, STREAK_TYPES
 
 logger = logging.getLogger(__name__)
@@ -113,7 +114,7 @@ class CorrelationService:
             for mid in (p["metric_a_id"], p["metric_b_id"]):
                 if mid is not None:
                     all_mids.add(mid)
-        mws = await self.repo.get_metrics_with_slots(list(all_mids))
+        mws = await self.repo.get_metrics_with_multiple_slots(list(all_mids))
 
         # Load slot labels and ordering for delta display labels
         slot_labels, slot_ordering = await self._load_slot_info(list(all_mids | all_parent_ids))
@@ -169,7 +170,7 @@ class CorrelationService:
         mb_name = await self.repo.get_metric_name(row["metric_b_id"]) if row["metric_b_id"] else None
         all_chart_mids = [mid for mid in (row["metric_a_id"], row["metric_b_id"]) if mid]
         all_chart_mids += list(parent_ids)
-        chart_mws = await self.repo.get_metrics_with_slots(all_chart_mids)
+        chart_mws = await self.repo.get_metrics_with_multiple_slots(all_chart_mids)
         slot_labels, slot_ordering = await self._load_slot_info(all_chart_mids)
 
         label_a = PRIVATE_MASK if blocked_a else PairFormatter.build_display_label(
@@ -232,6 +233,25 @@ class CorrelationService:
         for r in rows:
             labels[r["id"]] = r["label"]
             ordering.setdefault(r["metric_id"], []).append(r["id"])
+
+        # Replace slot labels with interval labels for interval-bound metrics
+        interval_mids = await self.conn.fetch(
+            """SELECT id FROM metric_definitions
+               WHERE id = ANY($1) AND interval_binding IN ('fixed', 'floating')""",
+            list(set(metric_ids)),
+        )
+        if interval_mids:
+            all_user_slots = await self.conn.fetch(
+                "SELECT id, label, sort_order FROM measurement_slots WHERE user_id = $1 ORDER BY sort_order",
+                self.user_id,
+            )
+            interval_labels = build_interval_label_map([dict(s) for s in all_user_slots])
+            interval_mid_set = {r["id"] for r in interval_mids}
+            for mid in interval_mid_set:
+                for slot_id in ordering.get(mid, []):
+                    if slot_id in interval_labels:
+                        labels[slot_id] = interval_labels[slot_id]
+
         return labels, ordering
 
     async def _batch_load_parents(self, parent_ids: set[int]) -> tuple[dict, dict]:

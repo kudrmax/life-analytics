@@ -203,6 +203,11 @@ class PairFormatter:
         # Bool aggregate with slots — annotate "(хоть раз)"
         if metric_type == MetricType.bool and has_slots and sk.slot_id is None:
             return f"{metric_name} (хоть раз)" if metric_name else "Удалённая метрика"
+        # Per-slot source — append slot label
+        if sk.slot_id is not None and slot_labels:
+            slot_label = slot_labels.get(sk.slot_id)
+            if slot_label and metric_name:
+                return f"{metric_name}: {slot_label}"
         return metric_name or "Удалённая метрика"
 
     @staticmethod

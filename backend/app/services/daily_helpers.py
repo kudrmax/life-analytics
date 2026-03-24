@@ -1,5 +1,6 @@
 """Pure helper functions for daily service — conditions, auto-metrics, progress."""
 
+from collections.abc import Mapping
 from datetime import date as date_type
 
 from app.domain.enums import MetricType
@@ -8,6 +9,16 @@ from app.domain.formatters import format_display_value
 from app.analytics.value_converter import ValueConverter
 
 _parse_formula = ValueConverter.parse_formula
+
+
+def build_interval_label_map(all_user_slots: list[Mapping]) -> dict[int, str]:
+    """Build slot_id → interval label mapping (e.g. slot_id(Утро) → "Утро → День")."""
+    sorted_slots = sorted(all_user_slots, key=lambda s: s["sort_order"])
+    result: dict[int, str] = {}
+    for i, s in enumerate(sorted_slots):
+        if i + 1 < len(sorted_slots):
+            result[s["id"]] = f"{s['label']} → {sorted_slots[i + 1]['label']}"
+    return result
 
 
 def extract_dep_value(item: dict):

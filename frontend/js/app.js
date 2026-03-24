@@ -5745,27 +5745,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                         </label>
                     </div>
                 </div>
-                <div class="form-section" id="nm-slots-section">
-                    <span class="label-text">Сколько раз в день замерять?</span>
-                    <div class="slots-choice-grid">
-                        <label class="slots-choice-card ${!existingMetric?.slots?.length ? 'selected' : ''}" data-slots="single">
-                            <input type="radio" name="nm-slots-mode" value="single" ${!existingMetric?.slots?.length ? 'checked' : ''}>
-                            <div class="slots-choice-icon"><i data-lucide="circle-dot"></i></div>
-                            <span class="slots-choice-title">Один раз</span>
-                        </label>
-                        <label class="slots-choice-card ${existingMetric?.slots?.length ? 'selected' : ''}" data-slots="multiple">
-                            <input type="radio" name="nm-slots-mode" value="multiple" ${existingMetric?.slots?.length ? 'checked' : ''}>
-                            <div class="slots-choice-icon"><i data-lucide="list"></i></div>
-                            <span class="slots-choice-title">Несколько раз</span>
-                        </label>
-                    </div>
-                    <div class="slots-config" id="nm-slots-config" style="display:${existingMetric?.slots?.length ? 'flex' : 'none'}">
-                        <div class="slot-labels-list" id="nm-slot-labels"></div>
-                        <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить контрольную точку</button>
-                        <select class="slot-add-dropdown" id="nm-slot-dropdown" style="display:none">
-                            <option value="">Выберите...</option>
-                        </select>
-                    </div>
+                <div class="form-section" id="nm-checkpoint-picker" style="display:${existingMetric?.is_checkpoint ? '' : 'none'}">
+                    <span class="label-text">Контрольные точки</span>
+                    <span class="label-hint">Выберите в каких точках замерять</span>
+                    <div id="nm-checkpoint-list"></div>
                 </div>
                 <div class="form-section" id="nm-interval-section" style="display:${!existingMetric?.is_checkpoint ? '' : 'none'}">
                     <span class="label-text">Привязка к интервалу</span>
@@ -5955,29 +5938,12 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                         </label>
                     </div>
                 </div>
-                <div class="form-section" id="nm-slots-section" style="display: ${currentType === 'computed' || currentType === 'integration' || currentType === 'text' ? 'none' : ''}">
-                    <span class="label-text">Сколько раз в день замерять?</span>
-                    <div class="slots-choice-grid">
-                        <label class="slots-choice-card selected" data-slots="single">
-                            <input type="radio" name="nm-slots-mode" value="single" checked>
-                            <div class="slots-choice-icon"><i data-lucide="circle-dot"></i></div>
-                            <span class="slots-choice-title">Один раз</span>
-                        </label>
-                        <label class="slots-choice-card" data-slots="multiple">
-                            <input type="radio" name="nm-slots-mode" value="multiple">
-                            <div class="slots-choice-icon"><i data-lucide="list"></i></div>
-                            <span class="slots-choice-title">Несколько раз</span>
-                        </label>
-                    </div>
-                    <div class="slots-config" id="nm-slots-config" style="display:none">
-                        <div class="slot-labels-list" id="nm-slot-labels"></div>
-                        <button type="button" class="btn-add-slot" id="nm-add-slot">+ Добавить контрольную точку</button>
-                        <select class="slot-add-dropdown" id="nm-slot-dropdown" style="display:none">
-                            <option value="">Выберите...</option>
-                        </select>
-                    </div>
+                <div class="form-section" id="nm-checkpoint-picker" style="display:none">
+                    <span class="label-text">Контрольные точки</span>
+                    <span class="label-hint">Выберите в каких точках замерять</span>
+                    <div id="nm-checkpoint-list"></div>
                 </div>
-                <div class="form-section" id="nm-interval-section" style="display:none">
+                <div class="form-section" id="nm-interval-section" style="display:${currentType === 'computed' || currentType === 'integration' || currentType === 'text' ? 'none' : ''}">
                     <span class="label-text">Привязка к интервалу</span>
                     <span class="label-hint">Привяжите факт к интервалу между контрольными точками для интервальных корреляций</span>
                     <div class="slots-choice-grid">
@@ -6569,12 +6535,14 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             if (section) section.querySelectorAll('.slots-choice-card').forEach(c => c.classList.remove('selected'));
             const card = radio.closest('.slots-choice-card');
             if (card) card.classList.add('selected');
-            // Show/hide interval section for facts only
+            const isAssessment = radio.value === 'assessment';
+            // Show checkpoint picker for assessments, interval section for facts
+            const cpPicker = document.getElementById('nm-checkpoint-picker');
+            if (cpPicker) cpPicker.style.display = isAssessment ? '' : 'none';
             const intervalSection = document.getElementById('nm-interval-section');
             if (intervalSection) {
-                intervalSection.style.display = radio.value === 'fact' ? '' : 'none';
-                if (radio.value === 'assessment') {
-                    // Reset interval binding to daily for assessments
+                intervalSection.style.display = isAssessment ? 'none' : '';
+                if (isAssessment) {
                     const dailyRadio = intervalSection.querySelector('input[value="daily"]');
                     if (dailyRadio) { dailyRadio.checked = true; dailyRadio.dispatchEvent(new Event('change')); }
                 }
@@ -6613,24 +6581,25 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     }
     _populateIntervalSelect();
 
-    // ─── Slots choice cards ───
-    overlay.querySelectorAll('input[name="nm-slots-mode"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            const section = radio.closest('.form-section');
-            if (section) section.querySelectorAll('.slots-choice-card').forEach(c => c.classList.remove('selected'));
-            const card = radio.closest('.slots-choice-card');
-            if (card) card.classList.add('selected');
-
-            if (radio.value === 'multiple') {
-                if (slotsConfig) slotsConfig.style.display = 'flex';
-                _renderSelectedSlots();
-            } else {
-                if (slotsConfig) slotsConfig.style.display = 'none';
-                _selectedSlots = [];
-            }
-            updatePreview();
-        });
-    });
+    // ─── Checkpoint picker for assessments ───
+    async function _populateCheckpointPicker() {
+        const container = document.getElementById('nm-checkpoint-list');
+        if (!container) return;
+        try {
+            const slots = await api.getSlots();
+            const sorted = slots.sort((a, b) => a.sort_order - b.sort_order);
+            const existingSlotIds = new Set((existingMetric?.slots || []).map(s => s.id));
+            const isCreate = !existingMetric;
+            container.innerHTML = sorted.map(s => {
+                const checked = isCreate || existingSlotIds.has(s.id) ? 'checked' : '';
+                return `<label class="enum-multi-select-label">
+                    <input type="checkbox" name="nm-checkpoint" value="${s.id}" ${checked}>
+                    ${_escapeHtml(s.label)}
+                </label>`;
+            }).join('');
+        } catch(e) { container.innerHTML = '<span class="label-hint">Нет контрольных точек</span>'; }
+    }
+    _populateCheckpointPicker();
 
     function _buildCategoryOptions(selectedCatId) {
         let html = '<option value="">Без категории</option>';
@@ -6767,11 +6736,12 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     }
 
     function getSlotConfigs() {
-        const configs = [];
-        for (const slot of _selectedSlots) {
-            configs.push({ slot_id: slot.id });
+        // For assessments: collect from checkpoint picker checkboxes
+        const checkboxes = document.querySelectorAll('input[name="nm-checkpoint"]:checked');
+        if (checkboxes.length > 0) {
+            return Array.from(checkboxes).map(cb => ({ slot_id: parseInt(cb.value) }));
         }
-        return configs;
+        return [];
     }
 
     document.getElementById('nm-cancel').onclick = () => overlay.remove();
@@ -6827,6 +6797,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 const intervalRadio = document.querySelector('input[name="nm-interval-binding"]:checked');
                 const intervalBinding = (!isCheckpoint && intervalRadio) ? intervalRadio.value : 'daily';
                 const intervalStartSlot = intervalBinding === 'fixed' ? (document.getElementById('nm-interval-start-slot')?.value || null) : null;
+                if (intervalBinding === 'fixed' && !intervalStartSlot) {
+                    alert('Выберите интервал для фиксированной привязки');
+                    return;
+                }
                 const updateData = { name, category_id: hasSlotConfigs ? 0 : (categoryIdVal ? parseInt(categoryIdVal) : 0), private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, is_checkpoint: isCheckpoint, interval_binding: intervalBinding, interval_start_slot_id: intervalStartSlot ? parseInt(intervalStartSlot) : null, description: descriptionEl ? descriptionEl.value.trim() || null : null };
                 if (icon !== undefined) updateData.icon = icon;
                 if (existingMetric.type === 'computed') {
@@ -6870,16 +6844,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     }
                     updateData.enum_options = opts;
                 }
-                // Send slot_configs if user configured slots (not for computed/integration)
-                if (existingMetric.type !== 'computed' && existingMetric.type !== 'integration') {
-                    if (slotConfigs.length >= 2) {
-                        updateData.slot_configs = slotConfigs;
-                    } else if (slotConfigs.length === 0 && (!existingMetric.slots || existingMetric.slots.length === 0)) {
-                        // No slots before, no slots now — don't send
-                    } else if (slotConfigs.length < 2 && existingMetric.slots && existingMetric.slots.length > 0) {
-                        alert('Нельзя уменьшить количество замеров меньше 2. Удалите все поля, чтобы не менять настройку.');
-                        return;
-                    }
+                // Send slot_configs for assessments (from checkpoint picker)
+                if (isCheckpoint && slotConfigs.length > 0) {
+                    updateData.slot_configs = slotConfigs;
                 }
                 // Condition data
                 const condData = _collectConditionData();
@@ -6903,6 +6870,10 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 const intervalRadio2 = document.querySelector('input[name="nm-interval-binding"]:checked');
                 const intervalBinding2 = (!isCheckpoint2 && intervalRadio2) ? intervalRadio2.value : 'daily';
                 const intervalStartSlot2 = intervalBinding2 === 'fixed' ? (document.getElementById('nm-interval-start-slot')?.value || null) : null;
+                if (intervalBinding2 === 'fixed' && !intervalStartSlot2) {
+                    alert('Выберите интервал для фиксированной привязки');
+                    return;
+                }
                 const createData = { name, icon, type: selectedType, private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, is_checkpoint: isCheckpoint2, interval_binding: intervalBinding2, interval_start_slot_id: intervalStartSlot2 ? parseInt(intervalStartSlot2) : null, description: descriptionEl ? descriptionEl.value.trim() || null : null };
                 if (categoryIdVal) createData.category_id = parseInt(categoryIdVal);
 
@@ -7013,10 +6984,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     }
                 }
 
-                if (!['computed', 'integration'].includes(selectedType) && slotConfigs.length >= 2) {
+                // Send slot_configs for assessments (from checkpoint picker)
+                if (isCheckpoint2 && slotConfigs.length > 0) {
                     createData.slot_configs = slotConfigs;
-                    // Defensive rule: category on slots, not metric
-                    delete createData.category_id;
                 }
 
                 // Condition data

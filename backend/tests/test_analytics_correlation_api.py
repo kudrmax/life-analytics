@@ -1765,6 +1765,56 @@ class TestBoolAggregateAnnotation:
         for lbl in aggregate_labels:
             assert "Зарядка" in lbl
 
+    async def test_bool_with_single_slot_no_annotation(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Bool metric with 1 slot (fixed interval) should NOT have '(хоть раз)' annotation."""
+        token = user_a["token"]
+
+        slot_a = await create_slot(client, token, "Morning")
+        await create_slot(client, token, "Evening")
+
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "FixedBool", "type": "bool",
+                "interval_binding": "fixed",
+                "interval_start_slot_id": slot_a["id"],
+            },
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 201
+        bool_m = resp.json()
+        assert len(bool_m["slots"]) == 1
+
+        num_m = await create_metric(
+            client, token, name="StepsFixed", metric_type="number", slug="steps_fixed_annot",
+        )
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, slot_id=slot_a["id"])
+            await create_entry(client, token, num_m["id"], date_str, day * 100)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        for p in pairs_data["pairs"]:
+            assert "хоть раз" not in p.get("label_a", ""), (
+                f"Unexpected annotation in label_a: {p['label_a']}"
+            )
+            assert "хоть раз" not in p.get("label_b", ""), (
+                f"Unexpected annotation in label_b: {p['label_b']}"
+            )
+
     async def test_bool_without_slots_no_annotation(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
@@ -1802,6 +1852,124 @@ class TestBoolAggregateAnnotation:
             assert "хоть раз" not in p.get("label_b", ""), (
                 f"Unexpected annotation in label_b: {p['label_b']}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Single-slot metric: no duplicate aggregate + per-slot, interval labels
+# ---------------------------------------------------------------------------
+
+class TestSingleSlotNoDuplicate:
+    """Bool metric with 1 slot (fixed interval) should NOT produce both aggregate and per-slot pairs."""
+
+    async def test_single_slot_no_aggregate_duplicate(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        token = user_a["token"]
+
+        slot_a = await create_slot(client, token, "Утро")
+        await create_slot(client, token, "День")
+
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Зарядка", "type": "bool",
+                "interval_binding": "fixed",
+                "interval_start_slot_id": slot_a["id"],
+            },
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 201
+        bool_m = resp.json()
+        assert len(bool_m["slots"]) == 1
+
+        num_m = await create_metric(
+            client, token, name="Шаги", metric_type="number", slug="steps_single_slot",
+        )
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, slot_id=slot_a["id"])
+            await create_entry(client, token, num_m["id"], date_str, day * 100)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # Collect distinct labels involving "Зарядка" paired with "Шаги" at lag=0
+        zaryadka_labels = set()
+        for p in pairs_data["pairs"]:
+            if p.get("lag_days", 0) != 0:
+                continue
+            la, lb = p.get("label_a", ""), p.get("label_b", "")
+            if "Шаги" in la and "Зарядка" in lb:
+                zaryadka_labels.add(lb)
+            elif "Шаги" in lb and "Зарядка" in la:
+                zaryadka_labels.add(la)
+
+        # Should be exactly 1 label (per-slot only), not 2 (aggregate "Зарядка" + per-slot "Зарядка: ...")
+        assert len(zaryadka_labels) == 1, (
+            f"Expected 1 label for single-slot metric, got {len(zaryadka_labels)}: {zaryadka_labels}"
+        )
+
+    async def test_single_slot_uses_interval_label(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Per-slot label for interval-bound metric should show 'X → Y', not just 'X'."""
+        token = user_a["token"]
+
+        slot_a = await create_slot(client, token, "Утро")
+        await create_slot(client, token, "День")
+
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Зарядка", "type": "bool",
+                "interval_binding": "fixed",
+                "interval_start_slot_id": slot_a["id"],
+            },
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 201
+        bool_m = resp.json()
+
+        num_m = await create_metric(
+            client, token, name="Шаги", metric_type="number", slug="steps_interval_lbl",
+        )
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, slot_id=slot_a["id"])
+            await create_entry(client, token, num_m["id"], date_str, day * 100)
+
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data["report"] is not None
+        report_id = data["report"]["id"]
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        # Find label for Зарядка — should contain interval "Утро → День"
+        zaryadka_labels = set()
+        for p in pairs_data["pairs"]:
+            if "Зарядка" in p.get("label_a", ""):
+                zaryadka_labels.add(p["label_a"])
+            if "Зарядка" in p.get("label_b", ""):
+                zaryadka_labels.add(p["label_b"])
+
+        assert any("Утро → День" in lbl for lbl in zaryadka_labels), (
+            f"Expected interval label 'Утро → День' in labels, got: {zaryadka_labels}"
+        )
 
 
 # ---------------------------------------------------------------------------

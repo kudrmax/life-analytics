@@ -8,6 +8,7 @@ from app.formula import validate_formula, get_referenced_metric_ids
 from app.integrations.todoist.registry import TODOIST_METRICS, TODOIST_ICON
 from app.integrations.activitywatch.registry import ACTIVITYWATCH_METRICS, ACTIVITYWATCH_ICON
 from app.services.metric_builder import build_metric_out
+from app.services.daily_helpers import build_interval_label_map
 from app.repositories.metric_repository import MetricRepository
 from app.repositories.metric_config_repository import MetricConfigRepository
 from app.domain.enums import MetricType
@@ -32,13 +33,37 @@ class MetricsService:
         metric_ids = [r["id"] for r in rows]
         slots_map = await self.repo.get_slots_for_metrics(metric_ids) if metric_ids else {}
         enum_opts_map = await self.repo.get_enum_options_for_metrics(metric_ids) if metric_ids else {}
+        has_interval = any(r.get("interval_binding") in ("fixed", "floating") for r in rows)
+        if has_interval:
+            interval_labels = await self._load_interval_labels()
+            self._apply_interval_labels(slots_map, rows, interval_labels)
         return [await build_metric_out(r, slots_map.get(r["id"]), enum_opts_map.get(r["id"]), privacy_mode) for r in rows]
 
     async def get_one(self, metric_id: int, privacy_mode: bool) -> MetricDefinitionOut:
         row = await self.repo.get_one_with_config(metric_id)
         slots_map = await self.repo.get_slots_for_metrics([metric_id])
         enum_opts_map = await self.repo.get_enum_options_for_metrics([metric_id])
+        if row.get("interval_binding") in ("fixed", "floating"):
+            interval_labels = await self._load_interval_labels()
+            self._apply_interval_labels(slots_map, [row], interval_labels)
         return await build_metric_out(row, slots_map.get(metric_id), enum_opts_map.get(metric_id), privacy_mode)
+
+    async def _load_interval_labels(self) -> dict[int, str]:
+        user_slots = await self.repo.get_user_slots_ordered()
+        return build_interval_label_map(user_slots)
+
+    @staticmethod
+    def _apply_interval_labels(slots_map: dict, rows: list, interval_labels: dict[int, str]) -> None:
+        for r in rows:
+            if r.get("interval_binding") not in ("fixed", "floating"):
+                continue
+            mid = r["id"]
+            if mid not in slots_map:
+                continue
+            for slot in slots_map[mid]:
+                new_label = interval_labels.get(slot["id"])
+                if new_label:
+                    slot["label"] = new_label
 
     async def reorder(self, items: list[dict]) -> None:
         await self.repo.reorder(items)
@@ -316,14 +341,15 @@ class MetricsService:
         """Auto-create metric_slots for interval-bound facts."""
         if binding == "daily":
             return
+        if binding == "fixed" and start_slot_id is None:
+            raise InvalidOperationError("interval_start_slot_id is required for fixed binding")
         user_slots = await self.repo.get_user_slots_ordered()
         if len(user_slots) < 2:
             return
         if binding == "floating":
-            # Create metric_slots for all intervals (N-1 = all except last checkpoint)
             for i, slot in enumerate(user_slots[:-1]):
                 await self.cfg_repo.insert_metric_slot(metric_id, slot["id"], i, None)
-        elif binding == "fixed" and start_slot_id is not None:
+        elif binding == "fixed":
             await self.cfg_repo.insert_metric_slot(metric_id, start_slot_id, 0, None)
 
     async def _update_interval_binding(self, metric_id: int, row, data: MetricDefinitionUpdate) -> None:

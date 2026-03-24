@@ -89,6 +89,86 @@ class TestIntervalBindingUpdate:
 
 
 @pytest.mark.anyio
+class TestIntervalBindingValidation:
+    async def test_fixed_without_slot_id_returns_400(self, client, user_a):
+        await create_slot(client, user_a["token"], "Утро")
+        await create_slot(client, user_a["token"], "День")
+
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Душ", "type": "bool", "interval_binding": "fixed"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 400
+
+
+@pytest.mark.anyio
+class TestIntervalLabelsInMetricsApi:
+    async def test_fixed_slot_label_is_interval(self, client, user_a):
+        s1 = await create_slot(client, user_a["token"], "Утро")
+        s2 = await create_slot(client, user_a["token"], "День")
+
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Душ", "type": "bool", "interval_binding": "fixed",
+                  "interval_start_slot_id": s1["id"]},
+            headers=auth_headers(user_a["token"]),
+        )
+        data = resp.json()
+        assert len(data["slots"]) == 1
+        assert data["slots"][0]["label"] == "Утро → День"
+
+    async def test_floating_slots_have_interval_labels(self, client, user_a):
+        await create_slot(client, user_a["token"], "Утро")
+        await create_slot(client, user_a["token"], "День")
+        await create_slot(client, user_a["token"], "Вечер")
+
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Кофе", "type": "bool", "interval_binding": "floating"},
+            headers=auth_headers(user_a["token"]),
+        )
+        data = resp.json()
+        labels = [s["label"] for s in data["slots"]]
+        assert "Утро → День" in labels
+        assert "День → Вечер" in labels
+
+    async def test_list_metrics_shows_interval_labels(self, client, user_a):
+        s1 = await create_slot(client, user_a["token"], "Утро")
+        await create_slot(client, user_a["token"], "День")
+
+        await client.post(
+            "/api/metrics",
+            json={"name": "Душ", "type": "bool", "interval_binding": "fixed",
+                  "interval_start_slot_id": s1["id"]},
+            headers=auth_headers(user_a["token"]),
+        )
+
+        resp = await client.get("/api/metrics", headers=auth_headers(user_a["token"]))
+        metrics = resp.json()
+        shower = [m for m in metrics if m["name"] == "Душ"][0]
+        assert shower["slots"][0]["label"] == "Утро → День"
+
+    async def test_assessment_keeps_checkpoint_label(self, client, user_a):
+        s1 = await create_slot(client, user_a["token"], "Утро")
+        s2 = await create_slot(client, user_a["token"], "День")
+
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Настроение", "type": "scale", "scale_min": 1, "scale_max": 5,
+                  "is_checkpoint": True, "slot_configs": [{"slot_id": s1["id"]}, {"slot_id": s2["id"]}]},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["interval_binding"] == "daily"
+        labels = [s["label"] for s in data["slots"]]
+        assert "Утро" in labels
+        assert "День" in labels
+        assert "Утро → День" not in labels
+
+
+@pytest.mark.anyio
 class TestIntervalDailyPage:
     async def test_daily_shows_interval_labels(self, client, user_a):
         s1 = await create_slot(client, user_a["token"], "Утро")

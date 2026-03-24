@@ -156,14 +156,18 @@ class CorrelationEngine:
                 opts = self._enum_opts_by_metric.get(mid, [])
                 metric_slots = self._slots_by_metric.get(mid, [])
                 for opt in opts:
-                    self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"]), "enum_bool"))
+                    if len(metric_slots) > 1:
+                        self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"]), "enum_bool"))
                     if metric_slots:
                         for s in metric_slots:
                             self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"], slot_id=s["id"]), "enum_bool"))
+                    else:
+                        self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"]), "enum_bool"))
                 continue
             metric_slots = self._slots_by_metric.get(mid, [])
             if metric_slots:
-                self._sources.append((SourceKey(metric_id=mid), mt))
+                if len(metric_slots) > 1:
+                    self._sources.append((SourceKey(metric_id=mid), mt))
                 for s in metric_slots:
                     self._sources.append((SourceKey(metric_id=mid, slot_id=s["id"]), mt))
             else:
