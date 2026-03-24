@@ -161,3 +161,36 @@ def split_by_slot_categories(result: list[dict]) -> list[dict]:
                 split = {**item, "category_id": cat_id, "slots": cat_slots, "is_slot_split": True}
                 final.append(split)
     return final
+
+
+def split_by_checkpoints(result: list[dict], all_user_slots: list) -> list[dict]:
+    """Split multi-slot metrics into per-checkpoint items for checkpoint-based page layout.
+
+    Each metric with slots becomes N separate cards — one per checkpoint section.
+    Daily metrics (no slots) get checkpoint_section_id = None.
+    """
+    # Build slot_id → label mapping
+    slot_labels = {s["id"]: s["label"] for s in all_user_slots}
+
+    final: list[dict] = []
+    for item in result:
+        if not item.get("slots"):
+            # Daily metric — no checkpoint section
+            item["checkpoint_section_id"] = None
+            item["checkpoint_section_label"] = None
+            final.append(item)
+            continue
+
+        # Split each slot into its own item
+        for s in item["slots"]:
+            slot_id = s["slot_id"]
+            split = {
+                **item,
+                "checkpoint_section_id": slot_id,
+                "checkpoint_section_label": slot_labels.get(slot_id, s.get("label", "")),
+                "slots": [s],
+                "is_slot_split": True,
+            }
+            final.append(split)
+
+    return final

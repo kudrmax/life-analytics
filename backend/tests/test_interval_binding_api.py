@@ -104,12 +104,11 @@ class TestIntervalDailyPage:
         resp = await client.get("/api/daily/2026-03-24", headers=auth_headers(user_a["token"]))
         assert resp.status_code == 200
         metrics = resp.json()["metrics"]
+        # Multi-slot metrics are now split into per-checkpoint items
         coffee = [m for m in metrics if m["name"] == "Кофе"]
-        assert len(coffee) == 1
-        slots = coffee[0]["slots"]
-        assert len(slots) == 2
-        # Interval labels should be "Утро → День" and "День → Вечер"
-        labels = [s["label"] for s in slots]
+        assert len(coffee) == 2
+        # Each item has one slot with interval label
+        labels = [c["slots"][0]["label"] for c in coffee]
         assert "Утро → День" in labels
         assert "День → Вечер" in labels
 

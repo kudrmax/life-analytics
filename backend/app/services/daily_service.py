@@ -11,7 +11,7 @@ from app.analytics.value_converter import ValueConverter
 from app.repositories.daily_repository import DailyRepository
 from app.services.daily_helpers import (
     evaluate_visibility, compute_formulas, build_auto_metrics,
-    calculate_progress, split_by_slot_categories,
+    calculate_progress, split_by_checkpoints,
 )
 from app.timing import QueryTimer
 
@@ -32,9 +32,11 @@ class DailyService:
         compute_formulas(result, data["metrics_by_id"])
         auto_metrics = build_auto_metrics(result, data["metrics_by_id"], data["notes_count_map"], d)
         progress = calculate_progress(result)
-        result = split_by_slot_categories(result)
+        all_user_slots = data.get("all_user_slots", [])
+        result = split_by_checkpoints(result, all_user_slots)
         qt.mark("build"); qt.log()
-        return {"date": date_str, "metrics": result, "auto_metrics": auto_metrics, "progress": progress}
+        checkpoints = [{"id": s["id"], "label": s["label"]} for s in all_user_slots]
+        return {"date": date_str, "metrics": result, "checkpoints": checkpoints, "auto_metrics": auto_metrics, "progress": progress}
 
     async def _load_daily_data(self, d: date_type, qt: QueryTimer) -> dict:
         metrics = await self.repo.get_enabled_metrics_with_config()
@@ -85,6 +87,7 @@ class DailyService:
             "enum_options_by_metric": enum_opts,
             "notes_count_map": notes_count, "notes_by_metric": notes_by,
             "interval_label_map": interval_label_map,
+            "all_user_slots": all_user_slots,
         }
 
     def _build_metric_responses(self, data: dict, d: date_type, privacy_mode: bool) -> list[dict]:
@@ -103,6 +106,7 @@ class DailyService:
                 "scale_min": m["scale_min"], "scale_max": m["scale_max"], "scale_step": m["scale_step"],
                 "scale_labels": json.loads(m["scale_labels"]) if m.get("scale_labels") is not None else None,
                 "private": m_private, "hide_in_cards": m.get("hide_in_cards", False),
+                "is_checkpoint": m.get("is_checkpoint", False),
                 "interval_binding": m.get("interval_binding", "daily"),
                 "entry": None, "slots": None,
                 "formula": _parse_formula(m.get("formula")) or None,

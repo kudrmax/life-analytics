@@ -969,14 +969,16 @@ class TestPatchSlotLabelsFirstTime:
         )
         assert resp.status_code == 200
         daily = resp.json()
-        metric_data = next(
-            (m for m in daily["metrics"] if m["metric_id"] == metric["id"]), None,
-        )
-        assert metric_data is not None
-        assert metric_data["slots"] is not None
-        assert len(metric_data["slots"]) == 2
+        # Multi-slot metrics are split into per-checkpoint items
+        metric_items = [
+            m for m in daily["metrics"] if m["metric_id"] == metric["id"]
+        ]
+        assert len(metric_items) == 2
+        # Collect all slots across items
+        all_slots = [s for item in metric_items for s in item["slots"]]
+        assert len(all_slots) == 2
         # First slot should have the migrated value
-        first_slot = metric_data["slots"][0]
+        first_slot = all_slots[0]
         assert first_slot["entry"] is not None
         assert first_slot["entry"]["value"] == 42
 
@@ -1183,8 +1185,10 @@ class TestSlotReorderAndAdd:
             headers=auth_headers(user_a["token"]),
         )
         assert daily_resp.status_code == 200
-        m_data = next(m for m in daily_resp.json()["metrics"] if m["metric_id"] == metric["id"])
-        slot_values = {s["slot_id"]: s["entry"]["value"] for s in m_data["slots"] if s["entry"]}
+        # Multi-slot metrics are split into per-checkpoint items
+        m_items = [m for m in daily_resp.json()["metrics"] if m["metric_id"] == metric["id"]]
+        all_slots = [s for item in m_items for s in item["slots"]]
+        slot_values = {s["slot_id"]: s["entry"]["value"] for s in all_slots if s["entry"]}
         assert slot_values[slot_a["id"]] == 10
         assert slot_values[slot_b["id"]] == 20
 
@@ -1230,11 +1234,13 @@ class TestSlotReorderAndAdd:
             headers=auth_headers(user_a["token"]),
         )
         assert daily_resp.status_code == 200
-        m_data = next(m for m in daily_resp.json()["metrics"] if m["metric_id"] == metric["id"])
-        slot_values = {s["slot_id"]: s["entry"]["value"] for s in m_data["slots"] if s["entry"]}
+        # Multi-slot metrics are split into per-checkpoint items
+        m_items = [m for m in daily_resp.json()["metrics"] if m["metric_id"] == metric["id"]]
+        all_slots = [s for item in m_items for s in item["slots"]]
+        slot_values = {s["slot_id"]: s["entry"]["value"] for s in all_slots if s["entry"]}
         assert slot_values[slot_a["id"]] == 10
         assert slot_values[slot_b["id"]] == 20
-        new_slot = next(s for s in m_data["slots"] if s["label"] == "New")
+        new_slot = next(s for s in all_slots if s["label"] == "New")
         assert new_slot["entry"] is None
 
     async def test_add_slot_at_end(

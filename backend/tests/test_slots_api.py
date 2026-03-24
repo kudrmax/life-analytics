@@ -488,6 +488,9 @@ class TestSlotGlobalSortOrder:
         )
         assert resp.status_code == 200
         metrics = resp.json()["metrics"]
-        mood = next(m for m in metrics if m["metric_id"] == metric["id"])
-        slot_labels = [s["label"] for s in mood["slots"]]
+        # Multi-slot metrics are split into per-checkpoint items
+        mood_items = [m for m in metrics if m["metric_id"] == metric["id"]]
+        assert len(mood_items) == 2
+        # Items should be in global slot sort order: Morning, Evening
+        slot_labels = [item["slots"][0]["label"] for item in mood_items]
         assert slot_labels == ["Morning", "Evening"]

@@ -123,15 +123,16 @@ class TestCreateWithSlotConfigs:
         assert len(data["slots"]) == 2
         assert data["category_id"] is None
 
-    async def test_create_slot_configs_invalid_category_400(
+    async def test_create_slot_configs_category_id_ignored(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
+        """category_id in slot_configs is ignored (always NULL)."""
         slot_a = await create_slot(client, user_a["token"], "A")
         slot_b = await create_slot(client, user_a["token"], "B")
         resp = await client.post(
             "/api/metrics",
             json={
-                "name": "BadSlotCat",
+                "name": "IgnoredCat",
                 "type": "number",
                 "slot_configs": [
                     {"slot_id": slot_a["id"], "category_id": 999999},
@@ -140,7 +141,8 @@ class TestCreateWithSlotConfigs:
             },
             headers=auth_headers(user_a["token"]),
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 201
+        assert len(resp.json()["slots"]) == 2
 
 
 # ── Create condition validation ──────────────────────────────────────
@@ -352,7 +354,8 @@ class TestMiscEdgeCases:
         }, headers=auth_headers(user_a["token"]))
         assert resp.status_code == 200
 
-    async def test_update_slot_configs_invalid_category_400(self, client: AsyncClient, user_a: dict) -> None:
+    async def test_update_slot_configs_category_id_ignored(self, client: AsyncClient, user_a: dict) -> None:
+        """category_id in slot_configs is ignored on update (always NULL)."""
         slot_a = await create_slot(client, user_a["token"], "A")
         slot_b = await create_slot(client, user_a["token"], "B")
         m = await create_metric(client, user_a["token"], name="X", metric_type="number",
@@ -360,7 +363,7 @@ class TestMiscEdgeCases:
         resp = await client.patch(f"/api/metrics/{m['id']}", json={
             "slot_configs": [{"slot_id": slot_a["id"], "category_id": 999999}, {"slot_id": slot_b["id"]}],
         }, headers=auth_headers(user_a["token"]))
-        assert resp.status_code == 400
+        assert resp.status_code == 200
 
     async def test_update_slot_configs_first_time(self, client: AsyncClient, user_a: dict) -> None:
         m = await create_metric(client, user_a["token"], name="X", metric_type="number")

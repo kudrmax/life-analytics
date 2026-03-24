@@ -327,6 +327,46 @@ h3 {
     margin-bottom: 16px;
 }
 
+/* ─── Checkpoint sandwich ─── */
+.checkpoint-sandwich {
+    margin: 16px 0 0;
+}
+.checkpoint-sandwich-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.3px;
+    margin: 0;
+}
+.checkpoint-sandwich-line::before,
+.checkpoint-sandwich-line::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+.checkpoint-sandwich-assessments {
+    padding: 8px 0;
+}
+.checkpoint-sandwich-assessments .category {
+    margin-bottom: 0;
+}
+.checkpoint-sandwich-assessments .metric-card {
+    margin-bottom: 6px;
+}
+.checkpoint-sandwich-assessments .metric-card:last-child {
+    margin-bottom: 0;
+}
+.checkpoint-interval-facts {
+    padding: 8px 0;
+}
+.checkpoint-interval-facts .category {
+    margin-bottom: 0;
+}
+
 /* ─── Metric Card ─── */
 .metric-card {
     background: var(--surface);

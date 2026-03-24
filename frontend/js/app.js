@@ -757,16 +757,58 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
         }
     }
 
-    // Group metrics by category_id
-    const metricsByCat = {};
-    const uncategorized = [];
+    // Group metrics by checkpoint_section_id
+    const checkpoints = summary.checkpoints || [];
+    const metricsByCheckpoint = {};  // checkpoint_id → metrics[]
+    const dailyMetrics = [];        // checkpoint_section_id = null
     for (const m of summary.metrics) {
-        if (m.category_id && catById[m.category_id]) {
-            if (!metricsByCat[m.category_id]) metricsByCat[m.category_id] = [];
-            metricsByCat[m.category_id].push(m);
+        const cpId = m.checkpoint_section_id;
+        if (cpId != null) {
+            if (!metricsByCheckpoint[cpId]) metricsByCheckpoint[cpId] = [];
+            metricsByCheckpoint[cpId].push(m);
         } else {
-            uncategorized.push(m);
+            dailyMetrics.push(m);
         }
+    }
+
+    // Helper: render metrics grouped by category within a section
+    function renderSectionMetrics(metrics) {
+        let shtml = '';
+        const byCat = {};
+        const uncat = [];
+        for (const m of metrics) {
+            if (m.category_id && catById[m.category_id]) {
+                if (!byCat[m.category_id]) byCat[m.category_id] = [];
+                byCat[m.category_id].push(m);
+            } else {
+                uncat.push(m);
+            }
+        }
+        // Render categorized metrics
+        for (const topCat of categories) {
+            const topM = byCat[topCat.id] || [];
+            const childM = (topCat.children || []).filter(ch => (byCat[ch.id] || []).length > 0);
+            if (topM.length === 0 && childM.length === 0) continue;
+            if (topM.length > 0) {
+                shtml += `<div class="category"><h3>${_escapeHtml(topCat.name)}</h3>`;
+                for (const m of topM) shtml += renderMetricInput(m, metricNameById);
+                shtml += '</div>';
+            }
+            for (const ch of (topCat.children || [])) {
+                const chMetrics = byCat[ch.id] || [];
+                if (chMetrics.length === 0) continue;
+                shtml += `<div class="category"><h3>${_escapeHtml(ch.name)}</h3>`;
+                for (const m of chMetrics) shtml += renderMetricInput(m, metricNameById);
+                shtml += '</div>';
+            }
+        }
+        // Render uncategorized
+        if (uncat.length > 0) {
+            shtml += `<div class="category">`;
+            for (const m of uncat) shtml += renderMetricInput(m, metricNameById);
+            shtml += '</div>';
+        }
+        return shtml;
     }
 
     let html = '';
@@ -781,34 +823,38 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
             </button>
         </div>`;
     } else {
-        html += `<h3 class="section-header">Ваши метрики <span class="corr-count">${new Set(summary.metrics.map(m => m.metric_id)).size}</span></h3>`;
-        const hasCategories = categories.length > 0;
+        const uniqueMetricCount = new Set(summary.metrics.map(m => m.metric_id)).size;
+        html += `<h3 class="section-header">Ваши метрики <span class="corr-count">${uniqueMetricCount}</span></h3>`;
 
-        for (const topCat of categories) {
-            // Top-level: check if it or its children have metrics
-            const topMetrics = metricsByCat[topCat.id] || [];
-            const childrenWithMetrics = (topCat.children || []).filter(ch => (metricsByCat[ch.id] || []).length > 0);
-            if (topMetrics.length === 0 && childrenWithMetrics.length === 0) continue;
-
-            html += `<h2 class="fill-time-header">${_escapeHtml(topCat.name)}</h2>`;
-            if (topMetrics.length > 0) {
-                html += `<div class="category">`;
-                for (const m of topMetrics) html += renderMetricInput(m, metricNameById);
-                html += '</div>';
+        // Checkpoint sandwich layout
+        for (const cp of checkpoints) {
+            const cpMetrics = metricsByCheckpoint[cp.id] || [];
+            const assessments = cpMetrics.filter(m => m.is_checkpoint);
+            const facts = cpMetrics.filter(m => !m.is_checkpoint);
+            // Sandwich: line — assessments — line
+            html += `<div class="checkpoint-sandwich">`;
+            html += `<div class="checkpoint-sandwich-line">${_escapeHtml(cp.label)}</div>`;
+            if (assessments.length > 0) {
+                html += `<div class="checkpoint-sandwich-assessments">`;
+                html += renderSectionMetrics(assessments);
+                html += `</div>`;
             }
-            for (const ch of (topCat.children || [])) {
-                const chMetrics = metricsByCat[ch.id] || [];
-                if (chMetrics.length === 0) continue;
-                html += `<div class="category"><h3>${_escapeHtml(ch.name)}</h3>`;
-                for (const m of chMetrics) html += renderMetricInput(m, metricNameById);
-                html += '</div>';
+            html += `<div class="checkpoint-sandwich-line">${_escapeHtml(cp.label)}</div>`;
+            html += `</div>`;
+            // Facts between sandwiches — with spacing
+            if (facts.length > 0) {
+                html += `<div class="checkpoint-interval-facts">`;
+                html += renderSectionMetrics(facts);
+                html += `</div>`;
             }
         }
-        if (uncategorized.length > 0) {
-            if (hasCategories) html += `<h2 class="fill-time-header">Без категории</h2>`;
-            html += `<div class="category">`;
-            for (const m of uncategorized) html += renderMetricInput(m, metricNameById);
-            html += '</div>';
+
+        // Daily metrics section
+        if (dailyMetrics.length > 0) {
+            if (checkpoints.length > 0) {
+                html += `<h2 class="fill-time-header">Не привязаны к интервалам</h2>`;
+            }
+            html += renderSectionMetrics(dailyMetrics);
         }
     }
 
@@ -6042,14 +6088,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     sel.appendChild(chOpt);
                 }
             }
-            // Refresh slot category selects rendered before categories loaded
-            const slotListEl = document.getElementById('nm-slot-labels');
-            if (slotListEl) {
-                slotListEl.querySelectorAll('.slot-category-select').forEach(selEl => {
-                    const currentCatId = selEl.dataset.categoryId ? parseInt(selEl.dataset.categoryId) : null;
-                    selEl.innerHTML = _buildCategoryOptions(currentCatId);
-                });
-            }
+            // Slot category selects removed — categories stay on metric_definitions only
         } catch(e) { console.warn('Failed to load categories for modal', e); }
     })();
 
@@ -6643,7 +6682,6 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             row.className = 'slot-label-row';
             row.dataset.slotId = slot.id;
             row.innerHTML = `<span class="slot-selected-label">${_escapeHtml(slot.label)}</span>
-                <select class="form-select slot-category-select" data-category-id="${slot.category_id || ''}">${_buildCategoryOptions(slot.category_id)}</select>
                 <button type="button" class="btn-remove-slot">&times;</button>`;
             slotList.appendChild(row);
             row.querySelector('.btn-remove-slot').onclick = () => _removeSelectedSlot(slot.id);
@@ -6731,10 +6769,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     function getSlotConfigs() {
         const configs = [];
         for (const slot of _selectedSlots) {
-            const row = slotList?.querySelector(`.slot-label-row[data-slot-id="${slot.id}"]`);
-            const catSelect = row?.querySelector('.slot-category-select');
-            const catId = catSelect && catSelect.value ? parseInt(catSelect.value) : null;
-            configs.push({ slot_id: slot.id, category_id: catId || null });
+            configs.push({ slot_id: slot.id });
         }
         return configs;
     }

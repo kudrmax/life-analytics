@@ -202,11 +202,7 @@ class MetricsService:
                 raise InvalidOperationError("slot_id is required in slot_configs")
             if not await self.cfg_repo.check_slot_ownership(sid):
                 raise InvalidOperationError(f"Slot {sid} not found")
-            slot_cat_id = cfg.get("category_id")
-            if slot_cat_id is not None and not await self.cfg_repo.check_category_ownership(slot_cat_id):
-                raise InvalidOperationError(f"Category {slot_cat_id} not found")
-            await self.cfg_repo.insert_metric_slot(metric_id, sid, i, slot_cat_id)
-        await self.cfg_repo.clear_metric_category(metric_id)
+            await self.cfg_repo.insert_metric_slot(metric_id, sid, i, None)
 
     async def _create_condition(self, metric_id: int, data: MetricDefinitionCreate) -> None:
         if data.condition_metric_id is not None and data.condition_type is not None:
@@ -293,14 +289,11 @@ class MetricsService:
                 raise InvalidOperationError("slot_id is required in slot_configs")
             if not await self.cfg_repo.check_slot_ownership(sid):
                 raise InvalidOperationError(f"Slot {sid} not found")
-            slot_cat_id = cfg.get("category_id")
-            if slot_cat_id is not None and not await self.cfg_repo.check_category_ownership(slot_cat_id):
-                raise InvalidOperationError(f"Category {slot_cat_id} not found")
 
         if not existing:
             first_slot_id = None
             for i, cfg in enumerate(data.slot_configs):
-                await self.cfg_repo.insert_metric_slot(metric_id, cfg["slot_id"], i, cfg.get("category_id"))
+                await self.cfg_repo.insert_metric_slot(metric_id, cfg["slot_id"], i, None)
                 if i == 0:
                     first_slot_id = cfg["slot_id"]
             if first_slot_id:
@@ -312,13 +305,12 @@ class MetricsService:
                 sid = cfg["slot_id"]
                 seen.add(sid)
                 if sid in existing_by_slot:
-                    await self.cfg_repo.update_metric_slot(metric_id, sid, cfg.get("category_id"), i)
+                    await self.cfg_repo.update_metric_slot(metric_id, sid, None, i)
                 else:
-                    await self.cfg_repo.insert_metric_slot(metric_id, sid, i, cfg.get("category_id"))
+                    await self.cfg_repo.insert_metric_slot(metric_id, sid, i, None)
             for s in existing:
                 if s["slot_id"] not in seen:
                     await self.cfg_repo.disable_metric_slot(metric_id, s["slot_id"])
-        await self.cfg_repo.clear_metric_category(metric_id)
 
     async def _create_interval_slots(self, metric_id: int, binding: str, start_slot_id: int | None) -> None:
         """Auto-create metric_slots for interval-bound facts."""
@@ -331,7 +323,6 @@ class MetricsService:
             # Create metric_slots for all intervals (N-1 = all except last checkpoint)
             for i, slot in enumerate(user_slots[:-1]):
                 await self.cfg_repo.insert_metric_slot(metric_id, slot["id"], i, None)
-            await self.cfg_repo.clear_metric_category(metric_id)
         elif binding == "fixed" and start_slot_id is not None:
             await self.cfg_repo.insert_metric_slot(metric_id, start_slot_id, 0, None)
 
