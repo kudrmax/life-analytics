@@ -500,3 +500,50 @@ class TestIntervalBindingChangeMigration:
         )
         has_single_entry = sport[0]["entry"] is not None
         assert has_entry_in_slots or has_single_entry, "Entry should be accessible after full cycle"
+
+
+@pytest.mark.anyio
+class TestIntervalBindingUpdateNoMigration:
+    async def test_update_category_does_not_remigrate_entries(self, client, user_a):
+        """Bug: PATCH with same interval_slot_ids on already-by_interval metric caused 500
+        when null-slot and slot entries existed for same date (UniqueViolationError)."""
+        s1 = await create_slot(client, user_a["token"], "Утро")
+        cat_resp = await client.post(
+            "/api/categories",
+            json={"name": "Тест"},
+            headers=auth_headers(user_a["token"]),
+        )
+        cat = cat_resp.json()
+
+        metric = await create_metric(client, user_a["token"], name="Спорт", metric_type="bool")
+        # Step 1: create all_day entry for date D
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-24", True)
+        # Step 2: switch to by_interval → null entry migrated to s1 (slot_id=s1 now)
+        await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"interval_binding": "by_interval", "interval_slot_ids": [s1["id"]]},
+            headers=auth_headers(user_a["token"]),
+        )
+        # Step 3: switch back to all_day
+        await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={"interval_binding": "all_day"},
+            headers=auth_headers(user_a["token"]),
+        )
+        # Step 4: create a new all_day entry for same date D (slot_id=NULL)
+        # Now DB has BOTH (date=D, slot_id=s1) AND (date=D, slot_id=NULL) for this metric
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-24", False)
+        # Step 5: PATCH to by_interval again + category — frontend sends full form.
+        # DB now has both (date=D, slot_id=s1) and (date=D, slot_id=NULL).
+        # Before fix: migrate_null_slot_entries tries to move slot=NULL entry to s1,
+        # but (date=D, slot_id=s1) already exists → 500 UniqueViolationError
+        resp = await client.patch(
+            f"/api/metrics/{metric['id']}",
+            json={
+                "category_id": cat["id"],
+                "interval_binding": "by_interval",
+                "interval_slot_ids": [s1["id"]],
+            },
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200

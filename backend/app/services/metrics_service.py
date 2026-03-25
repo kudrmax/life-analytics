@@ -367,8 +367,9 @@ class MetricsService:
                 await self.cfg_repo.disable_metric_slot(metric_id, s["slot_id"])
         # Create new interval slots
         await self._create_interval_slots(metric_id, new_binding, data.interval_slot_ids)
-        # Migrate null-slot entries to first interval slot so they stay visible
-        if new_binding == "by_interval" and data.interval_slot_ids:
+        # Migrate null-slot entries to first interval slot so they stay visible.
+        # Only needed when actually transitioning from non-by_interval → by_interval.
+        if old_binding != "by_interval" and new_binding == "by_interval" and data.interval_slot_ids:
             await self.cfg_repo.migrate_null_slot_entries(metric_id, data.interval_slot_ids[0])
 
     async def _update_condition(self, metric_id: int, data: MetricDefinitionUpdate) -> None:

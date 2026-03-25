@@ -208,7 +208,17 @@ class MetricConfigRepository(BaseRepository):
 
     async def migrate_null_slot_entries(self, metric_id: int, target_slot_id: int) -> None:
         await self.conn.execute(
-            "UPDATE entries SET slot_id = $1 WHERE metric_id = $2 AND slot_id IS NULL",
+            """
+            UPDATE entries SET slot_id = $1
+            WHERE metric_id = $2 AND slot_id IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM entries e2
+                WHERE e2.metric_id = entries.metric_id
+                  AND e2.user_id = entries.user_id
+                  AND e2.date = entries.date
+                  AND e2.slot_id = $1
+              )
+            """,
             target_slot_id, metric_id,
         )
 
