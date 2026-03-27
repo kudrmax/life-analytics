@@ -128,47 +128,89 @@ class ImportRepository(BaseRepository):
     async def disable_enum_option(self, opt_id: int) -> None:
         await self.conn.execute("UPDATE enum_options SET enabled=FALSE WHERE id=$1", opt_id)
 
-    async def find_or_create_slot(self, label: str) -> int:
+    async def find_or_create_checkpoint(self, label: str) -> int:
         existing = await self.conn.fetchrow(
-            "SELECT id FROM measurement_slots WHERE user_id=$1 AND LOWER(label)=LOWER($2) AND deleted = FALSE",
+            "SELECT id FROM checkpoints WHERE user_id=$1 AND LOWER(label)=LOWER($2) AND deleted = FALSE",
             self.user_id, label.strip())
         if existing:
             return existing["id"]
         max_order = await self.conn.fetchval(
-            "SELECT COALESCE(MAX(sort_order),-1) FROM measurement_slots WHERE user_id=$1", self.user_id)
+            "SELECT COALESCE(MAX(sort_order),-1) FROM checkpoints WHERE user_id=$1", self.user_id)
         return await self.conn.fetchval(
-            "INSERT INTO measurement_slots (user_id, label, sort_order) VALUES ($1,$2,$3) RETURNING id",
+            "INSERT INTO checkpoints (user_id, label, sort_order) VALUES ($1,$2,$3) RETURNING id",
             self.user_id, label.strip(), max_order + 1)
 
-    async def insert_metric_slot(
-        self, metric_id: int, slot_id: int, sort_order: int, category_id: int | None = None,
+    async def find_or_create_interval(self, start_checkpoint_id: int, end_checkpoint_id: int) -> int:
+        existing = await self.conn.fetchrow(
+            """SELECT id FROM intervals
+               WHERE user_id=$1 AND start_checkpoint_id=$2 AND end_checkpoint_id=$3""",
+            self.user_id, start_checkpoint_id, end_checkpoint_id)
+        if existing:
+            return existing["id"]
+        return await self.conn.fetchval(
+            """INSERT INTO intervals (user_id, start_checkpoint_id, end_checkpoint_id)
+               VALUES ($1,$2,$3) RETURNING id""",
+            self.user_id, start_checkpoint_id, end_checkpoint_id)
+
+    async def insert_metric_checkpoint(
+        self, metric_id: int, checkpoint_id: int, sort_order: int, category_id: int | None = None,
     ) -> None:
         await self.conn.execute(
-            "INSERT INTO metric_slots (metric_id, slot_id, sort_order, category_id) VALUES ($1,$2,$3,$4)",
-            metric_id, slot_id, sort_order, category_id)
+            "INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order, category_id) VALUES ($1,$2,$3,$4)",
+            metric_id, checkpoint_id, sort_order, category_id)
 
-    async def get_metric_slots(self, metric_id: int) -> list[asyncpg.Record]:
+    async def insert_metric_interval(
+        self, metric_id: int, interval_id: int, sort_order: int, category_id: int | None = None,
+    ) -> None:
+        await self.conn.execute(
+            "INSERT INTO metric_intervals (metric_id, interval_id, sort_order, category_id) VALUES ($1,$2,$3,$4)",
+            metric_id, interval_id, sort_order, category_id)
+
+    async def get_metric_checkpoints(self, metric_id: int) -> list[asyncpg.Record]:
         return await self.conn.fetch(
-            "SELECT * FROM metric_slots WHERE metric_id=$1 ORDER BY sort_order", metric_id)
+            "SELECT * FROM metric_checkpoints WHERE metric_id=$1 ORDER BY sort_order", metric_id)
 
-    async def update_metric_slot_on_import(
-        self, row_id: int, slot_id: int, category_id: int | None,
+    async def get_metric_intervals(self, metric_id: int) -> list[asyncpg.Record]:
+        return await self.conn.fetch(
+            "SELECT * FROM metric_intervals WHERE metric_id=$1 ORDER BY sort_order", metric_id)
+
+    async def update_metric_checkpoint_on_import(
+        self, row_id: int, checkpoint_id: int, category_id: int | None,
     ) -> None:
         await self.conn.execute(
-            "UPDATE metric_slots SET slot_id=$1, enabled=TRUE, category_id=$2 WHERE id=$3",
-            slot_id, category_id, row_id)
+            "UPDATE metric_checkpoints SET checkpoint_id=$1, enabled=TRUE, category_id=$2 WHERE id=$3",
+            checkpoint_id, category_id, row_id)
 
-    async def upsert_metric_slot(
-        self, metric_id: int, slot_id: int, sort_order: int, category_id: int | None,
+    async def update_metric_interval_on_import(
+        self, row_id: int, interval_id: int, category_id: int | None,
     ) -> None:
         await self.conn.execute(
-            """INSERT INTO metric_slots (metric_id, slot_id, sort_order, category_id) VALUES ($1,$2,$3,$4)
-               ON CONFLICT (metric_id, slot_id) DO UPDATE
+            "UPDATE metric_intervals SET interval_id=$1, enabled=TRUE, category_id=$2 WHERE id=$3",
+            interval_id, category_id, row_id)
+
+    async def upsert_metric_checkpoint(
+        self, metric_id: int, checkpoint_id: int, sort_order: int, category_id: int | None,
+    ) -> None:
+        await self.conn.execute(
+            """INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order, category_id) VALUES ($1,$2,$3,$4)
+               ON CONFLICT (metric_id, checkpoint_id) DO UPDATE
                SET enabled=TRUE, sort_order=EXCLUDED.sort_order, category_id=EXCLUDED.category_id""",
-            metric_id, slot_id, sort_order, category_id)
+            metric_id, checkpoint_id, sort_order, category_id)
 
-    async def disable_metric_slot(self, row_id: int) -> None:
-        await self.conn.execute("UPDATE metric_slots SET enabled=FALSE WHERE id=$1", row_id)
+    async def upsert_metric_interval(
+        self, metric_id: int, interval_id: int, sort_order: int, category_id: int | None,
+    ) -> None:
+        await self.conn.execute(
+            """INSERT INTO metric_intervals (metric_id, interval_id, sort_order, category_id) VALUES ($1,$2,$3,$4)
+               ON CONFLICT (metric_id, interval_id) DO UPDATE
+               SET enabled=TRUE, sort_order=EXCLUDED.sort_order, category_id=EXCLUDED.category_id""",
+            metric_id, interval_id, sort_order, category_id)
+
+    async def disable_metric_checkpoint(self, row_id: int) -> None:
+        await self.conn.execute("UPDATE metric_checkpoints SET enabled=FALSE WHERE id=$1", row_id)
+
+    async def disable_metric_interval(self, row_id: int) -> None:
+        await self.conn.execute("UPDATE metric_intervals SET enabled=FALSE WHERE id=$1", row_id)
 
     async def clear_metric_category(self, metric_id: int) -> None:
         await self.conn.execute("UPDATE metric_definitions SET category_id=NULL WHERE id=$1", metric_id)
@@ -198,43 +240,58 @@ class ImportRepository(BaseRepository):
                    condition_type=EXCLUDED.condition_type, condition_value=EXCLUDED.condition_value""",
             metric_id, dep_id, cond_type, cond_val)
 
-    async def get_slot_lookup(self, metric_ids: list[int]) -> dict[int, dict[int, int]]:
+    async def get_checkpoint_lookup(self, metric_ids: list[int]) -> dict[int, dict[int, int]]:
         if not metric_ids:
             return defaultdict(dict)
         rows = await self.conn.fetch(
-            """SELECT msl.metric_id, ms.sort_order, ms.id
-               FROM metric_slots msl JOIN measurement_slots ms ON ms.id = msl.slot_id
-               WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE""",
+            """SELECT mc.metric_id, cp.sort_order, cp.id
+               FROM metric_checkpoints mc JOIN checkpoints cp ON cp.id = mc.checkpoint_id
+               WHERE mc.metric_id = ANY($1) AND mc.enabled = TRUE""",
             metric_ids)
         result: dict[int, dict[int, int]] = defaultdict(dict)
         for sr in rows:
             result[sr["metric_id"]][sr["sort_order"]] = sr["id"]
         return result
 
-    async def check_entry_duplicate(self, metric_id: int, d: date_type, slot_id: int | None) -> bool:
-        if slot_id is not None:
+    async def check_entry_duplicate(
+        self, metric_id: int, d: date_type,
+        checkpoint_id: int | None = None, interval_id: int | None = None,
+    ) -> bool:
+        if checkpoint_id is not None:
             val = await self.conn.fetchval(
-                "SELECT id FROM entries WHERE metric_id=$1 AND user_id=$2 AND date=$3 AND slot_id=$4",
-                metric_id, self.user_id, d, slot_id)
+                "SELECT id FROM entries WHERE metric_id=$1 AND user_id=$2 AND date=$3 AND checkpoint_id=$4",
+                metric_id, self.user_id, d, checkpoint_id)
+        elif interval_id is not None:
+            val = await self.conn.fetchval(
+                "SELECT id FROM entries WHERE metric_id=$1 AND user_id=$2 AND date=$3 AND interval_id=$4",
+                metric_id, self.user_id, d, interval_id)
         else:
             val = await self.conn.fetchval(
-                "SELECT id FROM entries WHERE metric_id=$1 AND user_id=$2 AND date=$3 AND slot_id IS NULL",
+                "SELECT id FROM entries WHERE metric_id=$1 AND user_id=$2 AND date=$3 AND checkpoint_id IS NULL AND interval_id IS NULL",
                 metric_id, self.user_id, d)
         return val is not None
 
-    async def create_entry(self, metric_id: int, d: date_type, slot_id: int | None) -> int:
+    async def create_entry(
+        self, metric_id: int, d: date_type,
+        checkpoint_id: int | None = None, interval_id: int | None = None,
+    ) -> int:
         return await self.conn.fetchval(
-            "INSERT INTO entries (metric_id, user_id, date, slot_id) VALUES ($1,$2,$3,$4) RETURNING id",
-            metric_id, self.user_id, d, slot_id)
+            "INSERT INTO entries (metric_id, user_id, date, checkpoint_id, interval_id) VALUES ($1,$2,$3,$4,$5) RETURNING id",
+            metric_id, self.user_id, d, checkpoint_id, interval_id)
 
     async def get_enum_option_labels(self, metric_id: int) -> dict[str, int]:
         rows = await self.conn.fetch("SELECT id, label FROM enum_options WHERE metric_id=$1", metric_id)
         return {r["label"]: r["id"] for r in rows}
 
-    async def insert_metric_slot_on_fly(self, metric_id: int, slot_id: int, sort_order: int) -> None:
+    async def insert_metric_checkpoint_on_fly(self, metric_id: int, checkpoint_id: int, sort_order: int) -> None:
         await self.conn.execute(
-            "INSERT INTO metric_slots (metric_id, slot_id, sort_order) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
-            metric_id, slot_id, sort_order)
+            "INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+            metric_id, checkpoint_id, sort_order)
+
+    async def insert_metric_interval_on_fly(self, metric_id: int, interval_id: int, sort_order: int) -> None:
+        await self.conn.execute(
+            "INSERT INTO metric_intervals (metric_id, interval_id, sort_order) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+            metric_id, interval_id, sort_order)
 
     async def upsert_aw_daily(self, d: date_type, total_seconds: int, active_seconds: int) -> None:
         await self.conn.execute(

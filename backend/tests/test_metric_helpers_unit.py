@@ -327,7 +327,7 @@ class TestBuildMetricOut:
         assert result.slug == "test"
         assert result.name == "Test"
         assert result.type.value == "bool"
-        assert result.slots == []
+        assert result.checkpoints == []
         assert result.private is False
 
     @pytest.mark.asyncio
@@ -390,10 +390,10 @@ class TestBuildMetricOut:
         assert result.private is True
 
     @pytest.mark.asyncio
-    async def test_with_slots(self) -> None:
-        """Slots should be converted to MeasurementSlotOut."""
+    async def test_with_checkpoints(self) -> None:
+        """Checkpoints should be converted to CheckpointOut."""
         row = _make_record({
-            "id": 5, "slug": "slotted", "name": "Slotted", "type": "bool",
+            "id": 5, "slug": "cp_metric", "name": "WithCPs", "type": "bool",
             "enabled": True, "sort_order": 0, "icon": "",
             "category_id": None, "scale_min": None, "scale_max": None,
             "scale_step": None, "scale_labels": None,
@@ -405,14 +405,14 @@ class TestBuildMetricOut:
             "condition_metric_id": None, "condition_type": None,
             "condition_value": None,
         })
-        slots = [
+        checkpoints = [
             {"id": 10, "label": "Morning", "sort_order": 0, "category_id": None},
             {"id": 11, "label": "Evening", "sort_order": 1, "category_id": None},
         ]
-        result = await build_metric_out(row, slots=slots)
-        assert len(result.slots) == 2
-        assert result.slots[0].label == "Morning"
-        assert result.slots[1].label == "Evening"
+        result = await build_metric_out(row, checkpoints=checkpoints)
+        assert len(result.checkpoints) == 2
+        assert result.checkpoints[0].label == "Morning"
+        assert result.checkpoints[1].label == "Evening"
 
     @pytest.mark.asyncio
     async def test_with_condition_value_json(self) -> None:
@@ -816,24 +816,24 @@ class TestGetMetricType:
 
 
 # ===================================================================
-# get_metric_slots tests (async, mocked connection)
+# get_metric_checkpoints tests (async, mocked connection)
 # ===================================================================
 
 
-class TestGetMetricSlots:
-    """Tests for MetricRepository.get_slots_for_metrics."""
+class TestGetMetricCheckpoints:
+    """Tests for MetricRepository.get_checkpoints_for_metrics."""
 
     def _make_repo(self, conn: AsyncMock) -> MetricRepository:
         return MetricRepository(conn, user_id=1)
 
     @pytest.mark.asyncio
-    async def test_returns_grouped_slots(self) -> None:
+    async def test_returns_grouped_checkpoints(self) -> None:
         row1 = {"metric_id": 1, "id": 10, "label": "Morning", "sort_order": 0, "category_id": None}
         row2 = {"metric_id": 1, "id": 11, "label": "Evening", "sort_order": 1, "category_id": None}
         row3 = {"metric_id": 2, "id": 20, "label": "Daily", "sort_order": 0, "category_id": 5}
         conn = AsyncMock()
         conn.fetch.return_value = [_make_record(row1), _make_record(row2), _make_record(row3)]
-        result = await self._make_repo(conn).get_slots_for_metrics(metric_ids=[1, 2])
+        result = await self._make_repo(conn).get_checkpoints_for_metrics(metric_ids=[1, 2])
         assert len(result[1]) == 2
         assert len(result[2]) == 1
         assert result[1][0]["label"] == "Morning"
@@ -843,7 +843,7 @@ class TestGetMetricSlots:
     async def test_empty_result(self) -> None:
         conn = AsyncMock()
         conn.fetch.return_value = []
-        result = await self._make_repo(conn).get_slots_for_metrics(metric_ids=[1])
+        result = await self._make_repo(conn).get_checkpoints_for_metrics(metric_ids=[1])
         assert len(result) == 0
 
     @pytest.mark.asyncio
@@ -851,16 +851,16 @@ class TestGetMetricSlots:
         """enabled_only=True adds AND msl.enabled = TRUE condition."""
         conn = AsyncMock()
         conn.fetch.return_value = []
-        await self._make_repo(conn).get_slots_for_metrics(metric_ids=[1], enabled_only=True)
+        await self._make_repo(conn).get_checkpoints_for_metrics(metric_ids=[1], enabled_only=True)
         query = conn.fetch.call_args[0][0]
-        assert "AND msl.enabled = TRUE" in query
+        assert "AND mc.enabled = TRUE" in query
 
     @pytest.mark.asyncio
     async def test_enabled_only_false(self) -> None:
         """enabled_only=False does not add enabled condition."""
         conn = AsyncMock()
         conn.fetch.return_value = []
-        await self._make_repo(conn).get_slots_for_metrics(metric_ids=[1], enabled_only=False)
+        await self._make_repo(conn).get_checkpoints_for_metrics(metric_ids=[1], enabled_only=False)
         query = conn.fetch.call_args[0][0]
         assert "AND msl.enabled = TRUE" not in query
 

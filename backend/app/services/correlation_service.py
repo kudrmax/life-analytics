@@ -17,7 +17,6 @@ from app.formula import get_referenced_metric_ids
 from app.domain.privacy import is_blocked, PRIVATE_MASK
 from app.repositories.analytics_repository import AnalyticsRepository
 from app.repositories.correlation_repository import CorrelationRepository
-from app.services.daily_helpers import build_interval_label_map
 from app.source_key import SourceKey, STREAK_TYPES
 
 logger = logging.getLogger(__name__)
@@ -114,17 +113,22 @@ class CorrelationService:
             for mid in (p["metric_a_id"], p["metric_b_id"]):
                 if mid is not None:
                     all_mids.add(mid)
-        mws = await self.repo.get_metrics_with_multiple_slots(list(all_mids))
+        mws = await self.repo.get_metrics_with_multiple_checkpoints(list(all_mids))
 
-        # Load slot labels and ordering for delta display labels
-        slot_labels, slot_ordering = await self._load_slot_info(list(all_mids | all_parent_ids))
+        # Load checkpoint/interval labels and ordering for delta display labels
+        all_lookup_ids = list(all_mids | all_parent_ids)
+        checkpoint_labels, checkpoint_ordering = await self._load_checkpoint_info(all_lookup_ids)
+        interval_labels, interval_ordering = await self._load_interval_info(all_lookup_ids)
+        # Merge labels and ordering for PairFormatter
+        merged_labels = {**checkpoint_labels, **interval_labels}
+        merged_ordering = {**checkpoint_ordering, **interval_ordering}
 
         return {
             "pairs": [PairFormatter(
                 metric_icons=metric_icons, enum_labels=enum_labels,
                 parent_names=parent_names, privacy_mode=privacy_mode,
-                metrics_with_slots=mws,
-                slot_labels=slot_labels, slot_ordering=slot_ordering,
+                metrics_with_checkpoints=mws,
+                checkpoint_labels=merged_labels, checkpoint_ordering=merged_ordering,
             ).format_pair(p) for p in pairs],
             "total": total, "has_more": offset + limit < total,
         }
@@ -170,17 +174,20 @@ class CorrelationService:
         mb_name = await self.repo.get_metric_name(row["metric_b_id"]) if row["metric_b_id"] else None
         all_chart_mids = [mid for mid in (row["metric_a_id"], row["metric_b_id"]) if mid]
         all_chart_mids += list(parent_ids)
-        chart_mws = await self.repo.get_metrics_with_multiple_slots(all_chart_mids)
-        slot_labels, slot_ordering = await self._load_slot_info(all_chart_mids)
+        chart_mws = await self.repo.get_metrics_with_multiple_checkpoints(all_chart_mids)
+        checkpoint_labels, checkpoint_ordering = await self._load_checkpoint_info(all_chart_mids)
+        interval_labels, interval_ordering = await self._load_interval_info(all_chart_mids)
+        merged_labels = {**checkpoint_labels, **interval_labels}
+        merged_ordering = {**checkpoint_ordering, **interval_ordering}
 
         label_a = PRIVATE_MASK if blocked_a else PairFormatter.build_display_label(
             row["source_key_a"], ma_name, parent_names.get(sk_a.auto_parent_metric_id),
-            metric_type=type_a, has_slots=(row["metric_a_id"] in chart_mws if row["metric_a_id"] else False),
-            slot_labels=slot_labels, slot_ordering=slot_ordering)
+            metric_type=type_a, has_checkpoints=(row["metric_a_id"] in chart_mws if row["metric_a_id"] else False),
+            checkpoint_labels=merged_labels, checkpoint_ordering=merged_ordering)
         label_b = PRIVATE_MASK if blocked_b else PairFormatter.build_display_label(
             row["source_key_b"], mb_name, parent_names.get(sk_b.auto_parent_metric_id),
-            metric_type=type_b, has_slots=(row["metric_b_id"] in chart_mws if row["metric_b_id"] else False),
-            slot_labels=slot_labels, slot_ordering=slot_ordering)
+            metric_type=type_b, has_checkpoints=(row["metric_b_id"] in chart_mws if row["metric_b_id"] else False),
+            checkpoint_labels=merged_labels, checkpoint_ordering=merged_ordering)
 
         return {
             "dates": common if not (blocked_a or blocked_b) else [],
@@ -199,7 +206,7 @@ class CorrelationService:
             ref_ids = get_referenced_metric_ids(formula)
             return await fetcher.values_by_date_for_computed(
                 formula, metric.get("result_type") or "float", ref_ids, start_date, end_date, self.user_id)
-        return await fetcher.values_by_date_for_slot(metric_id, metric["type"], start_date, end_date, self.user_id)
+        return await fetcher.values_by_date_for_checkpoint(metric_id, metric["type"], start_date, end_date, self.user_id)
 
     @staticmethod
     def _collect_source_key_ids(pairs) -> tuple[set[int], set[int]]:
@@ -216,16 +223,16 @@ class CorrelationService:
                     enum_ids.add(sk.auto_option_id)
         return parent_ids, enum_ids
 
-    async def _load_slot_info(self, metric_ids: list[int]) -> tuple[dict[int, str], dict[int, list[int]]]:
-        """Load slot labels and ordering for metrics (for delta display labels)."""
+    async def _load_checkpoint_info(self, metric_ids: list[int]) -> tuple[dict[int, str], dict[int, list[int]]]:
+        """Load checkpoint labels and ordering for metrics (for delta display labels)."""
         if not metric_ids:
             return {}, {}
         rows = await self.conn.fetch(
-            """SELECT ms.id, ms.label, ms.sort_order, msl.metric_id
-               FROM metric_slots msl
-               JOIN measurement_slots ms ON ms.id = msl.slot_id
-               WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE
-               ORDER BY msl.metric_id, ms.sort_order""",
+            """SELECT c.id, c.label, c.sort_order, mc.metric_id
+               FROM metric_checkpoints mc
+               JOIN checkpoints c ON c.id = mc.checkpoint_id
+               WHERE mc.metric_id = ANY($1) AND mc.enabled = TRUE AND c.deleted = FALSE
+               ORDER BY mc.metric_id, c.sort_order""",
             list(set(metric_ids)),
         )
         labels: dict[int, str] = {}
@@ -233,25 +240,28 @@ class CorrelationService:
         for r in rows:
             labels[r["id"]] = r["label"]
             ordering.setdefault(r["metric_id"], []).append(r["id"])
+        return labels, ordering
 
-        # Replace slot labels with interval labels for interval-bound metrics
-        interval_mids = await self.conn.fetch(
-            """SELECT id FROM metric_definitions
-               WHERE id = ANY($1) AND interval_binding = 'by_interval'""",
+    async def _load_interval_info(self, metric_ids: list[int]) -> tuple[dict[int, str], dict[int, list[int]]]:
+        """Load interval labels and ordering for metrics (for delta display labels)."""
+        if not metric_ids:
+            return {}, {}
+        rows = await self.conn.fetch(
+            """SELECT i.id, cs.label AS start_label, ce.label AS end_label,
+                      mi.sort_order, mi.metric_id
+               FROM metric_intervals mi
+               JOIN intervals i ON i.id = mi.interval_id
+               JOIN checkpoints cs ON cs.id = i.start_checkpoint_id
+               JOIN checkpoints ce ON ce.id = i.end_checkpoint_id
+               WHERE mi.metric_id = ANY($1) AND mi.enabled = TRUE
+               ORDER BY mi.metric_id, mi.sort_order""",
             list(set(metric_ids)),
         )
-        if interval_mids:
-            all_user_slots = await self.conn.fetch(
-                "SELECT id, label, sort_order FROM measurement_slots WHERE user_id = $1 ORDER BY sort_order",
-                self.user_id,
-            )
-            interval_labels = build_interval_label_map([dict(s) for s in all_user_slots])
-            interval_mid_set = {r["id"] for r in interval_mids}
-            for mid in interval_mid_set:
-                for slot_id in ordering.get(mid, []):
-                    if slot_id in interval_labels:
-                        labels[slot_id] = interval_labels[slot_id]
-
+        labels: dict[int, str] = {}
+        ordering: dict[int, list[int]] = {}
+        for r in rows:
+            labels[r["id"]] = f"{r['start_label']} → {r['end_label']}"
+            ordering.setdefault(r["metric_id"], []).append(r["id"])
         return labels, ordering
 
     async def _batch_load_parents(self, parent_ids: set[int]) -> tuple[dict, dict]:

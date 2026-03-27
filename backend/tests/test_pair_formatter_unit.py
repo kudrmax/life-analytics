@@ -25,8 +25,10 @@ def _make_pair(**overrides: object) -> dict:
         "icon_b": "🏃",
         "metric_a_id": 1,
         "metric_b_id": 2,
-        "slot_label_a": None,
-        "slot_label_b": None,
+        "checkpoint_a_id": None,
+        "checkpoint_b_id": None,
+        "interval_a_id": None,
+        "interval_b_id": None,
         "private_a": False,
         "private_b": False,
         "quality_issue": None,
@@ -41,7 +43,7 @@ def _make_formatter(**overrides: object) -> PairFormatter:
         "enum_labels": {},
         "parent_names": {},
         "privacy_mode": False,
-        "metrics_with_slots": None,
+        "metrics_with_checkpoints": None,
     }
     defaults.update(overrides)
     return PairFormatter(**defaults)
@@ -114,21 +116,21 @@ class TestBuildDisplayLabel(unittest.TestCase):
         result = PairFormatter.build_display_label("metric:5", None, None)
         assert result == "Удалённая метрика"
 
-    def test_bool_with_slots_aggregate(self) -> None:
+    def test_bool_with_checkpoints_aggregate(self) -> None:
         result = PairFormatter.build_display_label(
-            "metric:5", "Спорт", None, metric_type="bool", has_slots=True,
+            "metric:5", "Спорт", None, metric_type="bool", has_checkpoints=True,
         )
         assert result == "Спорт (хоть раз)"
 
-    def test_bool_with_slots_deleted(self) -> None:
+    def test_bool_with_checkpoints_deleted(self) -> None:
         result = PairFormatter.build_display_label(
-            "metric:5", None, None, metric_type="bool", has_slots=True,
+            "metric:5", None, None, metric_type="bool", has_checkpoints=True,
         )
         assert result == "Удалённая метрика"
 
-    def test_bool_with_slot_id_no_annotation(self) -> None:
+    def test_bool_with_checkpoint_id_no_annotation(self) -> None:
         result = PairFormatter.build_display_label(
-            "metric:5:slot:3", "Спорт", None, metric_type="bool", has_slots=True,
+            "metric:5:checkpoint:3", "Спорт", None, metric_type="bool", has_checkpoints=True,
         )
         assert result == "Спорт"
 
@@ -142,13 +144,13 @@ class TestBuildDisplayLabel(unittest.TestCase):
         result = PairFormatter.build_display_label(sk.to_str(), None, "Дневник")
         assert result == "Дневник: кол-во заметок"
 
-    def test_auto_slot_max(self) -> None:
-        sk = SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=5)
+    def test_auto_checkpoint_max(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MAX, auto_parent_metric_id=5)
         result = PairFormatter.build_display_label(sk.to_str(), None, "Давление")
         assert result == "Давление: максимум"
 
-    def test_auto_slot_min(self) -> None:
-        sk = SourceKey(auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=5)
+    def test_auto_checkpoint_min(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MIN, auto_parent_metric_id=5)
         result = PairFormatter.build_display_label(sk.to_str(), None, "Давление")
         assert result == "Давление: минимум"
 
@@ -364,12 +366,12 @@ class TestFormatPair(unittest.TestCase):
         result = fmt.format_pair(pair)
         assert result["option_a"] == ""
 
-    def test_slot_labels_passed_through(self) -> None:
+    def test_binding_labels_passed_through(self) -> None:
         fmt = _make_formatter()
-        pair = _make_pair(slot_label_a="Утро", slot_label_b="Вечер")
+        pair = _make_pair(checkpoint_a_id=1, checkpoint_b_id=2)
         result = fmt.format_pair(pair)
-        assert result["slot_label_a"] == "Утро"
-        assert result["slot_label_b"] == "Вечер"
+        assert "binding_label_a" in result
+        assert "binding_label_b" in result
 
     def test_hints_with_positive_correlation(self) -> None:
         fmt = _make_formatter()

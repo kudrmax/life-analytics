@@ -11,22 +11,30 @@ from app.analytics.value_converter import ValueConverter
 _parse_formula = ValueConverter.parse_formula
 
 
-def build_interval_label_map(all_user_slots: list[Mapping]) -> dict[int, str]:
-    """Build slot_id → interval label mapping (e.g. slot_id(Утро) → "Утро → День")."""
-    sorted_slots = sorted(all_user_slots, key=lambda s: s["sort_order"])
+def build_interval_label_map(all_user_checkpoints: list[Mapping]) -> dict[int, str]:
+    """Build checkpoint_id → interval label mapping (e.g. checkpoint_id(Утро) → "Утро → День").
+
+    Kept for backward compatibility. Uses checkpoints sorted by sort_order.
+    """
+    sorted_checkpoints = sorted(all_user_checkpoints, key=lambda s: s["sort_order"])
     result: dict[int, str] = {}
-    for i, s in enumerate(sorted_slots):
-        if i + 1 < len(sorted_slots):
-            result[s["id"]] = f"{s['label']} → {sorted_slots[i + 1]['label']}"
+    for i, cp in enumerate(sorted_checkpoints):
+        if i + 1 < len(sorted_checkpoints):
+            result[cp["id"]] = f"{cp['label']} → {sorted_checkpoints[i + 1]['label']}"
     return result
 
 
 def extract_dep_value(item: dict):
     """Extract dependency value from a daily item for condition evaluation."""
-    if item.get("slots"):
-        for s in item["slots"]:
-            if s.get("entry") is not None:
-                return s["entry"]["value"]
+    if item.get("checkpoints"):
+        for cp in item["checkpoints"]:
+            if cp.get("entry") is not None:
+                return cp["entry"]["value"]
+        return None
+    if item.get("intervals"):
+        for iv in item["intervals"]:
+            if iv.get("entry") is not None:
+                return iv["entry"]["value"]
         return None
     if item.get("entry") is not None:
         return item["entry"]["value"]
@@ -75,9 +83,14 @@ def compute_formulas(result: list[dict], metrics_by_id: dict) -> None:
         if not m or m["type"] == MetricType.computed:
             continue
         mt = m["type"]
-        if item["slots"]:
-            vals = [cv for s in item["slots"] if s["entry"] is not None
-                    for cv in [convert_metric_value(s["entry"]["value"], mt, m["scale_min"], m["scale_max"])]
+        if item.get("checkpoints"):
+            vals = [cv for cp in item["checkpoints"] if cp["entry"] is not None
+                    for cv in [convert_metric_value(cp["entry"]["value"], mt, m["scale_min"], m["scale_max"])]
+                    if cv is not None]
+            numeric_by_id[item["metric_id"]] = (sum(vals) / len(vals)) if vals else None
+        elif item.get("intervals"):
+            vals = [cv for iv in item["intervals"] if iv["entry"] is not None
+                    for cv in [convert_metric_value(iv["entry"]["value"], mt, m["scale_min"], m["scale_max"])]
                     if cv is not None]
             numeric_by_id[item["metric_id"]] = (sum(vals) / len(vals)) if vals else None
         else:
@@ -115,8 +128,11 @@ def build_auto_metrics(
                          "source_metric_id": item["metric_id"], "source_metric_name": name,
                          "value": notes_count_map.get(item["metric_id"], 0)})
         if m["type"] in (MetricType.number, MetricType.duration):
-            if item["slots"]:
-                vals = [s["entry"]["value"] for s in item["slots"] if s["entry"] is not None]
+            if item.get("checkpoints"):
+                vals = [cp["entry"]["value"] for cp in item["checkpoints"] if cp["entry"] is not None]
+                nz = any(v != 0 for v in vals) if vals else False
+            elif item.get("intervals"):
+                vals = [iv["entry"]["value"] for iv in item["intervals"] if iv["entry"] is not None]
                 nz = any(v != 0 for v in vals) if vals else False
             else:
                 nz = item["entry"] is not None and item["entry"]["value"] != 0
@@ -144,12 +160,17 @@ def calculate_progress(result: list[dict]) -> dict:
             continue
         if item.get("interval_binding") == "moment":
             total += 1
-            if item.get("slots"):
+            if item.get("intervals"):
                 filled += 1
-        elif item["slots"]:
-            for s in item["slots"]:
+        elif item.get("checkpoints"):
+            for cp in item["checkpoints"]:
                 total += 1
-                if s["entry"] is not None:
+                if cp["entry"] is not None:
+                    filled += 1
+        elif item.get("intervals"):
+            for iv in item["intervals"]:
+                total += 1
+                if iv["entry"] is not None:
                     filled += 1
         else:
             total += 1
@@ -158,54 +179,87 @@ def calculate_progress(result: list[dict]) -> dict:
     return {"filled": filled, "total": total, "percent": round(filled / total * 100) if total > 0 else 0}
 
 
-def split_by_slot_categories(result: list[dict]) -> list[dict]:
-    """Split multi-slot metrics with different slot categories into separate items."""
+def split_by_binding_categories(result: list[dict]) -> list[dict]:
+    """Split multi-checkpoint/interval metrics with different categories into separate items."""
     final: list[dict] = []
     for item in result:
-        if not item["slots"]:
+        sub_items = item.get("checkpoints") or item.get("intervals")
+        if not sub_items:
             final.append(item)
             continue
         groups: dict[int | None, list] = {}
-        for s in item["slots"]:
+        for s in sub_items:
             groups.setdefault(s.get("category_id"), []).append(s)
         if len(groups) == 1:
             item["category_id"] = next(iter(groups.keys()))
             final.append(item)
         else:
-            for cat_id, cat_slots in groups.items():
-                split = {**item, "category_id": cat_id, "slots": cat_slots, "is_slot_split": True}
+            key = "checkpoints" if item.get("checkpoints") else "intervals"
+            for cat_id, cat_items in groups.items():
+                split = {**item, "category_id": cat_id, key: cat_items, "is_checkpoint_split": True}
                 final.append(split)
     return final
 
 
-def split_by_checkpoints(result: list[dict], all_user_slots: list) -> list[dict]:
-    """Split multi-slot metrics into per-checkpoint items for checkpoint-based page layout.
+def split_by_checkpoints(
+    result: list[dict],
+    all_user_checkpoints: list,
+    active_intervals: list,
+) -> list[dict]:
+    """Split metrics into per-checkpoint items for checkpoint-based page layout.
 
-    Each metric with slots becomes N separate cards — one per checkpoint section.
-    Daily metrics (no slots) get checkpoint_section_id = None.
+    Checkpoint metrics: each checkpoint sub-item becomes a separate card with checkpoint_section_id.
+    Interval metrics: each interval sub-item placed after its start checkpoint.
+    Daily metrics (no checkpoints/intervals) get checkpoint_section_id = None.
     """
-    # Build slot_id → label mapping
-    slot_labels = {s["id"]: s["label"] for s in all_user_slots}
+    # Build interval_id → start_checkpoint_id mapping
+    interval_start_cp: dict[int, int] = {}
+    for iv in active_intervals:
+        interval_start_cp[iv["id"]] = iv["start_checkpoint_id"]
+
+    # Build checkpoint labels
+    checkpoint_labels = {c["id"]: c["label"] for c in all_user_checkpoints}
 
     final: list[dict] = []
     for item in result:
-        if not item.get("slots") or item.get("interval_binding") == "moment":
+        has_checkpoints = item.get("checkpoints")
+        has_intervals = item.get("intervals")
+        is_moment = item.get("interval_binding") == "moment"
+
+        if is_moment or (not has_checkpoints and not has_intervals):
             # Daily metric or moment-binding — no checkpoint section (single card)
             item["checkpoint_section_id"] = None
             item["checkpoint_section_label"] = None
             final.append(item)
             continue
 
-        # Split each slot into its own item
-        for s in item["slots"]:
-            slot_id = s["slot_id"]
-            split = {
-                **item,
-                "checkpoint_section_id": slot_id,
-                "checkpoint_section_label": slot_labels.get(slot_id, s.get("label", "")),
-                "slots": [s],
-                "is_slot_split": True,
-            }
-            final.append(split)
+        # Split checkpoint sub-items
+        if has_checkpoints:
+            for cp in item["checkpoints"]:
+                cp_id = cp["checkpoint_id"]
+                split = {
+                    **item,
+                    "checkpoint_section_id": cp_id,
+                    "checkpoint_section_label": checkpoint_labels.get(cp_id, cp.get("label", "")),
+                    "checkpoints": [cp],
+                    "intervals": None,
+                    "is_checkpoint_split": True,
+                }
+                final.append(split)
+
+        # Split interval sub-items (placed after the start checkpoint)
+        if has_intervals:
+            for iv in item["intervals"]:
+                iv_id = iv["interval_id"]
+                start_cp_id = interval_start_cp.get(iv_id)
+                split = {
+                    **item,
+                    "checkpoint_section_id": start_cp_id,
+                    "checkpoint_section_label": checkpoint_labels.get(start_cp_id, "") if start_cp_id else None,
+                    "checkpoints": None,
+                    "intervals": [iv],
+                    "is_checkpoint_split": True,
+                }
+                final.append(split)
 
     return final

@@ -152,7 +152,7 @@ function navigateTo(page, params = {}) {
         nav.style.display = (page === 'login' || page === 'register') ? 'none' : '';
     }
 
-    const activePage = page === 'metric-detail' ? 'charts' : page === 'categories' ? 'settings' : page === 'slots' ? 'settings' : page === 'insights' ? 'insights' : page;
+    const activePage = page === 'metric-detail' ? 'charts' : page === 'categories' ? 'settings' : page === 'checkpoints' ? 'settings' : page === 'insights' ? 'insights' : page;
     document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === activePage));
     const main = document.getElementById('main');
 
@@ -167,7 +167,7 @@ function navigateTo(page, params = {}) {
         case 'metric-detail': renderMetricDetail(main, params.metricId); break;
         case 'settings': renderSettings(main, params); break;
         case 'categories': renderCategoryManager(main); break;
-        case 'slots': renderSlotManager(main); break;
+        case 'checkpoints': renderCheckpointManager(main); break;
     }
 }
 
@@ -1032,13 +1032,14 @@ function renderMetricInput(m, metricNameById) {
     // Condition not met — show hint instead of input
     if (m.condition && !m.condition_met) {
         const depName = (metricNameById && metricNameById[m.condition.depends_on_metric_id]) || 'другую метрику';
-        const hasEntry = !!(m.entry || (m.slots && m.slots.some(s => s.entry)));
+        const _allBindings = m.checkpoints || m.intervals || [];
+        const hasEntry = !!(m.entry || (_allBindings.length > 0 && _allBindings.some(s => s.entry)));
         let currentValHtml = '';
         if (hasEntry) {
             let dv = '';
             if (m.entry && m.entry.display_value) dv = m.entry.display_value;
-            else if (m.slots) {
-                const parts = m.slots.filter(s => s.entry).map(s => `${s.label}: ${s.entry.display_value || s.entry.value}`);
+            else if (_allBindings.length > 0) {
+                const parts = _allBindings.filter(s => s.entry).map(s => `${s.label}: ${s.entry.display_value || s.entry.value}`);
                 dv = parts.join(', ');
             }
             if (dv) currentValHtml = `<div class="condition-current-value">Текущее значение: ${dv}</div>`;
@@ -1143,12 +1144,12 @@ function renderMetricInput(m, metricNameById) {
 
     // Moment-binding metric — single card with add-interval button
     if (m.interval_binding === 'moment') {
-        const slots = m.slots || [];
-        const isFilled = slots.length > 0;
+        const momentIntervals = m.intervals || [];
+        const isFilled = momentIntervals.length > 0;
         const filledClass = isFilled ? 'filled' : '';
-        let slotsHtml = '';
-        for (const slot of slots) {
-            const entry = slot.entry;
+        let intervalsHtml = '';
+        for (const iv of momentIntervals) {
+            const entry = iv.entry;
             const val = entry ? entry.value : null;
             const entryId = entry ? entry.id : null;
             let input;
@@ -1164,9 +1165,9 @@ function renderMetricInput(m, metricNameById) {
             }
             else input = renderBoolean(val);
             const clearBtn = `<button class="period-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`;
-            slotsHtml += `<div class="metric-slot" data-slot-id="${slot.slot_id}" data-entry-id="${entryId || ''}">
+            intervalsHtml += `<div class="metric-interval" data-interval-id="${iv.interval_id}" data-entry-id="${entryId || ''}">
                 <div class="period-header">
-                    <span class="period-label">${_escapeHtml(slot.label)}</span>
+                    <span class="period-label">${_escapeHtml(iv.label)}</span>
                     ${clearBtn}
                 </div>
                 <div class="metric-input">${input}</div>
@@ -1178,15 +1179,15 @@ function renderMetricInput(m, metricNameById) {
                 <label class="metric-label">${metricLabelHtml(m)}</label>
             </div>
             ${descHtml}
-            <div class="multiple-entry">${slotsHtml}</div>
+            <div class="multiple-entry">${intervalsHtml}</div>
             <button class="btn-small btn-add-moment" data-action="add-moment-interval" data-metric-id="${m.metric_id}" style="margin-top:8px">+ Добавить интервал</button>
         </div>`;
     }
 
-    // Split single slot — render as regular card with composite name
-    if (m.is_slot_split && m.slots && m.slots.length === 1) {
-        const slot = m.slots[0];
-        const entry = slot.entry;
+    // Split single checkpoint — render as regular card with composite name
+    if (m.is_checkpoint_split && m.checkpoints && m.checkpoints.length === 1) {
+        const cp = m.checkpoints[0];
+        const entry = cp.entry;
         const val = entry ? entry.value : null;
         const entryId = entry ? entry.id : null;
         const isFilled = !!entry;
@@ -1209,14 +1210,14 @@ function renderMetricInput(m, metricNameById) {
             ? `<button class="metric-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`
             : '';
 
-        const slotBadge = `<span class="slot-badge">${_escapeHtml(slot.label)}</span>`;
+        const checkpointBadge = `<span class="checkpoint-badge">${_escapeHtml(cp.label)}</span>`;
         const labelHtml = m.icon
-            ? `<span class="metric-icon">${_escapeHtml(m.icon)}</span> ${_escapeHtml(m.name)}${slotBadge}`
-            : `${_escapeHtml(m.name)}${slotBadge}`;
+            ? `<span class="metric-icon">${_escapeHtml(m.icon)}</span> ${_escapeHtml(m.name)}${checkpointBadge}`
+            : `${_escapeHtml(m.name)}${checkpointBadge}`;
 
         const splitDescHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
 
-        return `<div class="metric-card${hicCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}" data-slot-id="${slot.slot_id}">
+        return `<div class="metric-card${hicCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}" data-checkpoint-id="${cp.checkpoint_id}">
             <div class="metric-header">
                 <label class="metric-label">${labelHtml}</label>
                 ${clearBtn}
@@ -1226,14 +1227,16 @@ function renderMetricInput(m, metricNameById) {
         </div>`;
     }
 
-    // Multi-slot metric
-    if (m.slots && m.slots.length > 0) {
-        const allFilled = m.slots.every(s => s.entry !== null);
+    // Multi-checkpoint or multi-interval metric
+    const _multiBindings = m.checkpoints || m.intervals || [];
+    if (_multiBindings.length > 0) {
+        const isCheckpointMetric = !!(m.checkpoints && m.checkpoints.length > 0);
+        const allFilled = _multiBindings.every(s => s.entry !== null);
         const filledClass = allFilled ? 'filled' : '';
 
-        let slotsHtml = '<div class="multiple-entry">';
-        for (const slot of m.slots) {
-            const entry = slot.entry;
+        let bindingsHtml = '<div class="multiple-entry">';
+        for (const binding of _multiBindings) {
+            const entry = binding.entry;
             const val = entry ? entry.value : null;
             const entryId = entry ? entry.id : null;
 
@@ -1254,15 +1257,19 @@ function renderMetricInput(m, metricNameById) {
                 ? `<button class="period-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`
                 : '';
 
-            slotsHtml += `<div class="metric-slot" data-slot-id="${slot.slot_id}" data-entry-id="${entryId || ''}">
+            const bindingIdAttr = isCheckpointMetric
+                ? `data-checkpoint-id="${binding.checkpoint_id}"`
+                : `data-interval-id="${binding.interval_id}"`;
+            const cssClass = isCheckpointMetric ? 'metric-checkpoint' : 'metric-interval';
+            bindingsHtml += `<div class="${cssClass}" ${bindingIdAttr} data-entry-id="${entryId || ''}">
                 <div class="period-header">
-                    <span class="period-label">${_escapeHtml(slot.label)}</span>
+                    <span class="period-label">${_escapeHtml(binding.label)}</span>
                     ${clearBtn}
                 </div>
                 <div class="metric-input">${input}</div>
             </div>`;
         }
-        slotsHtml += '</div>';
+        bindingsHtml += '</div>';
 
         const multiDescHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
         return `<div class="metric-card${hicCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="">
@@ -1270,11 +1277,11 @@ function renderMetricInput(m, metricNameById) {
                 <label class="metric-label">${metricLabelHtml(m)}</label>
             </div>
             ${multiDescHtml}
-            ${slotsHtml}
+            ${bindingsHtml}
         </div>`;
     }
 
-    // Single entry metric (no slots)
+    // Single entry metric (no checkpoints/intervals)
     const entry = m.entry;
     const val = entry ? entry.value : null;
     const entryId = entry ? entry.id : null;
@@ -1380,15 +1387,15 @@ async function handleNumberChange(e) {
     if (!card) return;
 
     const metricId = card.dataset.metricId;
-    const slotEl = input.closest('.metric-slot');
-    const entryId = slotEl ? slotEl.dataset.entryId : card.dataset.entryId;
-    const slotId = slotEl ? slotEl.dataset.slotId : (card.dataset.slotId || null);
+    const bindingEl = input.closest('.metric-checkpoint') || input.closest('.metric-interval');
+    const entryId = bindingEl ? bindingEl.dataset.entryId : card.dataset.entryId;
+    const bindingId = bindingEl ? (bindingEl.dataset.checkpointId || bindingEl.dataset.intervalId) : (card.dataset.checkpointId || card.dataset.intervalId || null);
 
     const raw = input.value.trim();
     if (raw === '') {
         if (entryId) {
             card.classList.remove('filled');
-            if (slotEl) slotEl.dataset.entryId = '';
+            if (bindingEl) bindingEl.dataset.entryId = '';
             else card.dataset.entryId = '';
             api.deleteEntry(parseInt(entryId)).then(() => {
                 renderTodayForm(true);
@@ -1407,11 +1414,11 @@ async function handleNumberChange(e) {
     }
 
     card.classList.add('filled');
-    saveDaily(metricId, entryId, parsed, slotId).then(({ entryId: newId }) => {
+    saveDaily(metricId, entryId, parsed, bindingId).then(({ entryId: newId }) => {
         if (!newId) return;
-        if (slotEl) slotEl.dataset.entryId = newId;
+        if (bindingEl) bindingEl.dataset.entryId = newId;
         else card.dataset.entryId = newId;
-        _ensureClearButton(card, slotEl, newId);
+        _ensureClearButton(card, bindingEl, newId);
         updateProgress();
         setTimeout(() => renderTodayForm(true), 100);
     }).catch(err => {
@@ -1602,37 +1609,37 @@ async function handleFormClick(e) {
         // Remove existing selector if open (toggle)
         const existing = card.querySelector('.moment-interval-selector');
         if (existing) { existing.remove(); return; }
-        // Find already-used slot IDs
-        const usedSlotIds = new Set([...card.querySelectorAll('.metric-slot[data-slot-id]')].map(s => parseInt(s.dataset.slotId)));
+        // Find already-used interval IDs
+        const usedIntervalIds = new Set([...card.querySelectorAll('.metric-interval[data-interval-id]')].map(s => parseInt(s.dataset.intervalId)));
         // Build available intervals from checkpoints (consecutive pairs)
         const available = [];
         for (let i = 0; i < _todayCheckpoints.length - 1; i++) {
             const cp = _todayCheckpoints[i];
-            if (!usedSlotIds.has(cp.id)) {
-                available.push({ slotId: cp.id, label: `${cp.label} → ${_todayCheckpoints[i + 1].label}` });
+            if (!usedIntervalIds.has(cp.id)) {
+                available.push({ intervalId: cp.id, label: `${cp.label} → ${_todayCheckpoints[i + 1].label}` });
             }
         }
         if (available.length === 0) return;
         const metricId = btn.dataset.metricId;
         const selectorHtml = `<div class="moment-interval-selector">
-            ${available.map(iv => `<button class="btn-small moment-interval-choice" data-action="select-moment-interval" data-slot-id="${iv.slotId}" data-metric-id="${metricId}">${_escapeHtml(iv.label)}</button>`).join('')}
+            ${available.map(iv => `<button class="btn-small moment-interval-choice" data-action="select-moment-interval" data-interval-id="${iv.intervalId}" data-metric-id="${metricId}">${_escapeHtml(iv.label)}</button>`).join('')}
         </div>`;
         btn.insertAdjacentHTML('afterend', selectorHtml);
         return;
     }
 
-    // Moment-binding: user selected an interval — add input slot
+    // Moment-binding: user selected an interval — add input row
     if (btn.dataset.action === 'select-moment-interval') {
         const card = btn.closest('.metric-card');
         if (!card) return;
         const selector = btn.closest('.moment-interval-selector');
         if (selector) selector.remove();
-        const slotId = btn.dataset.slotId;
+        const intervalId = btn.dataset.intervalId;
         const metricId = btn.dataset.metricId;
         const mData = _momentMetricsById[metricId];
         if (!mData) return;
         // Build label from checkpoints
-        const cpIdx = _todayCheckpoints.findIndex(c => c.id === parseInt(slotId));
+        const cpIdx = _todayCheckpoints.findIndex(c => c.id === parseInt(intervalId));
         const label = (cpIdx >= 0 && cpIdx + 1 < _todayCheckpoints.length)
             ? `${_todayCheckpoints[cpIdx].label} → ${_todayCheckpoints[cpIdx + 1].label}`
             : '';
@@ -1644,14 +1651,14 @@ async function handleFormClick(e) {
         else if (mData.type === 'number') input = renderNumber(null);
         else if (mData.type === 'scale') input = renderScale(null, mData.scale_min, mData.scale_max, mData.scale_step, mData.scale_labels);
         else input = renderBoolean(null);
-        const slotHtml = `<div class="metric-slot" data-slot-id="${slotId}" data-entry-id="">
+        const intervalHtml = `<div class="metric-interval" data-interval-id="${intervalId}" data-entry-id="">
             <div class="period-header">
                 <span class="period-label">${_escapeHtml(label)}</span>
             </div>
             <div class="metric-input">${input}</div>
         </div>`;
         const entriesDiv = card.querySelector('.multiple-entry');
-        if (entriesDiv) entriesDiv.insertAdjacentHTML('beforeend', slotHtml);
+        if (entriesDiv) entriesDiv.insertAdjacentHTML('beforeend', intervalHtml);
         lucide.createIcons();
         return;
     }
@@ -1660,9 +1667,9 @@ async function handleFormClick(e) {
     if (!card) return;
 
     const metricId = card.dataset.metricId;
-    const slotEl = btn.closest('.metric-slot');
-    const entryId = slotEl ? slotEl.dataset.entryId : card.dataset.entryId;
-    const slotId = slotEl ? slotEl.dataset.slotId : (card.dataset.slotId || null);
+    const bindingEl = btn.closest('.metric-checkpoint') || btn.closest('.metric-interval');
+    const entryId = bindingEl ? bindingEl.dataset.entryId : card.dataset.entryId;
+    const bindingId = bindingEl ? (bindingEl.dataset.checkpointId || bindingEl.dataset.intervalId) : (card.dataset.checkpointId || card.dataset.intervalId || null);
 
     // Integration fetch
     if (btn.dataset.action === 'fetch-integration') {
@@ -1688,7 +1695,7 @@ async function handleFormClick(e) {
     if (btn.dataset.clearEntry) {
         const clearEntryId = parseInt(btn.dataset.clearEntry);
         card.classList.remove('filled');
-        if (slotEl) slotEl.dataset.entryId = '';
+        if (bindingEl) bindingEl.dataset.entryId = '';
         else card.dataset.entryId = '';
         api.deleteEntry(clearEntryId).then(() => {
             renderTodayForm(true);
@@ -1702,17 +1709,17 @@ async function handleFormClick(e) {
     // Boolean buttons
     if (btn.classList.contains('bool-btn')) {
         const boolVal = btn.dataset.value === 'true';
-        const container = slotEl || card;
+        const container = bindingEl || card;
         container.querySelectorAll('.bool-btn').forEach(b => {
             b.classList.remove('active', 'yes', 'no');
         });
         btn.classList.add('active', boolVal ? 'yes' : 'no');
         card.classList.add('filled');
-        saveDaily(metricId, entryId, boolVal, slotId).then(({ entryId: newId }) => {
+        saveDaily(metricId, entryId, boolVal, bindingId).then(({ entryId: newId }) => {
             if (!newId) return;
-            if (slotEl) slotEl.dataset.entryId = newId;
+            if (bindingEl) bindingEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
-            _ensureClearButton(card, slotEl, newId);
+            _ensureClearButton(card, bindingEl, newId);
             updateProgress();
 
         }).catch(err => {
@@ -1724,15 +1731,15 @@ async function handleFormClick(e) {
 
     // Scale buttons
     if (btn.classList.contains('scale-btn')) {
-        const container = slotEl || card;
+        const container = bindingEl || card;
         container.querySelectorAll('.scale-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         card.classList.add('filled');
-        saveDaily(metricId, entryId, parseInt(btn.dataset.value), slotId).then(({ entryId: newId }) => {
+        saveDaily(metricId, entryId, parseInt(btn.dataset.value), bindingId).then(({ entryId: newId }) => {
             if (!newId) return;
-            if (slotEl) slotEl.dataset.entryId = newId;
+            if (bindingEl) bindingEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
-            _ensureClearButton(card, slotEl, newId);
+            _ensureClearButton(card, bindingEl, newId);
             updateProgress();
 
         }).catch(err => {
@@ -1744,7 +1751,7 @@ async function handleFormClick(e) {
 
     // Enum buttons
     if (btn.classList.contains('enum-btn')) {
-        const container = slotEl || card;
+        const container = bindingEl || card;
         const enumContainer = container.querySelector('.enum-buttons');
         const isMulti = enumContainer?.dataset.multiSelect === 'true';
         const isNoneBtn = btn.dataset.optionId === 'none';
@@ -1780,11 +1787,11 @@ async function handleFormClick(e) {
 
         // activeIds может быть [] если нажата "Ничего" — это валидный ответ
         card.classList.add('filled');
-        saveDaily(metricId, entryId, activeIds, slotId).then(({ entryId: newId }) => {
+        saveDaily(metricId, entryId, activeIds, bindingId).then(({ entryId: newId }) => {
             if (!newId) return;
-            if (slotEl) slotEl.dataset.entryId = newId;
+            if (bindingEl) bindingEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
-            _ensureClearButton(card, slotEl, newId);
+            _ensureClearButton(card, bindingEl, newId);
             updateProgress();
 
         }).catch(err => {
@@ -1796,16 +1803,16 @@ async function handleFormClick(e) {
 
     // Number "=0" button
     if (btn.dataset.action === 'set-zero') {
-        const container = slotEl || card;
+        const container = bindingEl || card;
         const input = container.querySelector('.number-value-input');
         input.value = 0;
         card.classList.add('filled');
         btn.remove();
-        saveDaily(metricId, entryId, 0, slotId).then(({ entryId: newId }) => {
+        saveDaily(metricId, entryId, 0, bindingId).then(({ entryId: newId }) => {
             if (!newId) return;
-            if (slotEl) slotEl.dataset.entryId = newId;
+            if (bindingEl) bindingEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
-            _ensureClearButton(card, slotEl, newId);
+            _ensureClearButton(card, bindingEl, newId);
             updateProgress();
 
         }).catch(err => {
@@ -1817,7 +1824,7 @@ async function handleFormClick(e) {
 
     // Number +/- buttons
     if (btn.classList.contains('number-btn')) {
-        const container = slotEl || card;
+        const container = bindingEl || card;
         const input = container.querySelector('.number-value-input');
         let currentVal = input.value !== '' ? parseInt(input.value) : 0;
         if (isNaN(currentVal)) currentVal = 0;
@@ -1826,11 +1833,11 @@ async function handleFormClick(e) {
         card.classList.add('filled');
         const zeroBtn = container.querySelector('.number-zero-btn');
         if (zeroBtn) zeroBtn.remove();
-        saveDaily(metricId, entryId, newVal, slotId).then(({ entryId: newId }) => {
+        saveDaily(metricId, entryId, newVal, bindingId).then(({ entryId: newId }) => {
             if (!newId) return;
-            if (slotEl) slotEl.dataset.entryId = newId;
+            if (bindingEl) bindingEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
-            _ensureClearButton(card, slotEl, newId);
+            _ensureClearButton(card, bindingEl, newId);
             updateProgress();
 
         }).catch(err => {
@@ -1847,7 +1854,7 @@ async function handleFormClick(e) {
         const currentVal = timeTrigger.classList.contains('has-value') ? timeTrigger.textContent.trim() : '';
         showClockPicker(currentVal, async (newVal) => {
             try {
-                await saveDaily(metricId, entryId, newVal, slotId);
+                await saveDaily(metricId, entryId, newVal, bindingId);
                 await renderTodayForm(true);
             } catch (error) {
                 alert('Ошибка: ' + error.message);
@@ -1863,7 +1870,7 @@ async function handleFormClick(e) {
         // Convert current minutes to HH:MM for picker
         let currentVal = '';
         if (durTrigger.classList.contains('has-value')) {
-            const container = slotEl || card;
+            const container = bindingEl || card;
             const entry = container.dataset.entryId;
             // Parse from displayed text "Xч Yм"
             const text = durTrigger.textContent.trim();
@@ -1876,7 +1883,7 @@ async function handleFormClick(e) {
             try {
                 const parts = hhmmVal.split(':').map(Number);
                 const minutes = parts[0] * 60 + parts[1];
-                await saveDaily(metricId, entryId, minutes, slotId);
+                await saveDaily(metricId, entryId, minutes, bindingId);
                 await renderTodayForm(true);
             } catch (error) {
                 alert('Ошибка: ' + error.message);
@@ -1886,9 +1893,9 @@ async function handleFormClick(e) {
     }
 }
 
-function _ensureClearButton(card, slotEl, entryId) {
-    if (slotEl) {
-        const header = slotEl.querySelector('.period-header');
+function _ensureClearButton(card, bindingEl, entryId) {
+    if (bindingEl) {
+        const header = bindingEl.querySelector('.period-header');
         if (!header) return;
         let btn = header.querySelector('.period-clear-btn');
         if (btn) {
@@ -1920,8 +1927,8 @@ function _ensureClearButton(card, slotEl, entryId) {
 
 const _savingKeys = new Set();
 
-async function saveDaily(metricId, entryId, value, slotId) {
-    const key = `${metricId}-${slotId || 'null'}`;
+async function saveDaily(metricId, entryId, value, bindingId) {
+    const key = `${metricId}-${bindingId || 'null'}`;
     let result;
     if (entryId) {
         await api.updateEntry(parseInt(entryId), { value });
@@ -1935,7 +1942,7 @@ async function saveDaily(metricId, entryId, value, slotId) {
                 date: currentDate,
                 value,
             };
-            if (slotId) payload.slot_id = parseInt(slotId);
+            if (bindingId) payload.checkpoint_id = parseInt(bindingId);
             const res = await api.createEntry(payload);
             result = { entryId: res.id };
         } finally {
@@ -1961,9 +1968,9 @@ function updateProgress() {
             if (card.querySelector('.note-item')) filled++;
             return;
         }
-        const slots = card.querySelectorAll('.metric-slot');
-        if (slots.length > 0) {
-            slots.forEach(s => {
+        const bindings = card.querySelectorAll('.metric-checkpoint, .metric-interval');
+        if (bindings.length > 0) {
+            bindings.forEach(s => {
                 total++;
                 if (s.dataset.entryId) filled++;
             });
@@ -2120,11 +2127,12 @@ async function showDayDetail(date) {
             }
             continue;
         }
-        if (m.slots && m.slots.length > 0) {
-            const filledSlots = m.slots.filter(s => s.entry !== null);
-            if (filledSlots.length === 0) continue;
+        const _summaryBindings = m.checkpoints || m.intervals || [];
+        if (_summaryBindings.length > 0) {
+            const filledBindings = _summaryBindings.filter(s => s.entry !== null);
+            if (filledBindings.length === 0) continue;
             hasAny = true;
-            for (const s of filledSlots) {
+            for (const s of filledBindings) {
                 const val = blocked ? PRIVATE_MASK : s.entry.display_value;
                 html += `<div class="summary-row"><span class="summary-label">${metricLabelHtml(m)} — ${blocked ? PRIVATE_MASK : s.label}</span><span class="summary-value">${val}</span></div>`;
             }
@@ -2931,11 +2939,11 @@ function showCorrelationHelp() {
     document.getElementById('corr-help-close').addEventListener('click', () => overlay.remove());
 }
 
-function renderCorrMetricLabel(label, icon, slotLabel, hint, dayLabel) {
+function renderCorrMetricLabel(label, icon, checkpointLabel, hint, dayLabel) {
     const iconHtml = `<span class="metric-icon">${icon || ''}</span>`;
-    const slotHtml = slotLabel ? `<span class="corr-slot-badge">${slotLabel}</span>` : '';
+    const bindingHtml = checkpointLabel ? `<span class="corr-binding-badge">${checkpointLabel}</span>` : '';
     const dayHtml = dayLabel ? `<div class="corr-day-label">${dayLabel}</div>` : '';
-    return `${iconHtml}<div class="corr-metric-text">${dayHtml}<div class="corr-metric-name">${label}${slotHtml}</div><div class="corr-pair-hint">${hint}</div></div>`;
+    return `${iconHtml}<div class="corr-metric-text">${dayHtml}<div class="corr-metric-name">${label}${bindingHtml}</div><div class="corr-pair-hint">${hint}</div></div>`;
 }
 
 const _metricStatsCache = {};
@@ -3010,8 +3018,8 @@ function renderCorrPair(p, report) {
     const rawIconA = (isLagged ? p.icon_b : p.icon_a) || '';
     const rawLabelB = isLagged ? p.label_a : p.label_b;
     const rawIconB = (isLagged ? p.icon_a : p.icon_b) || '';
-    const labelA = renderCorrMetricLabel(rawLabelA, rawIconA, isLagged ? p.slot_label_b : p.slot_label_a, hintA, isLagged ? 'вчера' : '');
-    const labelB = renderCorrMetricLabel(rawLabelB, rawIconB, isLagged ? p.slot_label_a : p.slot_label_b, hintB, isLagged ? 'сегодня' : '');
+    const labelA = renderCorrMetricLabel(rawLabelA, rawIconA, isLagged ? p.binding_label_b : p.binding_label_a, hintA, isLagged ? 'вчера' : '');
+    const labelB = renderCorrMetricLabel(rawLabelB, rawIconB, isLagged ? p.binding_label_a : p.binding_label_b, hintB, isLagged ? 'сегодня' : '');
 
     const pairId = `corr-detail-${p.pair_id}`;
     corrPairData.set(pairId, {
@@ -3887,7 +3895,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     html += '<div class="settings-actions">';
     html += '<button class="btn-primary" id="add-metric"><i data-lucide="plus"></i> Новая метрика</button>';
     html += '<button class="btn-small" id="manage-categories-btn"><i data-lucide="folders"></i> Категории</button>';
-    html += '<button class="btn-small" id="manage-slots-btn"><i data-lucide="clock"></i> Контрольные точки</button>';
+    html += '<button class="btn-small" id="manage-checkpoints-btn"><i data-lucide="clock"></i> Контрольные точки</button>';
     html += '<button class="btn-small" id="export-btn"><i data-lucide="download"></i> Экспорт</button>';
     html += '<button class="btn-small" id="import-btn"><i data-lucide="upload"></i> Импорт</button>';
     html += '<button class="btn-small" id="copy-metrics-btn"><i data-lucide="copy"></i> Копировать</button>';
@@ -3914,19 +3922,20 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         const settingsMetricsByCat = {};
         const settingsUncategorized = [];
         for (const m of activeMetrics) {
-            if (m.slots && m.slots.length >= 2) {
-                // Group slots by category_id
-                const slotsByCat = {};
-                for (const s of m.slots) {
+            const _settingsBindings = m.checkpoints || m.intervals || [];
+            if (_settingsBindings.length >= 2) {
+                // Group checkpoints/intervals by category_id
+                const bindingsByCat = {};
+                for (const s of _settingsBindings) {
                     const key = s.category_id != null ? String(s.category_id) : 'null';
-                    if (!slotsByCat[key]) slotsByCat[key] = [];
-                    slotsByCat[key].push(s);
+                    if (!bindingsByCat[key]) bindingsByCat[key] = [];
+                    bindingsByCat[key].push(s);
                 }
 
-                const uniqueCats = Object.keys(slotsByCat);
+                const uniqueCats = Object.keys(bindingsByCat);
                 if (uniqueCats.length === 1) {
-                    // All slots in one category — single row as before
-                    const catId = m.slots[0].category_id;
+                    // All in one category — single row as before
+                    const catId = _settingsBindings[0].category_id;
                     if (catId && settingsCatById[catId]) {
                         if (!settingsMetricsByCat[catId]) settingsMetricsByCat[catId] = [];
                         settingsMetricsByCat[catId].push(m);
@@ -3934,10 +3943,10 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                         settingsUncategorized.push(m);
                     }
                 } else {
-                    // Slots in different categories — split into view items
-                    for (const [key, catSlots] of Object.entries(slotsByCat)) {
+                    // Checkpoints in different categories — split into view items
+                    for (const [key, catBindings] of Object.entries(bindingsByCat)) {
                         const catId = key === 'null' ? null : parseInt(key);
-                        const viewItem = { ...m, _displaySlots: catSlots };
+                        const viewItem = { ...m, _displayCheckpoints: catBindings };
                         if (catId && settingsCatById[catId]) {
                             if (!settingsMetricsByCat[catId]) settingsMetricsByCat[catId] = [];
                             settingsMetricsByCat[catId].push(viewItem);
@@ -3962,14 +3971,15 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         for (const m of activeMetrics) settingsMetricNameMap[m.id] = m.name;
 
         function renderSettingRow(m) {
-            const displaySlots = m._displaySlots || m.slots || [];
-            const slotIds = displaySlots.map(s => s.id).join(',');
-            const slotsBadge = displaySlots.length > 1
-                ? `<span class="setting-slots">${displaySlots.length}x</span>`
-                : displaySlots.length === 1
-                    ? `<span class="setting-slots">${displaySlots[0].label}</span>`
-                    : (m.slots && m.slots.length > 0)
-                        ? `<span class="setting-slots">${m.slots.length}x</span>`
+            const _allSettingsBindings = m.checkpoints || m.intervals || [];
+            const displayBindings = m._displayCheckpoints || _allSettingsBindings;
+            const checkpointIds = displayBindings.map(s => s.id).join(',');
+            const checkpointsBadge = displayBindings.length > 1
+                ? `<span class="setting-bindings">${displayBindings.length}x</span>`
+                : displayBindings.length === 1
+                    ? `<span class="setting-bindings">${displayBindings[0].label}</span>`
+                    : (_allSettingsBindings.length > 0)
+                        ? `<span class="setting-bindings">${_allSettingsBindings.length}x</span>`
                         : '';
             const condBadge = m.condition_metric_id
                 ? `<span class="setting-condition" title="Зависит от: ${settingsMetricNameMap[m.condition_metric_id] || '?'}"><i data-lucide="git-branch"></i></span>` : '';
@@ -3981,9 +3991,9 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'text' ? '<i data-lucide="file-text"></i> Заметка'
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
                 : m.type === 'integration' ? (m.provider === 'activitywatch' ? '<i data-lucide="monitor"></i> ActivityWatch' : '<i data-lucide="list-checks"></i> Todoist')
-                : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge + condBadge;
+                : '<i data-lucide="toggle-left"></i> Да/Нет') + checkpointsBadge + condBadge;
             const descHtml = m.description ? `<span class="metric-description">${_escapeHtml(m.description)}</span>` : '';
-            return `<div class="setting-row" data-metric-id="${m.id}"${slotIds ? ` data-slot-ids="${slotIds}"` : ''}>
+            return `<div class="setting-row" data-metric-id="${m.id}"${checkpointIds ? ` data-checkpoint-ids="${checkpointIds}"` : ''}>
                 <span class="drag-handle">⠿</span>
                 <div class="setting-info">
                     <span class="setting-name">${metricLabelHtml(m)}</span>
@@ -4028,8 +4038,9 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             </button>
             <div class="archive-content" id="archive-content" style="display:${archiveOpen ? 'block' : 'none'}">`;
         for (const m of archivedMetrics) {
-            const slotsBadge = m.slots && m.slots.length > 0
-                ? `<span class="setting-slots">${m.slots.length}x</span>` : '';
+            const _archivedBindings = m.checkpoints || m.intervals || [];
+            const checkpointsBadge = _archivedBindings.length > 0
+                ? `<span class="setting-bindings">${_archivedBindings.length}x</span>` : '';
             const typeIcon = (m.type === 'time' ? '<i data-lucide="clock"></i> Время'
                 : m.type === 'duration' ? '<i data-lucide="timer"></i> Длительность'
                 : m.type === 'number' ? '<i data-lucide="hash"></i> Число'
@@ -4037,7 +4048,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : m.type === 'text' ? '<i data-lucide="file-text"></i> Заметка'
                 : m.type === 'computed' ? '<i data-lucide="calculator"></i> Формула'
                 : m.type === 'integration' ? '<span class="metric-icon">' + TODOIST_ICON + '</span> Todoist'
-                : '<i data-lucide="toggle-left"></i> Да/Нет') + slotsBadge;
+                : '<i data-lucide="toggle-left"></i> Да/Нет') + checkpointsBadge;
             html += `<div class="setting-row archived-row">
                 <div class="setting-info">
                     <span class="setting-name archived">${metricLabelHtml(m)}</span>
@@ -4105,9 +4116,9 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         navigateTo('categories');
     });
 
-    // Manage slots button
-    document.getElementById('manage-slots-btn')?.addEventListener('click', () => {
-        navigateTo('slots');
+    // Manage checkpoints button
+    document.getElementById('manage-checkpoints-btn')?.addEventListener('click', () => {
+        navigateTo('checkpoints');
     });
 
     if (openAddModal) showAddMetricModal();
@@ -4338,17 +4349,17 @@ function setupMetricDragDrop(container) {
             const catIdStr = catDiv ? catDiv.dataset.categoryId : '';
             const catId = catIdStr && !isNaN(parseInt(catIdStr)) ? parseInt(catIdStr) : null;
             const metricId = parseInt(row.dataset.metricId);
-            const slotIdsAttr = row.dataset.slotIds;
+            const checkpointIdsAttr = row.dataset.checkpointIds;
 
-            if (slotIdsAttr) {
-                // Split metric — send per-slot items
-                const slotIds = slotIdsAttr.split(',').map(Number);
-                for (const slotId of slotIds) {
+            if (checkpointIdsAttr) {
+                // Split metric — send per-checkpoint items
+                const checkpointIds = checkpointIdsAttr.split(',').map(Number);
+                for (const checkpointId of checkpointIds) {
                     items.push({
                         id: metricId,
                         sort_order: index * 10,
                         category_id: catId,
-                        slot_id: slotId,
+                        checkpoint_id: checkpointId,
                     });
                 }
             } else {
@@ -4746,31 +4757,31 @@ function setupCategoryDragDrop(container) {
     });
 }
 
-async function renderSlotManager(container) {
-    let slots = [];
-    try { slots = await api.getSlots(); } catch(e) {}
+async function renderCheckpointManager(container) {
+    let checkpoints = [];
+    try { checkpoints = await api.getCheckpoints(); } catch(e) {}
 
     let html = '<div class="cat-manager-header">';
-    html += '<button class="btn-icon" id="slot-back-btn"><i data-lucide="arrow-left"></i></button>';
+    html += '<button class="btn-icon" id="cp-back-btn"><i data-lucide="arrow-left"></i></button>';
     html += '<h2>Контрольные точки</h2>';
-    html += '<button class="btn-small btn-primary" id="slot-add-btn"><i data-lucide="plus"></i> Добавить</button>';
+    html += '<button class="btn-small btn-primary" id="cp-add-btn"><i data-lucide="plus"></i> Добавить</button>';
     html += '</div>';
 
-    html += '<div id="slot-list">';
-    if (slots.length === 0) {
+    html += '<div id="cp-list">';
+    if (checkpoints.length === 0) {
         html += '<div class="empty-state"><div class="empty-state-text">Нет настроенных замеров</div></div>';
     } else {
-        for (const slot of slots) {
-            const used = slot.usage_count > 0;
-            const delClass = used ? 'btn-icon slot-del-disabled' : 'btn-icon btn-icon-danger slot-del';
-            const delTitle = used ? `title="Используется в ${slot.usage_count} метриках"` : '';
-            const descHtml = slot.description ? `<div class="slot-description">${_escapeHtml(slot.description)}</div>` : '';
-            html += `<div class="cat-item" data-slot-id="${slot.id}">
+        for (const cp of checkpoints) {
+            const used = cp.usage_count > 0;
+            const delClass = used ? 'btn-icon cp-del-disabled' : 'btn-icon btn-icon-danger cp-del';
+            const delTitle = used ? `title="Используется в ${cp.usage_count} метриках"` : '';
+            const descHtml = cp.description ? `<div class="checkpoint-description">${_escapeHtml(cp.description)}</div>` : '';
+            html += `<div class="cat-item" data-checkpoint-id="${cp.id}">
                 <span class="drag-handle">⠿</span>
-                <div class="cat-item-info"><span class="cat-item-name">${_escapeHtml(slot.label)}</span>${descHtml}</div>
+                <div class="cat-item-info"><span class="cat-item-name">${_escapeHtml(cp.label)}</span>${descHtml}</div>
                 <div class="cat-item-actions">
-                    <button class="btn-icon slot-edit" data-slot-id="${slot.id}"><i data-lucide="pencil"></i></button>
-                    <button class="${delClass}" data-slot-id="${slot.id}" ${delTitle}><i data-lucide="trash-2"></i></button>
+                    <button class="btn-icon cp-edit" data-checkpoint-id="${cp.id}"><i data-lucide="pencil"></i></button>
+                    <button class="${delClass}" data-checkpoint-id="${cp.id}" ${delTitle}><i data-lucide="trash-2"></i></button>
                 </div>
             </div>`;
         }
@@ -4779,41 +4790,41 @@ async function renderSlotManager(container) {
     container.innerHTML = html;
     if (window.lucide) lucide.createIcons();
 
-    document.getElementById('slot-back-btn').addEventListener('click', () => navigateTo('settings'));
+    document.getElementById('cp-back-btn').addEventListener('click', () => navigateTo('settings'));
 
-    document.getElementById('slot-add-btn').addEventListener('click', async () => {
+    document.getElementById('cp-add-btn').addEventListener('click', async () => {
         const label = prompt('Название контрольной точки:');
         if (!label || !label.trim()) return;
         const description = prompt('Описание (необязательно):');
         try {
-            await api.createSlot({ label: label.trim(), description: description?.trim() || null });
-            await renderSlotManager(container);
+            await api.createCheckpoint({ label: label.trim(), description: description?.trim() || null });
+            await renderCheckpointManager(container);
         } catch (e) { alert('Ошибка: ' + e.message); }
     });
 
-    container.querySelectorAll('.slot-edit').forEach(btn => {
+    container.querySelectorAll('.cp-edit').forEach(btn => {
         btn.addEventListener('click', async () => {
-            const slotId = parseInt(btn.dataset.slotId);
-            const slot = slots.find(s => s.id === slotId);
+            const cpId = parseInt(btn.dataset.checkpointId);
+            const cp = checkpoints.find(s => s.id === cpId);
             const nameEl = btn.closest('.cat-item').querySelector('.cat-item-name');
             const currentLabel = nameEl?.textContent?.trim() || '';
             const newLabel = prompt('Новое название:', currentLabel);
             if (newLabel === null) return;
             const updateData = {};
             if (newLabel.trim() && newLabel.trim() !== currentLabel) updateData.label = newLabel.trim();
-            const newDesc = prompt('Описание:', slot?.description || '');
+            const newDesc = prompt('Описание:', cp?.description || '');
             if (newDesc !== null) updateData.description = newDesc.trim() || null;
             if (Object.keys(updateData).length === 0) return;
             try {
-                await api.updateSlot(slotId, updateData);
-                await renderSlotManager(container);
+                await api.updateCheckpoint(cpId, updateData);
+                await renderCheckpointManager(container);
             } catch (e) {
                 if (e.status === 409) {
-                    const target = slots.find(s => s.label.toLowerCase() === newLabel.trim().toLowerCase());
-                    if (target && confirm(`«${newLabel.trim()}» уже существует. Объединить слоты?`)) {
+                    const target = checkpoints.find(s => s.label.toLowerCase() === newLabel.trim().toLowerCase());
+                    if (target && confirm(`«${newLabel.trim()}» уже существует. Объединить контрольные точки?`)) {
                         try {
-                            await api.mergeSlot(slotId, target.id);
-                            await renderSlotManager(container);
+                            await api.mergeCheckpoint(cpId, target.id);
+                            await renderCheckpointManager(container);
                         } catch (mergeErr) { alert('Ошибка объединения: ' + mergeErr.message); }
                         return;
                     }
@@ -4823,31 +4834,31 @@ async function renderSlotManager(container) {
         });
     });
 
-    container.querySelectorAll('.slot-del-disabled').forEach(btn => {
+    container.querySelectorAll('.cp-del-disabled').forEach(btn => {
         btn.addEventListener('click', () => {
-            const slotId = parseInt(btn.dataset.slotId);
-            const slot = slots.find(s => s.id === slotId);
-            if (slot && slot.usage_metric_names && slot.usage_metric_names.length > 0) {
-                alert(`Слот используется в метриках:\n${slot.usage_metric_names.join(', ')}\n\nСначала уберите слот из этих метрик.`);
+            const cpId = parseInt(btn.dataset.checkpointId);
+            const cp = checkpoints.find(s => s.id === cpId);
+            if (cp && cp.usage_metric_names && cp.usage_metric_names.length > 0) {
+                alert(`Контрольная точка используется в метриках:\n${cp.usage_metric_names.join(', ')}\n\nСначала уберите контрольную точку из этих метрик.`);
             }
         });
     });
 
-    container.querySelectorAll('.slot-del').forEach(btn => {
+    container.querySelectorAll('.cp-del').forEach(btn => {
         btn.addEventListener('click', async () => {
-            const slotId = parseInt(btn.dataset.slotId);
+            const cpId = parseInt(btn.dataset.checkpointId);
             if (!confirm('Удалить контрольную точку?')) return;
             try {
-                await api.deleteSlot(slotId);
-                await renderSlotManager(container);
+                await api.deleteCheckpoint(cpId);
+                await renderCheckpointManager(container);
             } catch (e) { alert('Ошибка: ' + e.message); }
         });
     });
 
-    setupSlotDragDrop(container);
+    setupCheckpointDragDrop(container);
 }
 
-function setupSlotDragDrop(container) {
+function setupCheckpointDragDrop(container) {
     let dragItem = null;
     let clone = null;
     let startX = 0, startY = 0;
@@ -4936,10 +4947,10 @@ function setupSlotDragDrop(container) {
             dragItem.classList.remove('dragging');
             // Save new order
             const items = [];
-            container.querySelectorAll('.cat-item[data-slot-id]').forEach((el, idx) => {
-                items.push({ id: parseInt(el.dataset.slotId), sort_order: idx * 10 });
+            container.querySelectorAll('.cat-item[data-checkpoint-id]').forEach((el, idx) => {
+                items.push({ id: parseInt(el.dataset.checkpointId), sort_order: idx * 10 });
             });
-            try { await api.reorderSlots(items); } catch (err) { console.error('Slot reorder failed:', err); }
+            try { await api.reorderCheckpoints(items); } catch (err) { console.error('Checkpoint reorder failed:', err); }
         }
         dragItem = null;
         isDragging = false;
@@ -5285,7 +5296,7 @@ async function showConvertModal(metric) {
                     <h4>Опции для нового типа "Варианты"</h4>
                     <div class="convert-enum-options">
                         <div class="enum-options-list" id="conv-enum-options-list"></div>
-                        <button type="button" class="btn-add-slot" id="conv-add-enum-option">+ Добавить вариант</button>
+                        <button type="button" class="btn-add-option" id="conv-add-enum-option">+ Добавить вариант</button>
                     </div>
                 </div>`;
 
@@ -5383,9 +5394,9 @@ async function showConvertModal(metric) {
         const row = document.createElement('div');
         row.className = 'enum-option-row';
         row.innerHTML = `<input type="text" class="form-input enum-option-input" placeholder="Название варианта" value="${label}">
-            <button type="button" class="btn-remove-slot">&times;</button>`;
+            <button type="button" class="btn-remove-option">&times;</button>`;
         list.appendChild(row);
-        row.querySelector('.btn-remove-slot').onclick = () => { row.remove(); rebuildMappingSelects(); };
+        row.querySelector('.btn-remove-option').onclick = () => { row.remove(); rebuildMappingSelects(); };
         row.querySelector('.enum-option-input').addEventListener('input', rebuildMappingSelects);
     }
 
@@ -5797,7 +5808,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 <div class="form-section" id="nm-enum-config" style="display: flex">
                     <span class="label-text">Варианты</span>
                     <div class="enum-options-list" id="nm-enum-options"></div>
-                    <button type="button" class="btn-add-slot" id="nm-add-enum-option">+ Добавить вариант</button>
+                    <button type="button" class="btn-add-option" id="nm-add-enum-option">+ Добавить вариант</button>
                     <label class="enum-multi-select-label">
                         <input type="checkbox" id="nm-multi-select" ${existingMetric?.multi_select ? 'checked' : ''}> Можно выбрать несколько
                     </label>
@@ -5846,18 +5857,18 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 ${currentType !== 'computed' && currentType !== 'integration' && currentType !== 'text' ? `
                 <div class="form-section" id="nm-checkpoint-section">
                     <span class="label-text">Роль метрики</span>
-                    <div class="slots-choice-grid">
-                        <label class="slots-choice-card ${!existingMetric?.is_checkpoint ? 'selected' : ''}" data-role="fact">
+                    <div class="role-choice-grid">
+                        <label class="role-choice-card ${!existingMetric?.is_checkpoint ? 'selected' : ''}" data-role="fact">
                             <input type="radio" name="nm-metric-role" value="fact" ${!existingMetric?.is_checkpoint ? 'checked' : ''}>
-                            <div class="slots-choice-icon"><i data-lucide="zap"></i></div>
-                            <span class="slots-choice-title">Факт</span>
-                            <span class="slots-choice-desc">Действие или событие</span>
+                            <div class="role-choice-icon"><i data-lucide="zap"></i></div>
+                            <span class="role-choice-title">Факт</span>
+                            <span class="role-choice-desc">Действие или событие</span>
                         </label>
-                        <label class="slots-choice-card ${existingMetric?.is_checkpoint ? 'selected' : ''}" data-role="assessment">
+                        <label class="role-choice-card ${existingMetric?.is_checkpoint ? 'selected' : ''}" data-role="assessment">
                             <input type="radio" name="nm-metric-role" value="assessment" ${existingMetric?.is_checkpoint ? 'checked' : ''}>
-                            <div class="slots-choice-icon"><i data-lucide="activity"></i></div>
-                            <span class="slots-choice-title">Оценка</span>
-                            <span class="slots-choice-desc">Состояние в контрольных точках</span>
+                            <div class="role-choice-icon"><i data-lucide="activity"></i></div>
+                            <span class="role-choice-title">Оценка</span>
+                            <span class="role-choice-desc">Состояние в контрольных точках</span>
                         </label>
                     </div>
                 </div>
@@ -5869,25 +5880,25 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 <div class="form-section" id="nm-interval-section" style="display:${!existingMetric?.is_checkpoint ? '' : 'none'}">
                     <span class="label-text">Привязка к интервалу</span>
                     <span class="label-hint">Привяжите факт к интервалу между контрольными точками для интервальных корреляций</span>
-                    <div class="slots-choice-grid">
-                        <label class="slots-choice-card ${(existingMetric?.interval_binding || 'all_day') === 'all_day' ? 'selected' : ''}" data-interval="all_day">
+                    <div class="role-choice-grid">
+                        <label class="role-choice-card ${(existingMetric?.interval_binding || 'all_day') === 'all_day' ? 'selected' : ''}" data-interval="all_day">
                             <input type="radio" name="nm-interval-binding" value="all_day" ${(existingMetric?.interval_binding || 'all_day') === 'all_day' ? 'checked' : ''}>
-                            <div class="slots-choice-icon"><i data-lucide="calendar"></i></div>
-                            <span class="slots-choice-title">Весь день</span>
+                            <div class="role-choice-icon"><i data-lucide="calendar"></i></div>
+                            <span class="role-choice-title">Весь день</span>
                         </label>
-                        <label class="slots-choice-card ${existingMetric?.interval_binding === 'by_interval' ? 'selected' : ''}" data-interval="by_interval">
+                        <label class="role-choice-card ${existingMetric?.interval_binding === 'by_interval' ? 'selected' : ''}" data-interval="by_interval">
                             <input type="radio" name="nm-interval-binding" value="by_interval" ${existingMetric?.interval_binding === 'by_interval' ? 'checked' : ''}>
-                            <div class="slots-choice-icon"><i data-lucide="pin"></i></div>
-                            <span class="slots-choice-title">В определённые интервалы</span>
+                            <div class="role-choice-icon"><i data-lucide="pin"></i></div>
+                            <span class="role-choice-title">В определённые интервалы</span>
                         </label>
-                        <label class="slots-choice-card ${existingMetric?.interval_binding === 'moment' ? 'selected' : ''}" data-interval="moment">
+                        <label class="role-choice-card ${existingMetric?.interval_binding === 'moment' ? 'selected' : ''}" data-interval="moment">
                             <input type="radio" name="nm-interval-binding" value="moment" ${existingMetric?.interval_binding === 'moment' ? 'checked' : ''}>
-                            <div class="slots-choice-icon"><i data-lucide="clock"></i></div>
-                            <span class="slots-choice-title">В моменте</span>
+                            <div class="role-choice-icon"><i data-lucide="clock"></i></div>
+                            <span class="role-choice-title">В моменте</span>
                         </label>
                     </div>
-                    <div id="nm-interval-slots-select" style="display:${existingMetric?.interval_binding === 'by_interval' ? '' : 'none'}">
-                        <div id="nm-interval-slots-list" class="checkbox-list"></div>
+                    <div id="nm-interval-select" style="display:${existingMetric?.interval_binding === 'by_interval' ? '' : 'none'}">
+                        <div id="nm-interval-list" class="checkbox-list"></div>
                     </div>
                 </div>
                 ` : ''}
@@ -5987,7 +5998,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 <div class="form-section" id="nm-enum-config" style="display: ${currentType === 'enum' ? 'flex' : 'none'}">
                     <span class="label-text">Варианты</span>
                     <div class="enum-options-list" id="nm-enum-options"></div>
-                    <button type="button" class="btn-add-slot" id="nm-add-enum-option">+ Добавить вариант</button>
+                    <button type="button" class="btn-add-option" id="nm-add-enum-option">+ Добавить вариант</button>
                     <label class="enum-multi-select-label">
                         <input type="checkbox" id="nm-multi-select"> Можно выбрать несколько
                     </label>
@@ -6037,18 +6048,18 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 </div>
                 <div class="form-section" id="nm-checkpoint-section" style="display: ${currentType === 'computed' || currentType === 'integration' || currentType === 'text' ? 'none' : ''}">
                     <span class="label-text">Роль метрики</span>
-                    <div class="slots-choice-grid">
-                        <label class="slots-choice-card selected" data-role="fact">
+                    <div class="role-choice-grid">
+                        <label class="role-choice-card selected" data-role="fact">
                             <input type="radio" name="nm-metric-role" value="fact" checked>
-                            <div class="slots-choice-icon"><i data-lucide="zap"></i></div>
-                            <span class="slots-choice-title">Факт</span>
-                            <span class="slots-choice-desc">Действие или событие</span>
+                            <div class="role-choice-icon"><i data-lucide="zap"></i></div>
+                            <span class="role-choice-title">Факт</span>
+                            <span class="role-choice-desc">Действие или событие</span>
                         </label>
-                        <label class="slots-choice-card" data-role="assessment">
+                        <label class="role-choice-card" data-role="assessment">
                             <input type="radio" name="nm-metric-role" value="assessment">
-                            <div class="slots-choice-icon"><i data-lucide="activity"></i></div>
-                            <span class="slots-choice-title">Оценка</span>
-                            <span class="slots-choice-desc">Состояние в контрольных точках</span>
+                            <div class="role-choice-icon"><i data-lucide="activity"></i></div>
+                            <span class="role-choice-title">Оценка</span>
+                            <span class="role-choice-desc">Состояние в контрольных точках</span>
                         </label>
                     </div>
                 </div>
@@ -6060,25 +6071,25 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 <div class="form-section" id="nm-interval-section" style="display:${currentType === 'computed' || currentType === 'integration' || currentType === 'text' ? 'none' : ''}">
                     <span class="label-text">Привязка к интервалу</span>
                     <span class="label-hint">Привяжите факт к интервалу между контрольными точками для интервальных корреляций</span>
-                    <div class="slots-choice-grid">
-                        <label class="slots-choice-card selected" data-interval="all_day">
+                    <div class="role-choice-grid">
+                        <label class="role-choice-card selected" data-interval="all_day">
                             <input type="radio" name="nm-interval-binding" value="all_day" checked>
-                            <div class="slots-choice-icon"><i data-lucide="calendar"></i></div>
-                            <span class="slots-choice-title">Весь день</span>
+                            <div class="role-choice-icon"><i data-lucide="calendar"></i></div>
+                            <span class="role-choice-title">Весь день</span>
                         </label>
-                        <label class="slots-choice-card" data-interval="by_interval">
+                        <label class="role-choice-card" data-interval="by_interval">
                             <input type="radio" name="nm-interval-binding" value="by_interval">
-                            <div class="slots-choice-icon"><i data-lucide="pin"></i></div>
-                            <span class="slots-choice-title">В определённые интервалы</span>
+                            <div class="role-choice-icon"><i data-lucide="pin"></i></div>
+                            <span class="role-choice-title">В определённые интервалы</span>
                         </label>
-                        <label class="slots-choice-card" data-interval="moment">
+                        <label class="role-choice-card" data-interval="moment">
                             <input type="radio" name="nm-interval-binding" value="moment">
-                            <div class="slots-choice-icon"><i data-lucide="clock"></i></div>
-                            <span class="slots-choice-title">В моменте</span>
+                            <div class="role-choice-icon"><i data-lucide="clock"></i></div>
+                            <span class="role-choice-title">В моменте</span>
                         </label>
                     </div>
-                    <div id="nm-interval-slots-select" style="display:none">
-                        <div id="nm-interval-slots-list" class="checkbox-list"></div>
+                    <div id="nm-interval-select" style="display:none">
+                        <div id="nm-interval-list" class="checkbox-list"></div>
                     </div>
                 </div>
                 `}
@@ -6166,7 +6177,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     sel.appendChild(chOpt);
                 }
             }
-            // Slot category selects removed — categories stay on metric_definitions only
+            // Checkpoint category selects removed — categories stay on metric_definitions only
         } catch(e) { console.warn('Failed to load categories for modal', e); }
     })();
 
@@ -6348,7 +6359,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 const computedConfig = document.getElementById('nm-computed-config');
                 const integrationConfig = document.getElementById('nm-integration-config');
                 const awConfig = document.getElementById('nm-aw-config');
-                const slotsSection = document.getElementById('nm-slots-section');
+                const bindingSection = document.getElementById('nm-binding-section');
                 const emojiWrapper = overlay.querySelector('.emoji-picker-wrapper');
                 const scaleLabelsConfig = document.getElementById('nm-scale-labels-config');
                 if (scaleConfig) scaleConfig.style.display = selectedType === 'scale' ? 'flex' : 'none';
@@ -6358,7 +6369,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 if (computedConfig) computedConfig.style.display = selectedType === 'computed' ? 'block' : 'none';
                 if (integrationConfig) integrationConfig.style.display = (selectedType === 'integration' && selectedProvider === 'todoist') ? 'block' : 'none';
                 if (awConfig) awConfig.style.display = (selectedType === 'integration' && selectedProvider === 'activitywatch') ? 'block' : 'none';
-                if (slotsSection) slotsSection.style.display = (selectedType === 'computed' || selectedType === 'integration' || selectedType === 'text') ? 'none' : '';
+                if (bindingSection) bindingSection.style.display = (selectedType === 'computed' || selectedType === 'integration' || selectedType === 'text') ? 'none' : '';
                 if (emojiWrapper) emojiWrapper.style.display = selectedType === 'integration' ? 'none' : '';
                 const condSection = document.getElementById('nm-condition-section');
                 if (condSection) condSection.style.display = (selectedType === 'computed' || selectedType === 'integration') ? 'none' : '';
@@ -6471,13 +6482,13 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         setupFormulaBuilderHandlers(overlay);
     }
 
-    // ─── Slot management (declared early — updatePreview references slotList) ───
-    const slotList = document.getElementById('nm-slot-labels');
-    const addSlotBtn = document.getElementById('nm-add-slot');
-    const slotDropdown = document.getElementById('nm-slot-dropdown');
-    const slotsConfig = document.getElementById('nm-slots-config');
-    // Track selected slots: [{id, label, category_id}]
-    let _selectedSlots = [];
+    // ─── Checkpoint selection (declared early — updatePreview references cpList) ───
+    const cpList = document.getElementById('nm-cp-labels');
+    const addCpBtn = document.getElementById('nm-add-cp');
+    const cpDropdown = document.getElementById('nm-cp-dropdown');
+    const cpConfig = document.getElementById('nm-cp-config');
+    // Track selected checkpoints: [{id, label, category_id}]
+    let _selectedCheckpoints = [];
 
     // ─── Enum option management ───
     const enumOptionsList = document.getElementById('nm-enum-options');
@@ -6490,9 +6501,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         if (optionId) row.dataset.optionId = optionId;
         row.innerHTML = `<span class="drag-handle">⠿</span>
             <input type="text" class="form-input enum-option-input" placeholder="Название варианта" value="${label}">
-            <button type="button" class="btn-remove-slot">&times;</button>`;
+            <button type="button" class="btn-remove-option">&times;</button>`;
         enumOptionsList.appendChild(row);
-        row.querySelector('.btn-remove-slot').onclick = () => { row.remove(); updatePreview(); };
+        row.querySelector('.btn-remove-option').onclick = () => { row.remove(); updatePreview(); };
         row.querySelector('.enum-option-input').addEventListener('input', updatePreview);
         // Drag & drop
         row.addEventListener('dragstart', (e) => {
@@ -6605,23 +6616,23 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             icon = document.getElementById('nm-icon').value;
         }
         const name = (icon ? '<span class="metric-icon">' + icon + '</span>' : '') + rawName;
-        const labels = getSlotLabels();
+        const labels = getCheckpointLabels();
 
         let cardHtml;
         if (labels.length >= 2) {
-            let slotsHtml = '<div class="multiple-entry">';
+            let bindingsHtml = '<div class="multiple-entry">';
             for (const label of labels) {
-                slotsHtml += `<div class="metric-slot">
+                bindingsHtml += `<div class="metric-checkpoint">
                     <div class="period-header">
                         <span class="period-label">${label}</span>
                     </div>
                     <div class="metric-input">${previewInputHtml(type)}</div>
                 </div>`;
             }
-            slotsHtml += '</div>';
+            bindingsHtml += '</div>';
             cardHtml = `<div class="metric-header">
                     <label class="metric-label">${name}</label>
-                </div>${slotsHtml}`;
+                </div>${bindingsHtml}`;
         } else {
             cardHtml = `<div class="metric-header">
                     <label class="metric-label">${name}</label>
@@ -6644,8 +6655,8 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     overlay.querySelectorAll('input[name="nm-metric-role"]').forEach(radio => {
         radio.addEventListener('change', () => {
             const section = radio.closest('.form-section');
-            if (section) section.querySelectorAll('.slots-choice-card').forEach(c => c.classList.remove('selected'));
-            const card = radio.closest('.slots-choice-card');
+            if (section) section.querySelectorAll('.role-choice-card').forEach(c => c.classList.remove('selected'));
+            const card = radio.closest('.role-choice-card');
             if (card) card.classList.add('selected');
             const isAssessment = radio.value === 'assessment';
             // Show checkpoint picker for assessments, interval section for facts
@@ -6666,30 +6677,30 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     overlay.querySelectorAll('input[name="nm-interval-binding"]').forEach(radio => {
         radio.addEventListener('change', () => {
             const section = radio.closest('.form-section');
-            if (section) section.querySelectorAll('.slots-choice-card').forEach(c => c.classList.remove('selected'));
-            const card = radio.closest('.slots-choice-card');
+            if (section) section.querySelectorAll('.role-choice-card').forEach(c => c.classList.remove('selected'));
+            const card = radio.closest('.role-choice-card');
             if (card) card.classList.add('selected');
-            const intervalsSelect = document.getElementById('nm-interval-slots-select');
+            const intervalsSelect = document.getElementById('nm-interval-select');
             if (intervalsSelect) intervalsSelect.style.display = radio.value === 'by_interval' ? '' : 'none';
-            // Hide standard slots section when interval binding is active
-            const slotsSection = document.getElementById('nm-slots-section');
-            if (slotsSection) slotsSection.style.display = radio.value === 'all_day' ? '' : 'none';
+            // Hide standard checkpoints section when interval binding is active
+            const bindingSection = document.getElementById('nm-binding-section');
+            if (bindingSection) bindingSection.style.display = radio.value === 'all_day' ? '' : 'none';
         });
     });
 
     // Populate interval checkboxes with checkpoint intervals
     async function _populateIntervalCheckboxes() {
-        const container = document.getElementById('nm-interval-slots-list');
+        const container = document.getElementById('nm-interval-list');
         if (!container) return;
         try {
-            const slots = await api.getSlots();
-            const sorted = slots.sort((a, b) => a.sort_order - b.sort_order);
-            const existingSlotIds = new Set((existingMetric?.slots || []).map(s => s.id));
+            const checkpoints = await api.getCheckpoints();
+            const sorted = checkpoints.sort((a, b) => a.sort_order - b.sort_order);
+            const existingIntervalIds = new Set((existingMetric?.intervals || []).map(s => s.id));
             container.innerHTML = '';
             for (let i = 0; i < sorted.length - 1; i++) {
                 const label = `${sorted[i].label} → ${sorted[i + 1].label}`;
-                const checked = existingSlotIds.has(sorted[i].id) ? 'checked' : '';
-                container.innerHTML += `<label class="enum-multi-select-label"><input type="checkbox" name="nm-interval-slot" value="${sorted[i].id}" ${checked}><span>${label}</span></label>`;
+                const checked = existingIntervalIds.has(sorted[i].id) ? 'checked' : '';
+                container.innerHTML += `<label class="enum-multi-select-label"><input type="checkbox" name="nm-interval-cb" value="${sorted[i].id}" ${checked}><span>${label}</span></label>`;
             }
         } catch(e) {}
     }
@@ -6700,12 +6711,12 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         const container = document.getElementById('nm-checkpoint-list');
         if (!container) return;
         try {
-            const slots = await api.getSlots();
-            const sorted = slots.sort((a, b) => a.sort_order - b.sort_order);
-            const existingSlotIds = new Set((existingMetric?.slots || []).map(s => s.id));
+            const checkpoints = await api.getCheckpoints();
+            const sorted = checkpoints.sort((a, b) => a.sort_order - b.sort_order);
+            const existingCheckpointIds = new Set((existingMetric?.checkpoints || []).map(s => s.id));
             const isCreate = !existingMetric;
             container.innerHTML = sorted.map(s => {
-                const checked = isCreate || existingSlotIds.has(s.id) ? 'checked' : '';
+                const checked = isCreate || existingCheckpointIds.has(s.id) ? 'checked' : '';
                 return `<label class="enum-multi-select-label">
                     <input type="checkbox" name="nm-checkpoint" value="${s.id}" ${checked}>
                     ${_escapeHtml(s.label)}
@@ -6726,134 +6737,134 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         return html;
     }
 
-    // Global slots for "+" dropdown
-    let _globalSlots = [];
-    async function _loadGlobalSlots() {
-        try { _globalSlots = await api.getSlots(); } catch(e) { _globalSlots = []; }
+    // Global checkpoints for "+" dropdown
+    let _globalCheckpoints = [];
+    async function _loadGlobalCheckpoints() {
+        try { _globalCheckpoints = await api.getCheckpoints(); } catch(e) { _globalCheckpoints = []; }
     }
 
-    function _addSelectedSlot(slotId, label, categoryId) {
-        if (_selectedSlots.some(s => s.id === slotId)) return;
-        const newSlotEntry = { id: slotId, label, category_id: categoryId || null };
+    function _addSelectedCheckpoint(cpId, label, categoryId) {
+        if (_selectedCheckpoints.some(s => s.id === cpId)) return;
+        const newEntry = { id: cpId, label, category_id: categoryId || null };
         // Insert at correct position based on global sort_order
-        const globalIndex = _globalSlots.findIndex(g => g.id === slotId);
+        const globalIndex = _globalCheckpoints.findIndex(g => g.id === cpId);
         if (globalIndex === -1) {
-            _selectedSlots.push(newSlotEntry);
+            _selectedCheckpoints.push(newEntry);
         } else {
-            let insertAt = _selectedSlots.length;
-            for (let i = 0; i < _selectedSlots.length; i++) {
-                const gi = _globalSlots.findIndex(g => g.id === _selectedSlots[i].id);
+            let insertAt = _selectedCheckpoints.length;
+            for (let i = 0; i < _selectedCheckpoints.length; i++) {
+                const gi = _globalCheckpoints.findIndex(g => g.id === _selectedCheckpoints[i].id);
                 if (gi > globalIndex) { insertAt = i; break; }
             }
-            _selectedSlots.splice(insertAt, 0, newSlotEntry);
+            _selectedCheckpoints.splice(insertAt, 0, newEntry);
         }
-        _renderSelectedSlots();
+        _renderSelectedCheckpoints();
         updatePreview();
     }
 
-    function _removeSelectedSlot(slotId) {
-        _selectedSlots = _selectedSlots.filter(s => s.id !== slotId);
-        _renderSelectedSlots();
+    function _removeSelectedCheckpoint(cpId) {
+        _selectedCheckpoints = _selectedCheckpoints.filter(s => s.id !== cpId);
+        _renderSelectedCheckpoints();
         updatePreview();
     }
 
-    function _renderSelectedSlots() {
-        if (!slotList) return;
-        slotList.innerHTML = '';
-        for (const slot of _selectedSlots) {
+    function _renderSelectedCheckpoints() {
+        if (!cpList) return;
+        cpList.innerHTML = '';
+        for (const cp of _selectedCheckpoints) {
             const row = document.createElement('div');
-            row.className = 'slot-label-row';
-            row.dataset.slotId = slot.id;
-            row.innerHTML = `<span class="slot-selected-label">${_escapeHtml(slot.label)}</span>
-                <button type="button" class="btn-remove-slot">&times;</button>`;
-            slotList.appendChild(row);
-            row.querySelector('.btn-remove-slot').onclick = () => _removeSelectedSlot(slot.id);
+            row.className = 'checkpoint-label-row';
+            row.dataset.checkpointId = cp.id;
+            row.innerHTML = `<span class="checkpoint-selected-label">${_escapeHtml(cp.label)}</span>
+                <button type="button" class="btn-remove-option">&times;</button>`;
+            cpList.appendChild(row);
+            row.querySelector('.btn-remove-option').onclick = () => _removeSelectedCheckpoint(cp.id);
         }
-        if (_selectedSlots.length === 0) {
-            slotList.innerHTML = '<span class="label-hint">Нажмите кнопку ниже, чтобы добавить время замера</span>';
+        if (_selectedCheckpoints.length === 0) {
+            cpList.innerHTML = '<span class="label-hint">Нажмите кнопку ниже, чтобы добавить время замера</span>';
         }
         // Hide dropdown when re-rendering
-        if (slotDropdown) slotDropdown.style.display = 'none';
-        if (addSlotBtn) addSlotBtn.style.display = '';
+        if (cpDropdown) cpDropdown.style.display = 'none';
+        if (addCpBtn) addCpBtn.style.display = '';
     }
 
-    function _populateSlotDropdown() {
-        if (!slotDropdown) return;
-        const selectedIds = new Set(_selectedSlots.map(s => s.id));
+    function _populateCheckpointDropdown() {
+        if (!cpDropdown) return;
+        const selectedIds = new Set(_selectedCheckpoints.map(s => s.id));
         let html = '<option value="">Выберите...</option>';
         let hasOptions = false;
-        for (const slot of _globalSlots) {
-            if (!selectedIds.has(slot.id)) {
-                html += `<option value="${slot.id}">${_escapeHtml(slot.label)}</option>`;
+        for (const cp of _globalCheckpoints) {
+            if (!selectedIds.has(cp.id)) {
+                html += `<option value="${cp.id}">${_escapeHtml(cp.label)}</option>`;
                 hasOptions = true;
             }
         }
         html += '<option value="__create__">Создать новое...</option>';
-        slotDropdown.innerHTML = html;
+        cpDropdown.innerHTML = html;
         // Show dropdown, hide "+" button
-        slotDropdown.style.display = '';
-        if (addSlotBtn) addSlotBtn.style.display = 'none';
-        slotDropdown.focus();
+        cpDropdown.style.display = '';
+        if (addCpBtn) addCpBtn.style.display = 'none';
+        cpDropdown.focus();
     }
 
-    // Load global slots and pre-fill selected from existing metric
-    _loadGlobalSlots().then(() => {
-        if (isEdit && existingMetric?.slots?.length) {
-            for (const s of existingMetric.slots) {
-                _selectedSlots.push({ id: s.id, label: s.label, category_id: s.category_id || null });
+    // Load global checkpoints and pre-fill selected from existing metric
+    _loadGlobalCheckpoints().then(() => {
+        if (isEdit && existingMetric?.checkpoints?.length) {
+            for (const s of existingMetric.checkpoints) {
+                _selectedCheckpoints.push({ id: s.id, label: s.label, category_id: s.category_id || null });
             }
         }
-        _renderSelectedSlots();
-        if (isEdit && existingMetric?.slots?.length) updatePreview();
+        _renderSelectedCheckpoints();
+        if (isEdit && existingMetric?.checkpoints?.length) updatePreview();
     });
 
-    if (addSlotBtn) {
-        addSlotBtn.onclick = () => _populateSlotDropdown();
+    if (addCpBtn) {
+        addCpBtn.onclick = () => _populateCheckpointDropdown();
     }
 
-    if (slotDropdown) {
-        slotDropdown.addEventListener('change', async () => {
-            const val = slotDropdown.value;
+    if (cpDropdown) {
+        cpDropdown.addEventListener('change', async () => {
+            const val = cpDropdown.value;
             if (!val) return;
             if (val === '__create__') {
                 const label = prompt('Название нового времени замера:');
                 if (!label || !label.trim()) {
-                    slotDropdown.style.display = 'none';
-                    if (addSlotBtn) addSlotBtn.style.display = '';
+                    cpDropdown.style.display = 'none';
+                    if (addCpBtn) addCpBtn.style.display = '';
                     return;
                 }
                 try {
-                    const newSlot = await api.createSlot({ label: label.trim() });
-                    await _loadGlobalSlots();
-                    _addSelectedSlot(newSlot.id, newSlot.label, null);
+                    const newCp = await api.createCheckpoint({ label: label.trim() });
+                    await _loadGlobalCheckpoints();
+                    _addSelectedCheckpoint(newCp.id, newCp.label, null);
                 } catch (e) { alert('Ошибка: ' + e.message); }
             } else {
-                const slotId = parseInt(val);
-                const slot = _globalSlots.find(s => s.id === slotId);
-                if (slot) _addSelectedSlot(slot.id, slot.label, null);
+                const cpId = parseInt(val);
+                const cp = _globalCheckpoints.find(s => s.id === cpId);
+                if (cp) _addSelectedCheckpoint(cp.id, cp.label, null);
             }
-            slotDropdown.style.display = 'none';
-            if (addSlotBtn) addSlotBtn.style.display = '';
+            cpDropdown.style.display = 'none';
+            if (addCpBtn) addCpBtn.style.display = '';
         });
-        slotDropdown.addEventListener('blur', () => {
+        cpDropdown.addEventListener('blur', () => {
             setTimeout(() => {
-                if (slotDropdown.style.display !== 'none') {
-                    slotDropdown.style.display = 'none';
-                    if (addSlotBtn) addSlotBtn.style.display = '';
+                if (cpDropdown.style.display !== 'none') {
+                    cpDropdown.style.display = 'none';
+                    if (addCpBtn) addCpBtn.style.display = '';
                 }
             }, 150);
         });
     }
 
-    function getSlotLabels() {
-        return _selectedSlots.map(s => s.label);
+    function getCheckpointLabels() {
+        return _selectedCheckpoints.map(s => s.label);
     }
 
-    function getSlotConfigs() {
+    function getCheckpointConfigs() {
         // For assessments: collect from checkpoint picker checkboxes
         const checkboxes = document.querySelectorAll('input[name="nm-checkpoint"]:checked');
         if (checkboxes.length > 0) {
-            return Array.from(checkboxes).map(cb => ({ slot_id: parseInt(cb.value) }));
+            return Array.from(checkboxes).map(cb => ({ checkpoint_id: parseInt(cb.value) }));
         }
         return [];
     }
@@ -6898,24 +6909,24 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         }
 
         try {
-            const slotConfigs = getSlotConfigs();
+            const checkpointConfigs = getCheckpointConfigs();
 
             if (isEdit) {
                 const icon = existingMetric.type === 'integration' ? undefined : document.getElementById('nm-icon').value;
                 const privateCb = document.getElementById('nm-private');
                 const hideInCardsCb = document.getElementById('nm-hide-in-cards');
                 const descriptionEl = document.getElementById('nm-description');
-                const hasSlotConfigs = slotConfigs.length >= 2;
+                const hasCheckpointConfigs = checkpointConfigs.length >= 2;
                 const roleRadio = document.querySelector('input[name="nm-metric-role"]:checked');
                 const isCheckpoint = roleRadio ? roleRadio.value === 'assessment' : false;
                 const intervalRadio = document.querySelector('input[name="nm-interval-binding"]:checked');
                 const intervalBinding = (!isCheckpoint && intervalRadio) ? intervalRadio.value : 'all_day';
-                const intervalSlotIds = intervalBinding === 'by_interval' ? [...document.querySelectorAll('input[name="nm-interval-slot"]:checked')].map(cb => parseInt(cb.value)) : null;
-                if (intervalBinding === 'by_interval' && (!intervalSlotIds || intervalSlotIds.length === 0)) {
+                const intervalIds = intervalBinding === 'by_interval' ? [...document.querySelectorAll('input[name="nm-interval-cb"]:checked')].map(cb => parseInt(cb.value)) : null;
+                if (intervalBinding === 'by_interval' && (!intervalIds || intervalIds.length === 0)) {
                     alert('Выберите хотя бы один интервал');
                     return;
                 }
-                const updateData = { name, category_id: hasSlotConfigs ? 0 : (categoryIdVal ? parseInt(categoryIdVal) : 0), private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, is_checkpoint: isCheckpoint, interval_binding: intervalBinding, interval_slot_ids: intervalSlotIds, description: descriptionEl ? descriptionEl.value.trim() || null : null };
+                const updateData = { name, category_id: hasCheckpointConfigs ? 0 : (categoryIdVal ? parseInt(categoryIdVal) : 0), private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, is_checkpoint: isCheckpoint, interval_binding: intervalBinding, interval_ids: intervalIds, description: descriptionEl ? descriptionEl.value.trim() || null : null };
                 if (icon !== undefined) updateData.icon = icon;
                 if (existingMetric.type === 'computed') {
                     if (formulaTokens.length === 0) {
@@ -6958,9 +6969,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     }
                     updateData.enum_options = opts;
                 }
-                // Send slot_configs for assessments (from checkpoint picker)
-                if (isCheckpoint && slotConfigs.length > 0) {
-                    updateData.slot_configs = slotConfigs;
+                // Send checkpoint_configs for assessments (from checkpoint picker)
+                if (isCheckpoint && checkpointConfigs.length > 0) {
+                    updateData.checkpoint_configs = checkpointConfigs;
                 }
                 // Condition data
                 const condData = _collectConditionData();
@@ -6983,12 +6994,12 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 const isCheckpoint2 = roleRadio2 ? roleRadio2.value === 'assessment' : false;
                 const intervalRadio2 = document.querySelector('input[name="nm-interval-binding"]:checked');
                 const intervalBinding2 = (!isCheckpoint2 && intervalRadio2) ? intervalRadio2.value : 'all_day';
-                const intervalSlotIds2 = intervalBinding2 === 'by_interval' ? [...document.querySelectorAll('input[name="nm-interval-slot"]:checked')].map(cb => parseInt(cb.value)) : null;
-                if (intervalBinding2 === 'by_interval' && (!intervalSlotIds2 || intervalSlotIds2.length === 0)) {
+                const intervalIds2 = intervalBinding2 === 'by_interval' ? [...document.querySelectorAll('input[name="nm-interval-cb"]:checked')].map(cb => parseInt(cb.value)) : null;
+                if (intervalBinding2 === 'by_interval' && (!intervalIds2 || intervalIds2.length === 0)) {
                     alert('Выберите хотя бы один интервал');
                     return;
                 }
-                const createData = { name, icon, type: selectedType, private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, is_checkpoint: isCheckpoint2, interval_binding: intervalBinding2, interval_slot_ids: intervalSlotIds2, description: descriptionEl ? descriptionEl.value.trim() || null : null };
+                const createData = { name, icon, type: selectedType, private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, is_checkpoint: isCheckpoint2, interval_binding: intervalBinding2, interval_ids: intervalIds2, description: descriptionEl ? descriptionEl.value.trim() || null : null };
                 if (categoryIdVal) createData.category_id = parseInt(categoryIdVal);
 
                 if (selectedType === 'scale') {
@@ -7098,9 +7109,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     }
                 }
 
-                // Send slot_configs for assessments (from checkpoint picker)
-                if (isCheckpoint2 && slotConfigs.length > 0) {
-                    createData.slot_configs = slotConfigs;
+                // Send checkpoint_configs for assessments (from checkpoint picker)
+                if (isCheckpoint2 && checkpointConfigs.length > 0) {
+                    createData.checkpoint_configs = checkpointConfigs;
                 }
 
                 // Condition data

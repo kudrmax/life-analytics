@@ -116,8 +116,9 @@ _CLEANUP_TABLES = [
     "integration_filter_config", "integration_query_config",
     "integration_app_config", "integration_category_config",
     "integration_config",
-    "metric_slots",
-    "measurement_slots",
+    "metric_checkpoints", "metric_intervals",
+    "intervals",
+    "checkpoints",
     "metric_definitions",
     "categories",
     "user_integrations",
@@ -190,7 +191,7 @@ async def create_metric(
     scale_min: int | None = None,
     scale_max: int | None = None,
     scale_step: int | None = None,
-    slot_configs: list[dict] | None = None,
+    checkpoint_configs: list[dict] | None = None,
     enum_options: list[str] | None = None,
     multi_select: bool | None = None,
 ) -> dict:
@@ -204,8 +205,8 @@ async def create_metric(
         payload["scale_max"] = scale_max
     if scale_step is not None:
         payload["scale_step"] = scale_step
-    if slot_configs is not None:
-        payload["slot_configs"] = slot_configs
+    if checkpoint_configs is not None:
+        payload["checkpoint_configs"] = checkpoint_configs
     if enum_options is not None:
         payload["enum_options"] = enum_options
     if multi_select is not None:
@@ -215,13 +216,13 @@ async def create_metric(
     return resp.json()
 
 
-async def create_slot(
+async def create_checkpoint(
     client: AsyncClient,
     token: str,
     label: str,
 ) -> dict:
-    """Create a global slot via API, return full response dict."""
-    resp = await client.post("/api/slots", json={"label": label}, headers=auth_headers(token))
+    """Create a global checkpoint via API, return full response dict."""
+    resp = await client.post("/api/checkpoints", json={"label": label}, headers=auth_headers(token))
     assert resp.status_code == 201, resp.text
     return resp.json()
 
@@ -232,12 +233,15 @@ async def create_entry(
     metric_id: int,
     date: str,
     value: bool | int | str | list[int],
-    slot_id: int | None = None,
+    checkpoint_id: int | None = None,
+    interval_id: int | None = None,
 ) -> dict:
     """Create an entry via API, return full response dict."""
     payload: dict = {"metric_id": metric_id, "date": date, "value": value}
-    if slot_id is not None:
-        payload["slot_id"] = slot_id
+    if checkpoint_id is not None:
+        payload["checkpoint_id"] = checkpoint_id
+    if interval_id is not None:
+        payload["interval_id"] = interval_id
     resp = await client.post("/api/entries", json=payload, headers=auth_headers(token))
     assert resp.status_code == 201, resp.text
     return resp.json()

@@ -37,8 +37,10 @@ class CorrelationPairResult:
     report_id: int
     metric_a_id: int | None
     metric_b_id: int | None
-    slot_a_id: int | None
-    slot_b_id: int | None
+    checkpoint_a_id: int | None
+    checkpoint_b_id: int | None
+    interval_a_id: int | None
+    interval_b_id: int | None
     source_key_a: str
     source_key_b: str
     type_a: str
@@ -53,7 +55,7 @@ class CorrelationPairResult:
 class CorrelationEngine:
     """Вычисляет корреляционный отчёт: загрузка, построение источников, расчёт пар."""
 
-    _SLOT_MINMAX_TYPES = {"number", "scale", "duration", "time"}
+    _CHECKPOINT_MINMAX_TYPES = {"number", "scale", "duration", "time"}
     _ROLLING_AVG_ELIGIBLE_TYPES = {"number", "scale", "duration", "time"}
     _DELTA_ELIGIBLE_TYPES = {"number", "scale", "duration", "bool"}
 
@@ -79,7 +81,8 @@ class CorrelationEngine:
 
         # Internal state populated during run()
         self._metrics_rows: list = []
-        self._slots_by_metric: dict[int, list] = defaultdict(list)
+        self._checkpoints_by_metric: dict[int, list] = defaultdict(list)
+        self._intervals_by_metric: dict[int, list] = defaultdict(list)
         self._computed_cfgs: dict = {}
         self._enum_opts_by_metric: dict[int, list] = defaultdict(list)
         self._single_select_metric_ids: set[int] = set()
@@ -87,7 +90,7 @@ class CorrelationEngine:
         self._source_data: dict[int, dict[str, float]] = {}
         self._aggregate_indices: dict[int, int] = {}
         self._computed_source_indices: dict[int, int] = {}
-        self._slot_source_indices_by_metric: dict[int, list[int]] = defaultdict(list)
+        self._checkpoint_source_indices_by_metric: dict[int, list[int]] = defaultdict(list)
         self._low_var_sources: set[int] = set()
         self._binary_sources: set[int] = set()
         self._streak_sources: set[int] = set()
@@ -120,11 +123,16 @@ class CorrelationEngine:
 
         metric_ids = [m["id"] for m in self._metrics_rows]
 
-        # Load slots
-        slots_rows = await repo.load_slots_for_metrics(metric_ids)
-        self._qt.mark("load_slots")
-        for s in slots_rows:
-            self._slots_by_metric[s["metric_id"]].append(s)
+        # Load checkpoints and intervals
+        checkpoint_rows = await repo.load_checkpoints_for_metrics(metric_ids)
+        self._qt.mark("load_checkpoints")
+        for s in checkpoint_rows:
+            self._checkpoints_by_metric[s["metric_id"]].append(s)
+
+        interval_rows = await repo.load_intervals_for_metrics(metric_ids)
+        self._qt.mark("load_intervals")
+        for s in interval_rows:
+            self._intervals_by_metric[s["metric_id"]].append(s)
 
         # Load computed configs
         computed_ids = [m["id"] for m in self._metrics_rows if m["type"] == MetricType.computed]
@@ -152,24 +160,41 @@ class CorrelationEngine:
             if mt == MetricType.computed:
                 self._sources.append((SourceKey(metric_id=mid), mt))
                 continue
+            is_checkpoint = bool(m.get("is_checkpoint"))
+            metric_checkpoints = self._checkpoints_by_metric.get(mid, [])
+            metric_intervals = self._intervals_by_metric.get(mid, [])
             if mt == MetricType.enum:
                 opts = self._enum_opts_by_metric.get(mid, [])
-                metric_slots = self._slots_by_metric.get(mid, [])
                 for opt in opts:
-                    if len(metric_slots) > 1:
-                        self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"]), "enum_bool"))
-                    if metric_slots:
-                        for s in metric_slots:
-                            self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"], slot_id=s["id"]), "enum_bool"))
+                    if is_checkpoint:
+                        if len(metric_checkpoints) > 1:
+                            self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"]), "enum_bool"))
+                        if metric_checkpoints:
+                            for s in metric_checkpoints:
+                                self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"], checkpoint_id=s["id"]), "enum_bool"))
+                        else:
+                            self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"]), "enum_bool"))
+                    elif metric_intervals:
+                        if len(metric_intervals) > 1:
+                            self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"]), "enum_bool"))
+                        for iv in metric_intervals:
+                            self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"], interval_id=iv["id"]), "enum_bool"))
                     else:
                         self._sources.append((SourceKey(metric_id=mid, enum_option_id=opt["id"]), "enum_bool"))
                 continue
-            metric_slots = self._slots_by_metric.get(mid, [])
-            if metric_slots:
-                if len(metric_slots) > 1:
+            if is_checkpoint:
+                if metric_checkpoints:
+                    if len(metric_checkpoints) > 1:
+                        self._sources.append((SourceKey(metric_id=mid), mt))
+                    for s in metric_checkpoints:
+                        self._sources.append((SourceKey(metric_id=mid, checkpoint_id=s["id"]), mt))
+                else:
                     self._sources.append((SourceKey(metric_id=mid), mt))
-                for s in metric_slots:
-                    self._sources.append((SourceKey(metric_id=mid, slot_id=s["id"]), mt))
+            elif metric_intervals:
+                if len(metric_intervals) > 1:
+                    self._sources.append((SourceKey(metric_id=mid), mt))
+                for iv in metric_intervals:
+                    self._sources.append((SourceKey(metric_id=mid, interval_id=iv["id"]), mt))
             else:
                 self._sources.append((SourceKey(metric_id=mid), mt))
 
@@ -178,9 +203,14 @@ class CorrelationEngine:
     async def _fetch_source_data(self) -> None:
         for i, (sk, mt) in enumerate(self._sources):
             if sk.enum_option_id is not None:
-                self._source_data[i] = await self._fetcher.values_by_date_for_enum_option(
-                    sk.metric_id, sk.enum_option_id, self._start_date, self._end_date, self._user_id, slot_id=sk.slot_id,
-                )
+                if sk.interval_id is not None:
+                    self._source_data[i] = await self._fetcher.values_by_date_for_enum_option_interval(
+                        sk.metric_id, sk.enum_option_id, self._start_date, self._end_date, self._user_id, interval_id=sk.interval_id,
+                    )
+                else:
+                    self._source_data[i] = await self._fetcher.values_by_date_for_enum_option(
+                        sk.metric_id, sk.enum_option_id, self._start_date, self._end_date, self._user_id, checkpoint_id=sk.checkpoint_id,
+                    )
             elif mt == MetricType.computed:
                 cfg = self._computed_cfgs.get(sk.metric_id)
                 if cfg and cfg["formula"]:
@@ -192,9 +222,13 @@ class CorrelationEngine:
                     )
                 else:
                     self._source_data[i] = {}
+            elif sk.interval_id is not None:
+                self._source_data[i] = await self._fetcher.values_by_date_for_interval(
+                    sk.metric_id, mt, self._start_date, self._end_date, self._user_id, interval_id=sk.interval_id,
+                )
             else:
-                self._source_data[i] = await self._fetcher.values_by_date_for_slot(
-                    sk.metric_id, mt, self._start_date, self._end_date, self._user_id, slot_id=sk.slot_id,
+                self._source_data[i] = await self._fetcher.values_by_date_for_checkpoint(
+                    sk.metric_id, mt, self._start_date, self._end_date, self._user_id, checkpoint_id=sk.checkpoint_id,
                 )
         self._qt.mark(f"fetch_{len(self._sources)}_sources")
 
@@ -203,15 +237,24 @@ class CorrelationEngine:
     async def _compute_auto_sources(self) -> None:
         # Build index maps
         for i, (sk, mt) in enumerate(self._sources):
-            if sk.slot_id is None and mt != MetricType.computed and sk.metric_id is not None:
+            if sk.checkpoint_id is None and sk.interval_id is None and mt != MetricType.computed and sk.metric_id is not None:
                 self._aggregate_indices[sk.metric_id] = i
             if mt == MetricType.computed and sk.metric_id is not None and not sk.is_auto:
                 self._computed_source_indices[sk.metric_id] = i
-            if sk.slot_id is not None and sk.metric_id is not None and not sk.is_auto:
-                self._slot_source_indices_by_metric[sk.metric_id].append(i)
+            if sk.checkpoint_id is not None and sk.metric_id is not None and not sk.is_auto:
+                self._checkpoint_source_indices_by_metric[sk.metric_id].append(i)
 
-        # Single-slot metrics: treat per-slot as aggregate for auto-source generation
-        for mid, indices in self._slot_source_indices_by_metric.items():
+        # Single-checkpoint metrics: treat per-checkpoint as aggregate for auto-source generation
+        for mid, indices in self._checkpoint_source_indices_by_metric.items():
+            if len(indices) == 1 and mid not in self._aggregate_indices:
+                self._aggregate_indices[mid] = indices[0]
+
+        # Single-interval metrics: treat per-interval as aggregate for auto-source generation
+        interval_indices_by_metric: dict[int, list[int]] = defaultdict(list)
+        for i, (sk, mt) in enumerate(self._sources):
+            if sk.interval_id is not None and sk.metric_id is not None and not sk.is_auto:
+                interval_indices_by_metric[sk.metric_id].append(i)
+        for mid, indices in interval_indices_by_metric.items():
             if len(indices) == 1 and mid not in self._aggregate_indices:
                 self._aggregate_indices[mid] = indices[0]
 
@@ -228,11 +271,11 @@ class CorrelationEngine:
                 continue
             if _auto.nonzero and m["type"] in (MetricType.number, MetricType.duration):
                 self._sources.append((SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=mid), MetricType.bool))
-            if m["type"] in self._SLOT_MINMAX_TYPES and mid in self._slot_source_indices_by_metric:
-                if _auto.slot_max:
-                    self._sources.append((SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=mid), m["type"]))
-                if _auto.slot_min:
-                    self._sources.append((SourceKey(auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=mid), m["type"]))
+            if m["type"] in self._CHECKPOINT_MINMAX_TYPES and mid in self._checkpoint_source_indices_by_metric:
+                if _auto.checkpoint_max:
+                    self._sources.append((SourceKey(auto_type=AutoSourceType.CHECKPOINT_MAX, auto_parent_metric_id=mid), m["type"]))
+                if _auto.checkpoint_min:
+                    self._sources.append((SourceKey(auto_type=AutoSourceType.CHECKPOINT_MIN, auto_parent_metric_id=mid), m["type"]))
 
         # Delta, trend, range — only for checkpoint metrics with delta-eligible types
         for m in self._metrics_rows:
@@ -241,16 +284,16 @@ class CorrelationEngine:
                 continue
             if m["type"] not in self._DELTA_ELIGIBLE_TYPES:
                 continue
-            if mid not in self._slot_source_indices_by_metric:
+            if mid not in self._checkpoint_source_indices_by_metric:
                 continue
-            sorted_slots = sorted(self._slots_by_metric[mid], key=lambda s: s["sort_order"])
+            sorted_checkpoints = sorted(self._checkpoints_by_metric[mid], key=lambda s: s["sort_order"])
             if _auto.delta:
-                for i_slot in range(len(sorted_slots) - 1):
+                for i_cp in range(len(sorted_checkpoints) - 1):
                     self._sources.append((
-                        SourceKey(auto_type=AutoSourceType.DELTA, auto_parent_metric_id=mid, auto_option_id=sorted_slots[i_slot]["id"]),
+                        SourceKey(auto_type=AutoSourceType.DELTA, auto_parent_metric_id=mid, auto_option_id=sorted_checkpoints[i_cp]["id"]),
                         m["type"],
                     ))
-            if len(sorted_slots) >= 2:
+            if len(sorted_checkpoints) >= 2:
                 if _auto.trend:
                     self._sources.append((
                         SourceKey(auto_type=AutoSourceType.TREND, auto_parent_metric_id=mid),
@@ -299,7 +342,7 @@ class CorrelationEngine:
             for src_idx, (sk, mt) in list(enumerate(self._sources)):
                 if mt not in BINARY_TYPES:
                     continue
-                if sk.is_auto or sk.slot_id is not None:
+                if sk.is_auto or sk.checkpoint_id is not None or sk.interval_id is not None:
                     continue
                 parent_mid = sk.metric_id
                 opt_id = sk.enum_option_id
@@ -338,25 +381,25 @@ class CorrelationEngine:
             if not sk.is_auto or idx in self._source_data:
                 continue
 
-            # Delta: special handling with start/end slot data
+            # Delta: special handling with start/end checkpoint data
             if sk.auto_type == AutoSourceType.DELTA:
-                start_data = self._get_slot_source_data(sk.auto_parent_metric_id, sk.auto_option_id)
-                end_slot_id = self._get_next_slot_id(sk.auto_parent_metric_id, sk.auto_option_id)
-                end_data = self._get_slot_source_data(sk.auto_parent_metric_id, end_slot_id) if end_slot_id else {}
+                start_data = self._get_checkpoint_source_data(sk.auto_parent_metric_id, sk.auto_option_id)
+                end_checkpoint_id = self._get_next_checkpoint_id(sk.auto_parent_metric_id, sk.auto_option_id)
+                end_data = self._get_checkpoint_source_data(sk.auto_parent_metric_id, end_checkpoint_id) if end_checkpoint_id else {}
                 inp = AutoSourceInput(all_dates=all_dates, start_slot_data=start_data, end_slot_data=end_data)
                 self._source_data[idx] = compute_auto_source(sk.auto_type, inp)
                 continue
 
-            # Trend/Range: use ordered slot data
+            # Trend/Range: use ordered checkpoint data
             if sk.auto_type in (AutoSourceType.TREND, AutoSourceType.RANGE):
-                slot_data = self._resolve_ordered_slot_data(sk)
-                inp = AutoSourceInput(all_dates=all_dates, slot_data=slot_data)
+                checkpoint_data = self._resolve_ordered_checkpoint_data(sk)
+                inp = AutoSourceInput(all_dates=all_dates, slot_data=checkpoint_data)
                 self._source_data[idx] = compute_auto_source(sk.auto_type, inp)
                 continue
 
             # Prepare input based on auto source type
             parent_data = self._resolve_parent_data(sk, all_dates)
-            slot_data = self._resolve_slot_data(sk)
+            checkpoint_data = self._resolve_checkpoint_data(sk)
 
             # DB-dependent sources: use pre-fetched data
             if sk.auto_type == AutoSourceType.NOTE_COUNT:
@@ -369,7 +412,7 @@ class CorrelationEngine:
             inp = AutoSourceInput(
                 all_dates=all_dates,
                 parent_data=parent_data,
-                slot_data=slot_data,
+                slot_data=checkpoint_data,
                 option_id=sk.auto_option_id,
             )
             self._source_data[idx] = compute_auto_source(sk.auto_type, inp)
@@ -383,7 +426,8 @@ class CorrelationEngine:
             for pi, (psk, _) in enumerate(self._sources):
                 if (psk.metric_id == sk.auto_parent_metric_id
                         and psk.enum_option_id == sk.auto_option_id
-                        and psk.slot_id is None
+                        and psk.checkpoint_id is None
+                        and psk.interval_id is None
                         and not psk.is_auto):
                     return self._source_data.get(pi, {})
             return None
@@ -394,43 +438,43 @@ class CorrelationEngine:
             return self._source_data.get(parent_idx, {})
         return None
 
-    def _resolve_slot_data(self, sk: SourceKey) -> list[dict[str, float]] | None:
-        """Resolve slot time-series data from engine cache for slot_max/slot_min."""
-        if sk.auto_type not in (AutoSourceType.SLOT_MAX, AutoSourceType.SLOT_MIN):
+    def _resolve_checkpoint_data(self, sk: SourceKey) -> list[dict[str, float]] | None:
+        """Resolve checkpoint time-series data from engine cache for checkpoint_max/checkpoint_min."""
+        if sk.auto_type not in (AutoSourceType.CHECKPOINT_MAX, AutoSourceType.CHECKPOINT_MIN):
             return None
-        slot_indices = self._slot_source_indices_by_metric.get(sk.auto_parent_metric_id, [])
-        if not slot_indices:
+        checkpoint_indices = self._checkpoint_source_indices_by_metric.get(sk.auto_parent_metric_id, [])
+        if not checkpoint_indices:
             return None
-        return [self._source_data.get(si, {}) for si in slot_indices]
+        return [self._source_data.get(si, {}) for si in checkpoint_indices]
 
-    def _get_slot_source_data(self, metric_id: int | None, slot_id: int | None) -> dict[str, float]:
-        """Find source_data for a specific slot of a metric."""
-        if metric_id is None or slot_id is None:
+    def _get_checkpoint_source_data(self, metric_id: int | None, checkpoint_id: int | None) -> dict[str, float]:
+        """Find source_data for a specific checkpoint of a metric."""
+        if metric_id is None or checkpoint_id is None:
             return {}
-        for si in self._slot_source_indices_by_metric.get(metric_id, []):
+        for si in self._checkpoint_source_indices_by_metric.get(metric_id, []):
             sk, _ = self._sources[si]
-            if sk.slot_id == slot_id:
+            if sk.checkpoint_id == checkpoint_id:
                 return self._source_data.get(si, {})
         return {}
 
-    def _get_next_slot_id(self, metric_id: int | None, start_slot_id: int | None) -> int | None:
-        """Find slot_id of the next checkpoint after start_slot_id."""
-        if metric_id is None or start_slot_id is None:
+    def _get_next_checkpoint_id(self, metric_id: int | None, start_checkpoint_id: int | None) -> int | None:
+        """Find checkpoint_id of the next checkpoint after start_checkpoint_id."""
+        if metric_id is None or start_checkpoint_id is None:
             return None
-        sorted_slots = sorted(self._slots_by_metric[metric_id], key=lambda s: s["sort_order"])
-        for i, s in enumerate(sorted_slots):
-            if s["id"] == start_slot_id and i + 1 < len(sorted_slots):
-                return sorted_slots[i + 1]["id"]
+        sorted_checkpoints = sorted(self._checkpoints_by_metric[metric_id], key=lambda s: s["sort_order"])
+        for i, s in enumerate(sorted_checkpoints):
+            if s["id"] == start_checkpoint_id and i + 1 < len(sorted_checkpoints):
+                return sorted_checkpoints[i + 1]["id"]
         return None
 
-    def _resolve_ordered_slot_data(self, sk: SourceKey) -> list[dict[str, float]] | None:
-        """Resolve slot data ordered by checkpoint sort_order."""
+    def _resolve_ordered_checkpoint_data(self, sk: SourceKey) -> list[dict[str, float]] | None:
+        """Resolve checkpoint data ordered by checkpoint sort_order."""
         if sk.auto_parent_metric_id is None:
             return None
-        sorted_slots = sorted(self._slots_by_metric[sk.auto_parent_metric_id], key=lambda s: s["sort_order"])
+        sorted_checkpoints = sorted(self._checkpoints_by_metric[sk.auto_parent_metric_id], key=lambda s: s["sort_order"])
         result = []
-        for s in sorted_slots:
-            data = self._get_slot_source_data(sk.auto_parent_metric_id, s["id"])
+        for s in sorted_checkpoints:
+            data = self._get_checkpoint_source_data(sk.auto_parent_metric_id, s["id"])
             result.append(data)
         return result if result else None
 
@@ -521,7 +565,8 @@ class CorrelationEngine:
         return CorrelationPairResult(
             report_id=self._report_id,
             metric_a_id=sk_a.metric_id, metric_b_id=sk_b.metric_id,
-            slot_a_id=sk_a.slot_id, slot_b_id=sk_b.slot_id,
+            checkpoint_a_id=sk_a.checkpoint_id, checkpoint_b_id=sk_b.checkpoint_id,
+            interval_a_id=sk_a.interval_id, interval_b_id=sk_b.interval_id,
             source_key_a=sk_a.to_str(), source_key_b=sk_b.to_str(),
             type_a=mt_a, type_b=mt_b,
             correlation=r, data_points=n, lag_days=lag, p_value=p_val,

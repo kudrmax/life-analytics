@@ -21,15 +21,30 @@ class CorrelationRepository(BaseRepository):
             self.user_id,
         )
 
-    async def load_slots_for_metrics(self, metric_ids: list[int]) -> list[asyncpg.Record]:
+    async def load_checkpoints_for_metrics(self, metric_ids: list[int]) -> list[asyncpg.Record]:
         if not metric_ids:
             return []
         return await self.conn.fetch(
-            """SELECT ms.id, msl.metric_id, ms.label, ms.sort_order
-               FROM metric_slots msl
-               JOIN measurement_slots ms ON ms.id = msl.slot_id
-               WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE AND ms.deleted = FALSE
-               ORDER BY msl.metric_id, ms.sort_order""",
+            """SELECT c.id, mc.metric_id, c.label, c.sort_order
+               FROM metric_checkpoints mc
+               JOIN checkpoints c ON c.id = mc.checkpoint_id
+               WHERE mc.metric_id = ANY($1) AND mc.enabled = TRUE AND c.deleted = FALSE
+               ORDER BY mc.metric_id, c.sort_order""",
+            metric_ids,
+        )
+
+    async def load_intervals_for_metrics(self, metric_ids: list[int]) -> list[asyncpg.Record]:
+        if not metric_ids:
+            return []
+        return await self.conn.fetch(
+            """SELECT i.id, mi.metric_id, cs.label AS start_label, ce.label AS end_label, mi.sort_order
+               FROM metric_intervals mi
+               JOIN intervals i ON i.id = mi.interval_id
+               JOIN checkpoints cs ON cs.id = i.start_checkpoint_id
+               JOIN checkpoints ce ON ce.id = i.end_checkpoint_id
+               WHERE mi.metric_id = ANY($1) AND mi.enabled = TRUE
+                 AND cs.deleted = FALSE AND ce.deleted = FALSE
+               ORDER BY mi.metric_id, mi.sort_order""",
             metric_ids,
         )
 
@@ -70,9 +85,10 @@ class CorrelationRepository(BaseRepository):
         if pairs:
             await self.conn.executemany(
                 """INSERT INTO correlation_pairs
-                   (report_id, metric_a_id, metric_b_id, slot_a_id, slot_b_id,
+                   (report_id, metric_a_id, metric_b_id, checkpoint_a_id, checkpoint_b_id,
+                    interval_a_id, interval_b_id,
                     source_key_a, source_key_b, type_a, type_b, correlation, data_points, lag_days, p_value, quality_issue)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)""",
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)""",
                 [astuple(p) for p in pairs],
             )
 

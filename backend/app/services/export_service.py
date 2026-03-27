@@ -33,10 +33,20 @@ class ExportService:
         metrics = await self.repo.get_metrics_for_export()
         metric_ids = [m["id"] for m in metrics]
 
-        all_slots_rows = await self.repo.get_slots_for_export(metric_ids)
-        slots_by_metric: dict[int, list[dict]] = defaultdict(list)
-        for r in all_slots_rows:
-            slots_by_metric[r["metric_id"]].append({"label": r["label"], "category_id": r["category_id"]})
+        all_checkpoint_rows = await self.repo.get_checkpoints_for_export(metric_ids)
+        checkpoints_by_metric: dict[int, list[dict]] = defaultdict(list)
+        for r in all_checkpoint_rows:
+            checkpoints_by_metric[r["metric_id"]].append({
+                "label": r["label"], "category_id": r.get("category_id"),
+            })
+
+        all_interval_rows = await self.repo.get_intervals_for_export(metric_ids)
+        intervals_by_metric: dict[int, list[dict]] = defaultdict(list)
+        for r in all_interval_rows:
+            intervals_by_metric[r["metric_id"]].append({
+                "start_label": r["start_label"], "end_label": r["end_label"],
+                "category_id": r.get("category_id"),
+            })
 
         computed_cfgs = await self.repo.get_computed_configs(metric_ids)
         enum_opts_by_metric = await self.repo.get_enum_options_for_export(metric_ids)
@@ -57,19 +67,37 @@ class ExportService:
         writer.writerow([
             'id', 'slug', 'name', 'category_path', 'icon', 'type',
             'enabled', 'sort_order', 'scale_min', 'scale_max', 'scale_step', 'scale_labels',
-            'slot_labels', 'formula', 'result_type', 'provider', 'metric_key', 'value_type',
+            'checkpoint_labels', 'interval_labels',
+            'formula', 'result_type', 'provider', 'metric_key', 'value_type',
             'filter_name', 'filter_query', 'enum_options', 'multi_select', 'private',
             'condition_metric_slug', 'condition_type', 'condition_value',
             'description', 'hide_in_cards', 'is_checkpoint', 'interval_binding',
         ])
 
         for m in metrics:
-            slot_data = slots_by_metric.get(m["id"], [])
-            has_slot_cats = any(sd["category_id"] is not None for sd in slot_data)
-            if has_slot_cats:
-                slot_labels = [{"label": sd["label"], "category_path": _cat_path(sd["category_id"])} for sd in slot_data]
+            cp_data = checkpoints_by_metric.get(m["id"], [])
+            has_cp_cats = any(cpd["category_id"] is not None for cpd in cp_data)
+            if has_cp_cats:
+                checkpoint_labels = [
+                    {"label": cpd["label"], "category_path": _cat_path(cpd["category_id"])}
+                    for cpd in cp_data
+                ]
             else:
-                slot_labels = [sd["label"] for sd in slot_data]
+                checkpoint_labels = [cpd["label"] for cpd in cp_data]
+
+            iv_data = intervals_by_metric.get(m["id"], [])
+            has_iv_cats = any(ivd.get("category_id") is not None for ivd in iv_data)
+            if has_iv_cats:
+                interval_labels_list = [
+                    {"start_label": ivd["start_label"], "end_label": ivd["end_label"],
+                     "category_path": _cat_path(ivd["category_id"])}
+                    for ivd in iv_data
+                ]
+            else:
+                interval_labels_list = [
+                    {"start_label": ivd["start_label"], "end_label": ivd["end_label"]}
+                    for ivd in iv_data
+                ]
 
             cc = computed_cfgs.get(m["id"])
             formula_export = ''
@@ -90,7 +118,8 @@ class ExportService:
                 m["scale_max"] if m["scale_max"] is not None else '',
                 m["scale_step"] if m["scale_step"] is not None else '',
                 m["scale_labels"] if m.get("scale_labels") else '',
-                json.dumps(slot_labels) if slot_labels else '',
+                json.dumps(checkpoint_labels) if checkpoint_labels else '',
+                json.dumps(interval_labels_list) if interval_labels_list else '',
                 formula_export, result_type_export,
                 m.get("provider") or '', m.get("metric_key") or '', m.get("value_type") or '',
                 m.get("filter_name") or '', m.get("filter_query") or '',
@@ -119,7 +148,11 @@ class ExportService:
 
         entries_csv = StringIO()
         writer = csv.writer(entries_csv)
-        writer.writerow(['date', 'metric_slug', 'value', 'slot_sort_order', 'slot_label'])
+        writer.writerow([
+            'date', 'metric_slug', 'value',
+            'checkpoint_id', 'checkpoint_label',
+            'interval_id', 'interval_start_label', 'interval_end_label',
+        ])
 
         entry_repo = EntryRepository(self.conn, self.repo.user_id)
         entries = await self.repo.get_entries_for_export()
@@ -136,8 +169,11 @@ class ExportService:
                 value = [id_map.get(oid, str(oid)) for oid in value]
             writer.writerow([
                 str(e["date"]), slug, json.dumps(value),
-                e["slot_sort_order"] if e["slot_sort_order"] is not None else '',
-                e["slot_label"] or '',
+                e["checkpoint_id"] if e.get("checkpoint_id") is not None else '',
+                e.get("checkpoint_label") or '',
+                e["interval_id"] if e.get("interval_id") is not None else '',
+                e.get("interval_start_label") or '',
+                e.get("interval_end_label") or '',
             ])
 
         zip_file.writestr('entries.csv', entries_csv.getvalue())

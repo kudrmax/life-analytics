@@ -72,30 +72,30 @@ class TestIsWorkday(unittest.TestCase):
         assert result == {}
 
 
-class TestSlotMax(unittest.TestCase):
+class TestCheckpointMax(unittest.TestCase):
     def test_max_across_slots(self) -> None:
         slot_data = [
             {"d1": 5.0, "d2": 3.0},
             {"d1": 8.0, "d2": 1.0},
         ]
         inp = AutoSourceInput(all_dates=[], slot_data=slot_data)
-        result = compute_auto_source(AutoSourceType.SLOT_MAX, inp)
+        result = compute_auto_source(AutoSourceType.CHECKPOINT_MAX, inp)
         assert result == {"d1": 8.0, "d2": 3.0}
 
     def test_no_slot_data(self) -> None:
         inp = AutoSourceInput(all_dates=[])
-        result = compute_auto_source(AutoSourceType.SLOT_MAX, inp)
+        result = compute_auto_source(AutoSourceType.CHECKPOINT_MAX, inp)
         assert result == {}
 
 
-class TestSlotMin(unittest.TestCase):
+class TestCheckpointMin(unittest.TestCase):
     def test_min_across_slots(self) -> None:
         slot_data = [
             {"d1": 5.0, "d2": 3.0},
             {"d1": 8.0, "d2": 1.0},
         ]
         inp = AutoSourceInput(all_dates=[], slot_data=slot_data)
-        result = compute_auto_source(AutoSourceType.SLOT_MIN, inp)
+        result = compute_auto_source(AutoSourceType.CHECKPOINT_MIN, inp)
         assert result == {"d1": 5.0, "d2": 1.0}
 
 

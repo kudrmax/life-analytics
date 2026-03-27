@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, create_entry, create_metric, create_slot
+from tests.conftest import auth_headers, create_entry, create_metric, create_checkpoint
 
 
 class TestPreviewBoolMetric:
@@ -374,22 +374,22 @@ class TestPreviewEdgeCases:
         data = resp.json()
         assert data["total_entries"] == 5
 
-    async def test_preview_bool_with_slots(
+    async def test_preview_bool_with_checkpoints(
         self, client: AsyncClient, user_a: dict,
     ):
-        """Bool metric with slots — preview aggregates all slots."""
+        """Bool metric with checkpoints — preview aggregates all checkpoints."""
         token = user_a["token"]
-        slot_u = await create_slot(client, token, "Утро")
-        slot_v = await create_slot(client, token, "Вечер")
+        cp_u = await create_checkpoint(client, token, "Утро")
+        cp_v = await create_checkpoint(client, token, "Вечер")
         metric = await create_metric(
             client, token,
-            name="Bool Slots Prev", metric_type="bool",
-            slot_configs=[{"slot_id": slot_u["id"]}, {"slot_id": slot_v["id"]}],
+            name="Bool CPs Prev", metric_type="bool",
+            checkpoint_configs=[{"checkpoint_id": cp_u["id"]}, {"checkpoint_id": cp_v["id"]}],
         )
         mid = metric["id"]
-        slots = metric["slots"]
-        await create_entry(client, token, mid, "2026-02-10", True, slot_id=slots[0]["id"])
-        await create_entry(client, token, mid, "2026-02-10", False, slot_id=slots[1]["id"])
+        checkpoints = metric["checkpoints"]
+        await create_entry(client, token, mid, "2026-02-10", True, checkpoint_id=checkpoints[0]["id"])
+        await create_entry(client, token, mid, "2026-02-10", False, checkpoint_id=checkpoints[1]["id"])
 
         resp = await client.get(
             f"/api/metrics/{mid}/convert/preview",

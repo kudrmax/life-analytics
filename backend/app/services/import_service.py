@@ -71,21 +71,22 @@ class ImportService:
                     mt = MetricType.bool.value
 
                 parsed = self._parse_row(row)
-                slot_configs = await self._parse_slot_configs(row)
+                checkpoint_configs = await self._parse_checkpoint_configs(row)
+                interval_configs = self._parse_interval_configs(row)
 
                 if existing:
                     await self.repo.update_metric_on_import(
                         existing["id"], parsed["name"], cat_id, parsed["enabled"],
                         parsed["sort_order"], parsed["icon"], parsed["private"], parsed["desc"], parsed["hic"],
                         parsed["is_checkpoint"], parsed["interval_binding"])
-                    await self._update_configs(existing["id"], mt, row, parsed, slot_configs)
+                    await self._update_configs(existing["id"], mt, row, parsed, checkpoint_configs, interval_configs)
                     updated += 1
                 else:
                     new_id = await self.repo.create_metric_on_import(
                         slug, parsed["name"], cat_id, parsed["icon"], mt,
                         parsed["enabled"], parsed["sort_order"], parsed["private"], parsed["desc"], parsed["hic"],
                         parsed["is_checkpoint"], parsed["interval_binding"])
-                    await self._create_configs(new_id, mt, row, parsed, slot_configs)
+                    await self._create_configs(new_id, mt, row, parsed, checkpoint_configs, interval_configs)
                     imported += 1
             except Exception as e:
                 errors.append(f"Row {row_num}: {str(e)}")
@@ -176,21 +177,44 @@ class ImportService:
             "vtype": row.get('value_type', ''), "fname": row.get('filter_name', ''), "fquery": row.get('filter_query', ''),
         }
 
-    async def _parse_slot_configs(self, row: dict) -> list[dict]:
-        raw = row.get('slot_labels', '')
-        if not raw: return []
+    async def _parse_checkpoint_configs(self, row: dict) -> list[dict]:
+        # Support new format (checkpoint_labels) and old format (slot_labels) for backward compat
+        raw = row.get('checkpoint_labels', '') or row.get('slot_labels', '')
+        if not raw:
+            return []
         try:
             parsed = json.loads(raw)
             configs: list[dict] = []
             for item in parsed:
-                if isinstance(item, str): configs.append({"label": item})
+                if isinstance(item, str):
+                    configs.append({"label": item})
                 elif isinstance(item, dict):
                     cid = await self.repo.resolve_category_path(item.get("category_path", "")) if item.get("category_path") else None
                     configs.append({"label": item.get("label", ""), "category_id": cid})
             return configs
-        except (json.JSONDecodeError, TypeError): return []
+        except (json.JSONDecodeError, TypeError):
+            return []
 
-    async def _update_configs(self, mid, mt, row, p, slot_configs) -> None:
+    @staticmethod
+    def _parse_interval_configs(row: dict) -> list[dict]:
+        raw = row.get('interval_labels', '')
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+            configs: list[dict] = []
+            for item in parsed:
+                if isinstance(item, dict):
+                    configs.append({
+                        "start_label": item.get("start_label", ""),
+                        "end_label": item.get("end_label", ""),
+                        "category_id": None,
+                    })
+            return configs
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    async def _update_configs(self, mid, mt, row, p, checkpoint_configs, interval_configs) -> None:
         if mt == MetricType.scale.value and p["smin"] and p["smax"] and p["sstep"]:
             cfg = await self.repo.get_scale_config(mid)
             await self.repo.upsert_scale_config(mid, int(p["smin"]), int(p["smax"]), int(p["sstep"]), p["scale_labels"], cfg is not None)
@@ -203,10 +227,12 @@ class ImportService:
         if mt == MetricType.enum.value and p["enum_opts"]:
             await self.repo.upsert_enum_config(mid, p["multi"])
             await self._import_enum_options(mid, p["enum_opts"])
-        if len(slot_configs) >= 2:
-            await self._import_slots(mid, slot_configs)
+        if len(checkpoint_configs) >= 2:
+            await self._import_checkpoints(mid, checkpoint_configs)
+        if interval_configs:
+            await self._import_intervals(mid, interval_configs)
 
-    async def _create_configs(self, mid, mt, row, p, slot_configs) -> None:
+    async def _create_configs(self, mid, mt, row, p, checkpoint_configs, interval_configs) -> None:
         if mt == MetricType.scale.value:
             await self.repo.upsert_scale_config(mid, int(p["smin"] or 1), int(p["smax"] or 5), int(p["sstep"] or 1), p["scale_labels"], False)
         if mt == MetricType.integration.value and p["provider"] and p["mkey"]:
@@ -219,10 +245,16 @@ class ImportService:
             await self.repo.upsert_enum_config(mid, p["multi"])
             for i, label in enumerate(p["enum_opts"]):
                 await self.repo.insert_enum_option(mid, i, label)
-        if len(slot_configs) >= 2:
-            for i, cfg in enumerate(slot_configs):
-                sid = await self.repo.find_or_create_slot(cfg["label"])
-                await self.repo.insert_metric_slot(mid, sid, i, cfg.get("category_id"))
+        if len(checkpoint_configs) >= 2:
+            for i, cfg in enumerate(checkpoint_configs):
+                cp_id = await self.repo.find_or_create_checkpoint(cfg["label"])
+                await self.repo.insert_metric_checkpoint(mid, cp_id, i, cfg.get("category_id"))
+        if interval_configs:
+            for i, cfg in enumerate(interval_configs):
+                start_cp_id = await self.repo.find_or_create_checkpoint(cfg["start_label"])
+                end_cp_id = await self.repo.find_or_create_checkpoint(cfg["end_label"])
+                iv_id = await self.repo.find_or_create_interval(start_cp_id, end_cp_id)
+                await self.repo.insert_metric_interval(mid, iv_id, i, cfg.get("category_id"))
 
     async def _import_enum_options(self, mid: int, labels: list[str]) -> None:
         existing = await self.repo.get_enum_options_ordered(mid)
@@ -233,16 +265,35 @@ class ImportService:
         for o in existing:
             if o["sort_order"] >= len(labels): await self.repo.disable_enum_option(o["id"])
 
-    async def _import_slots(self, mid: int, configs: list[dict]) -> None:
-        existing = await self.repo.get_metric_slots(mid)
-        by_sort = {s["sort_order"]: s for s in existing}
+    async def _import_checkpoints(self, mid: int, configs: list[dict]) -> None:
+        existing = await self.repo.get_metric_checkpoints(mid)
+        by_sort = {cp["sort_order"]: cp for cp in existing}
         for i, cfg in enumerate(configs):
             label = cfg["label"] if isinstance(cfg, dict) else cfg
             cid = cfg.get("category_id") if isinstance(cfg, dict) else None
-            sid = await self.repo.find_or_create_slot(label)
-            if i in by_sort: await self.repo.update_metric_slot_on_import(by_sort[i]["id"], sid, cid)
-            else: await self.repo.upsert_metric_slot(mid, sid, i, cid)
-        for s in existing:
-            if s["sort_order"] >= len(configs): await self.repo.disable_metric_slot(s["id"])
+            cp_id = await self.repo.find_or_create_checkpoint(label)
+            if i in by_sort:
+                await self.repo.update_metric_checkpoint_on_import(by_sort[i]["id"], cp_id, cid)
+            else:
+                await self.repo.upsert_metric_checkpoint(mid, cp_id, i, cid)
+        for cp in existing:
+            if cp["sort_order"] >= len(configs):
+                await self.repo.disable_metric_checkpoint(cp["id"])
         if any(isinstance(c, dict) and c.get("category_id") for c in configs):
             await self.repo.clear_metric_category(mid)
+
+    async def _import_intervals(self, mid: int, configs: list[dict]) -> None:
+        existing = await self.repo.get_metric_intervals(mid)
+        by_sort = {iv["sort_order"]: iv for iv in existing}
+        for i, cfg in enumerate(configs):
+            start_cp_id = await self.repo.find_or_create_checkpoint(cfg["start_label"])
+            end_cp_id = await self.repo.find_or_create_checkpoint(cfg["end_label"])
+            iv_id = await self.repo.find_or_create_interval(start_cp_id, end_cp_id)
+            cid = cfg.get("category_id")
+            if i in by_sort:
+                await self.repo.update_metric_interval_on_import(by_sort[i]["id"], iv_id, cid)
+            else:
+                await self.repo.upsert_metric_interval(mid, iv_id, i, cid)
+        for iv in existing:
+            if iv["sort_order"] >= len(configs):
+                await self.repo.disable_metric_interval(iv["id"])

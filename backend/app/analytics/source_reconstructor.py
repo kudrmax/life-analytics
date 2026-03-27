@@ -38,8 +38,12 @@ class SourceReconstructor:
 
         # Enum option source
         if sk.enum_option_id is not None and sk.metric_id is not None:
+            if sk.interval_id is not None:
+                return await self._fetcher.values_by_date_for_enum_option_interval(
+                    sk.metric_id, sk.enum_option_id, start_date, end_date, user_id, interval_id=sk.interval_id,
+                )
             return await self._fetcher.values_by_date_for_enum_option(
-                sk.metric_id, sk.enum_option_id, start_date, end_date, user_id, slot_id=sk.slot_id,
+                sk.metric_id, sk.enum_option_id, start_date, end_date, user_id, checkpoint_id=sk.checkpoint_id,
             )
 
         # Computed metric
@@ -56,8 +60,12 @@ class SourceReconstructor:
 
         # Regular metric
         if sk.metric_id is not None:
-            return await self._fetcher.values_by_date_for_slot(
-                sk.metric_id, source_type, start_date, end_date, user_id, slot_id=sk.slot_id,
+            if sk.interval_id is not None:
+                return await self._fetcher.values_by_date_for_interval(
+                    sk.metric_id, source_type, start_date, end_date, user_id, interval_id=sk.interval_id,
+                )
+            return await self._fetcher.values_by_date_for_checkpoint(
+                sk.metric_id, source_type, start_date, end_date, user_id, checkpoint_id=sk.checkpoint_id,
             )
 
         return {}
@@ -74,18 +82,18 @@ class SourceReconstructor:
             for i in range((end_date - start_date).days + 1)
         ]
 
-        # Delta: fetch start/end checkpoint slot data
+        # Delta: fetch start/end checkpoint data
         if sk.auto_type == AutoSourceType.DELTA:
             return await self._reconstruct_delta(sk, start_date, end_date, user_id, all_dates)
 
-        # Trend/Range: fetch ordered slot data
+        # Trend/Range: fetch ordered checkpoint data
         if sk.auto_type in (AutoSourceType.TREND, AutoSourceType.RANGE):
-            slot_data = await self._fetch_ordered_slot_data(sk, start_date, end_date, user_id)
+            slot_data = await self._fetch_ordered_checkpoint_data(sk, start_date, end_date, user_id)
             inp = AutoSourceInput(all_dates=all_dates, slot_data=slot_data)
             return compute_auto_source(sk.auto_type, inp)
 
         parent_data = await self._fetch_parent_data(sk, start_date, end_date, user_id)
-        slot_data = await self._fetch_slot_data(sk, start_date, end_date, user_id)
+        slot_data = await self._fetch_checkpoint_data(sk, start_date, end_date, user_id)
 
         inp = AutoSourceInput(
             all_dates=all_dates,
@@ -105,38 +113,38 @@ class SourceReconstructor:
         parent = await self._repo.get_metric_type_by_id(sk.auto_parent_metric_id)
         if not parent:
             return {}
-        ordered_slots = await self._repo.get_ordered_slot_ids(sk.auto_parent_metric_id)
-        if sk.auto_option_id not in ordered_slots:
+        ordered_checkpoints = await self._repo.get_ordered_checkpoint_ids(sk.auto_parent_metric_id)
+        if sk.auto_option_id not in ordered_checkpoints:
             return {}
-        start_idx = ordered_slots.index(sk.auto_option_id)
-        if start_idx + 1 >= len(ordered_slots):
+        start_idx = ordered_checkpoints.index(sk.auto_option_id)
+        if start_idx + 1 >= len(ordered_checkpoints):
             return {}
-        end_slot_id = ordered_slots[start_idx + 1]
-        start_data = await self._fetcher.values_by_date_for_slot(
-            parent["id"], parent["type"], start_date, end_date, user_id, slot_id=sk.auto_option_id,
+        end_checkpoint_id = ordered_checkpoints[start_idx + 1]
+        start_data = await self._fetcher.values_by_date_for_checkpoint(
+            parent["id"], parent["type"], start_date, end_date, user_id, checkpoint_id=sk.auto_option_id,
         )
-        end_data = await self._fetcher.values_by_date_for_slot(
-            parent["id"], parent["type"], start_date, end_date, user_id, slot_id=end_slot_id,
+        end_data = await self._fetcher.values_by_date_for_checkpoint(
+            parent["id"], parent["type"], start_date, end_date, user_id, checkpoint_id=end_checkpoint_id,
         )
         inp = AutoSourceInput(all_dates=all_dates, start_slot_data=start_data, end_slot_data=end_data)
         return compute_auto_source(AutoSourceType.DELTA, inp)
 
-    async def _fetch_ordered_slot_data(
+    async def _fetch_ordered_checkpoint_data(
         self, sk: SourceKey, start_date: date_type, end_date: date_type, user_id: int,
     ) -> list[dict[str, float]] | None:
-        """Fetch slot data ordered by sort_order for trend/range."""
+        """Fetch checkpoint data ordered by sort_order for trend/range."""
         if sk.auto_parent_metric_id is None:
             return None
         parent = await self._repo.get_metric_type_by_id(sk.auto_parent_metric_id)
         if not parent:
             return None
-        ordered_slots = await self._repo.get_ordered_slot_ids(sk.auto_parent_metric_id)
-        if not ordered_slots:
+        ordered_checkpoints = await self._repo.get_ordered_checkpoint_ids(sk.auto_parent_metric_id)
+        if not ordered_checkpoints:
             return None
         result: list[dict[str, float]] = []
-        for sid in ordered_slots:
-            sd = await self._fetcher.values_by_date_for_slot(
-                parent["id"], parent["type"], start_date, end_date, user_id, slot_id=sid,
+        for cid in ordered_checkpoints:
+            sd = await self._fetcher.values_by_date_for_checkpoint(
+                parent["id"], parent["type"], start_date, end_date, user_id, checkpoint_id=cid,
             )
             result.append(sd)
         return result
@@ -186,28 +194,28 @@ class SourceReconstructor:
         parent = await self._repo.get_metric_type_by_id(sk.auto_parent_metric_id)
         if not parent:
             return None
-        return await self._fetcher.values_by_date_for_slot(
+        return await self._fetcher.values_by_date_for_checkpoint(
             parent["id"], parent["type"], start_date, end_date, user_id,
         )
 
-    async def _fetch_slot_data(
+    async def _fetch_checkpoint_data(
         self, sk: SourceKey, start_date: date_type, end_date: date_type, user_id: int,
     ) -> list[dict[str, float]] | None:
-        """Fetch slot time-series for slot_max/slot_min auto sources."""
-        if sk.auto_type not in (AutoSourceType.SLOT_MAX, AutoSourceType.SLOT_MIN):
+        """Fetch checkpoint time-series for checkpoint_max/checkpoint_min auto sources."""
+        if sk.auto_type not in (AutoSourceType.CHECKPOINT_MAX, AutoSourceType.CHECKPOINT_MIN):
             return None
         if sk.auto_parent_metric_id is None:
             return None
         parent = await self._repo.get_metric_type_by_id(sk.auto_parent_metric_id)
         if not parent:
             return None
-        slot_ids = await self._repo.get_enabled_slot_ids(sk.auto_parent_metric_id)
-        if not slot_ids:
+        checkpoint_ids = await self._repo.get_enabled_checkpoint_ids(sk.auto_parent_metric_id)
+        if not checkpoint_ids:
             return None
         result: list[dict[str, float]] = []
-        for sid in slot_ids:
-            sd = await self._fetcher.values_by_date_for_slot(
-                parent["id"], parent["type"], start_date, end_date, user_id, slot_id=sid,
+        for cid in checkpoint_ids:
+            sd = await self._fetcher.values_by_date_for_checkpoint(
+                parent["id"], parent["type"], start_date, end_date, user_id, checkpoint_id=cid,
             )
             result.append(sd)
         return result

@@ -14,8 +14,8 @@ _CONFIG_PATH = Path(__file__).resolve().parent.parent / "correlation.toml"
 class AutoSourcesConfig:
     nonzero: bool = True
     note_count: bool = True
-    slot_max: bool = True
-    slot_min: bool = True
+    checkpoint_max: bool = True
+    checkpoint_min: bool = True
     rolling_avg: bool = True
     rolling_avg_windows: tuple[int, ...] = (3, 7, 14)
     streak: bool = True

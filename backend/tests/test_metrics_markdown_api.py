@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, register_user, create_metric, create_slot
+from tests.conftest import auth_headers, register_user, create_metric, create_checkpoint
 
 
 class TestMarkdownExportBasic:
@@ -210,25 +210,25 @@ class TestMarkdownExportCategories:
         assert "Здоровье / Физ. активность" in row
 
 
-class TestMarkdownExportSlots:
-    """Metrics with slots show slot labels."""
+class TestMarkdownExportCheckpoints:
+    """Metrics with checkpoints show checkpoint labels."""
 
-    async def test_metric_with_slots(
+    async def test_metric_with_checkpoints(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        # Create global slots
-        s1 = await create_slot(client, user_a["token"], "Утро")
-        s2 = await create_slot(client, user_a["token"], "Вечер")
+        # Create global checkpoints
+        cp1 = await create_checkpoint(client, user_a["token"], "Утро")
+        cp2 = await create_checkpoint(client, user_a["token"], "Вечер")
 
-        # Create metric with slots
+        # Create metric with checkpoints
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "Давление",
                 "type": "number",
-                "slot_configs": [
-                    {"slot_id": s1["id"]},
-                    {"slot_id": s2["id"]},
+                "checkpoint_configs": [
+                    {"checkpoint_id": cp1["id"]},
+                    {"checkpoint_id": cp2["id"]},
                 ],
             },
             headers=auth_headers(user_a["token"]),

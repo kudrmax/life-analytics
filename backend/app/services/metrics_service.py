@@ -8,9 +8,9 @@ from app.formula import validate_formula, get_referenced_metric_ids
 from app.integrations.todoist.registry import TODOIST_METRICS, TODOIST_ICON
 from app.integrations.activitywatch.registry import ACTIVITYWATCH_METRICS, ACTIVITYWATCH_ICON
 from app.services.metric_builder import build_metric_out
-from app.services.daily_helpers import build_interval_label_map
 from app.repositories.metric_repository import MetricRepository
 from app.repositories.metric_config_repository import MetricConfigRepository
+from app.repositories.checkpoints_repository import CheckpointsRepository
 from app.domain.enums import MetricType
 from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut
 from app.services.metric_conversion_service import MetricConversionService, ALLOWED_CONVERSIONS
@@ -27,43 +27,31 @@ class MetricsService:
         self.repo = repo
         self.cfg_repo = cfg_repo
         self.conn = conn
+        self.user_id = repo.user_id
 
     async def list_all(self, enabled_only: bool, privacy_mode: bool) -> list[MetricDefinitionOut]:
         rows = await self.repo.get_all_with_config(enabled_only)
         metric_ids = [r["id"] for r in rows]
-        slots_map = await self.repo.get_slots_for_metrics(metric_ids) if metric_ids else {}
+        checkpoints_map = await self.repo.get_checkpoints_for_metrics(metric_ids) if metric_ids else {}
+        intervals_map = await self.repo.get_intervals_for_metrics(metric_ids) if metric_ids else {}
         enum_opts_map = await self.repo.get_enum_options_for_metrics(metric_ids) if metric_ids else {}
-        has_interval = any(r.get("interval_binding") == "by_interval" for r in rows)
-        if has_interval:
-            interval_labels = await self._load_interval_labels()
-            self._apply_interval_labels(slots_map, rows, interval_labels)
-        return [await build_metric_out(r, slots_map.get(r["id"]), enum_opts_map.get(r["id"]), privacy_mode) for r in rows]
+        return [
+            await build_metric_out(
+                r, checkpoints_map.get(r["id"]), intervals_map.get(r["id"]),
+                enum_opts_map.get(r["id"]), privacy_mode,
+            )
+            for r in rows
+        ]
 
     async def get_one(self, metric_id: int, privacy_mode: bool) -> MetricDefinitionOut:
         row = await self.repo.get_one_with_config(metric_id)
-        slots_map = await self.repo.get_slots_for_metrics([metric_id])
+        checkpoints_map = await self.repo.get_checkpoints_for_metrics([metric_id])
+        intervals_map = await self.repo.get_intervals_for_metrics([metric_id])
         enum_opts_map = await self.repo.get_enum_options_for_metrics([metric_id])
-        if row.get("interval_binding") == "by_interval":
-            interval_labels = await self._load_interval_labels()
-            self._apply_interval_labels(slots_map, [row], interval_labels)
-        return await build_metric_out(row, slots_map.get(metric_id), enum_opts_map.get(metric_id), privacy_mode)
-
-    async def _load_interval_labels(self) -> dict[int, str]:
-        user_slots = await self.repo.get_user_slots_ordered()
-        return build_interval_label_map(user_slots)
-
-    @staticmethod
-    def _apply_interval_labels(slots_map: dict, rows: list, interval_labels: dict[int, str]) -> None:
-        for r in rows:
-            if r.get("interval_binding") != "by_interval":
-                continue
-            mid = r["id"]
-            if mid not in slots_map:
-                continue
-            for slot in slots_map[mid]:
-                new_label = interval_labels.get(slot["id"])
-                if new_label:
-                    slot["label"] = new_label
+        return await build_metric_out(
+            row, checkpoints_map.get(metric_id), intervals_map.get(metric_id),
+            enum_opts_map.get(metric_id), privacy_mode,
+        )
 
     async def reorder(self, items: list[dict]) -> None:
         await self.repo.reorder(items)
@@ -83,8 +71,9 @@ class MetricsService:
             data.interval_binding,
         )
         await self._create_type_config(metric_id, data)
-        await self._create_slot_configs(metric_id, data)
-        await self._create_interval_slots(metric_id, data.interval_binding, data.interval_slot_ids)
+        await self._create_checkpoint_configs(metric_id, data)
+        await self._create_metric_intervals(metric_id, data.interval_binding, data.interval_ids,
+                                            data.all_intervals)
         await self._create_condition(metric_id, data)
         return await self.get_one(metric_id, privacy_mode)
 
@@ -94,7 +83,7 @@ class MetricsService:
         await self._update_scale_config(metric_id, row, data)
         await self._update_computed_config(metric_id, row, data)
         await self._update_enum_config(metric_id, row, data)
-        await self._update_slot_configs(metric_id, data)
+        await self._update_checkpoint_configs(metric_id, data)
         await self._update_interval_binding(metric_id, row, data)
         await self._update_condition(metric_id, data)
         return await self.get_one(metric_id, privacy_mode)
@@ -120,9 +109,16 @@ class MetricsService:
         from app.services.metric_markdown_service import build_markdown_table
         rows = await self.repo.get_all_with_config()
         metric_ids = [r["id"] for r in rows]
-        slots_map = await self.repo.get_slots_for_metrics(metric_ids) if metric_ids else {}
+        checkpoints_map = await self.repo.get_checkpoints_for_metrics(metric_ids) if metric_ids else {}
+        intervals_map = await self.repo.get_intervals_for_metrics(metric_ids) if metric_ids else {}
         enum_opts_map = await self.repo.get_enum_options_for_metrics(metric_ids) if metric_ids else {}
-        metrics = [await build_metric_out(r, slots_map.get(r["id"]), enum_opts_map.get(r["id"]), False) for r in rows]
+        metrics = [
+            await build_metric_out(
+                r, checkpoints_map.get(r["id"]), intervals_map.get(r["id"]),
+                enum_opts_map.get(r["id"]), False,
+            )
+            for r in rows
+        ]
         cat_rows = await self.repo.get_all_categories()
         return build_markdown_table(metrics, cat_rows)
 
@@ -216,18 +212,24 @@ class MetricsService:
         if data.type == MetricType.computed:
             await self._validate_and_save_formula(metric_id, data.formula, data.result_type)
 
-    async def _create_slot_configs(self, metric_id: int, data: MetricDefinitionCreate) -> None:
+    async def _create_checkpoint_configs(self, metric_id: int, data: MetricDefinitionCreate) -> None:
         if data.type in (MetricType.computed, MetricType.integration, MetricType.text):
             return
-        if not data.slot_configs or len(data.slot_configs) < 2:
+        if data.all_checkpoints:
+            checkpoints = await self.repo.get_user_checkpoints_ordered()
+            for i, cp in enumerate(checkpoints):
+                await self.cfg_repo.insert_metric_checkpoint(metric_id, cp["id"], i, None)
             return
-        for i, cfg in enumerate(data.slot_configs):
-            sid = cfg.get("slot_id")
-            if sid is None:
-                raise InvalidOperationError("slot_id is required in slot_configs")
-            if not await self.cfg_repo.check_slot_ownership(sid):
-                raise InvalidOperationError(f"Slot {sid} not found")
-            await self.cfg_repo.insert_metric_slot(metric_id, sid, i, None)
+        if not data.checkpoint_configs or len(data.checkpoint_configs) < 2:
+            return
+        for i, cfg in enumerate(data.checkpoint_configs):
+            cp_id = cfg.get("checkpoint_id")
+            if cp_id is None:
+                raise InvalidOperationError("checkpoint_id is required in checkpoint_configs")
+            if not await self.cfg_repo.check_checkpoint_ownership(cp_id):
+                raise InvalidOperationError(f"Checkpoint {cp_id} not found")
+            cat_id = await self._validate_category_id(cfg.get("category_id"))
+            await self.cfg_repo.insert_metric_checkpoint(metric_id, cp_id, i, cat_id)
 
     async def _create_condition(self, metric_id: int, data: MetricDefinitionCreate) -> None:
         if data.condition_metric_id is not None and data.condition_type is not None:
@@ -235,7 +237,8 @@ class MetricsService:
 
     async def _apply_field_updates(self, metric_id: int, row, data: MetricDefinitionUpdate) -> None:
         updates = {}
-        for field in ("name", "enabled", "sort_order", "private", "hide_in_cards", "is_checkpoint", "interval_binding"):
+        for field in ("name", "enabled", "sort_order", "private", "hide_in_cards", "is_checkpoint",
+                       "interval_binding", "all_checkpoints", "all_intervals"):
             val = getattr(data, field)
             if val is not None:
                 updates[field] = val
@@ -300,77 +303,124 @@ class MetricsService:
                 if o["id"] not in seen_ids:
                     await self.cfg_repo.disable_enum_option(o["id"])
 
-    async def _update_slot_configs(self, metric_id: int, data: MetricDefinitionUpdate) -> None:
-        if data.slot_configs is None:
+    async def _validate_category_id(self, cat_id: int | None) -> int | None:
+        if cat_id is None:
+            return None
+        exists = await self.conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM categories WHERE id = $1 AND user_id = $2)",
+            cat_id, self.user_id,
+        )
+        return cat_id if exists else None
+
+    async def _update_checkpoint_configs(self, metric_id: int, data: MetricDefinitionUpdate) -> None:
+        if data.all_checkpoints is True:
+            existing = await self.cfg_repo.get_metric_checkpoints(metric_id)
+            existing_cp_ids = {cp["checkpoint_id"] for cp in existing}
+            all_checkpoints = await self.repo.get_user_checkpoints_ordered()
+            for i, cp in enumerate(all_checkpoints):
+                if cp["id"] not in existing_cp_ids:
+                    await self.cfg_repo.insert_metric_checkpoint(metric_id, cp["id"], i, None)
+                else:
+                    await self.cfg_repo.upsert_metric_checkpoint(metric_id, cp["id"], None, i)
+            all_cp_ids = {cp["id"] for cp in all_checkpoints}
+            for cp in existing:
+                if cp["checkpoint_id"] not in all_cp_ids:
+                    await self.cfg_repo.disable_metric_checkpoint(metric_id, cp["checkpoint_id"])
+            if not existing and all_checkpoints:
+                await self.cfg_repo.migrate_null_checkpoint_entries(metric_id, all_checkpoints[0]["id"])
             return
-        existing = await self.cfg_repo.get_metric_slots(metric_id)
-        if len(data.slot_configs) < 2:
+        if data.checkpoint_configs is None:
+            return
+        existing = await self.cfg_repo.get_metric_checkpoints(metric_id)
+        if len(data.checkpoint_configs) < 2:
             if existing:
-                raise InvalidOperationError("Cannot reduce to fewer than 2 slots once configured")
+                raise InvalidOperationError("Cannot reduce to fewer than 2 checkpoints once configured")
             return
-        for cfg in data.slot_configs:
-            sid = cfg.get("slot_id")
-            if sid is None:
-                raise InvalidOperationError("slot_id is required in slot_configs")
-            if not await self.cfg_repo.check_slot_ownership(sid):
-                raise InvalidOperationError(f"Slot {sid} not found")
+        for cfg in data.checkpoint_configs:
+            cp_id = cfg.get("checkpoint_id")
+            if cp_id is None:
+                raise InvalidOperationError("checkpoint_id is required in checkpoint_configs")
+            if not await self.cfg_repo.check_checkpoint_ownership(cp_id):
+                raise InvalidOperationError(f"Checkpoint {cp_id} not found")
 
         if not existing:
-            first_slot_id = None
-            for i, cfg in enumerate(data.slot_configs):
-                await self.cfg_repo.insert_metric_slot(metric_id, cfg["slot_id"], i, None)
+            first_cp_id = None
+            for i, cfg in enumerate(data.checkpoint_configs):
+                cat_id = await self._validate_category_id(cfg.get("category_id"))
+                await self.cfg_repo.insert_metric_checkpoint(
+                    metric_id, cfg["checkpoint_id"], i, cat_id,
+                )
                 if i == 0:
-                    first_slot_id = cfg["slot_id"]
-            if first_slot_id:
-                await self.cfg_repo.migrate_null_slot_entries(metric_id, first_slot_id)
+                    first_cp_id = cfg["checkpoint_id"]
+            if first_cp_id:
+                await self.cfg_repo.migrate_null_checkpoint_entries(metric_id, first_cp_id)
         else:
-            existing_by_slot = {s["slot_id"]: s for s in existing}
+            existing_by_cp = {cp["checkpoint_id"]: cp for cp in existing}
             seen: set[int] = set()
-            for i, cfg in enumerate(data.slot_configs):
-                sid = cfg["slot_id"]
-                seen.add(sid)
-                if sid in existing_by_slot:
-                    await self.cfg_repo.update_metric_slot(metric_id, sid, None, i)
+            for i, cfg in enumerate(data.checkpoint_configs):
+                cp_id = cfg["checkpoint_id"]
+                seen.add(cp_id)
+                cat_id = await self._validate_category_id(cfg.get("category_id"))
+                if cp_id in existing_by_cp:
+                    await self.cfg_repo.upsert_metric_checkpoint(
+                        metric_id, cp_id, cat_id, i,
+                    )
                 else:
-                    await self.cfg_repo.insert_metric_slot(metric_id, sid, i, None)
-            for s in existing:
-                if s["slot_id"] not in seen:
-                    await self.cfg_repo.disable_metric_slot(metric_id, s["slot_id"])
+                    await self.cfg_repo.insert_metric_checkpoint(
+                        metric_id, cp_id, i, cat_id,
+                    )
+            for cp in existing:
+                if cp["checkpoint_id"] not in seen:
+                    await self.cfg_repo.disable_metric_checkpoint(metric_id, cp["checkpoint_id"])
 
-    async def _create_interval_slots(self, metric_id: int, binding: str, slot_ids: list[int] | None) -> None:
-        """Auto-create metric_slots for interval-bound facts."""
+    async def _create_metric_intervals(
+        self, metric_id: int, binding: str,
+        interval_ids: list[int] | None, all_intervals: bool = False,
+    ) -> None:
+        """Auto-create metric_intervals for interval-bound facts."""
         if binding in ("all_day", "moment"):
             return
-        if not slot_ids:
-            raise InvalidOperationError("interval_slot_ids is required for by_interval binding")
+        if all_intervals:
+            cp_repo = CheckpointsRepository(self.conn, self.repo.user_id)
+            active_intervals = await cp_repo.get_active_intervals()
+            for i, iv in enumerate(active_intervals):
+                await self.cfg_repo.insert_metric_interval(metric_id, iv["id"], i, None)
+            return
+        if not interval_ids:
+            raise InvalidOperationError("interval_ids is required for by_interval binding")
         seen: set[int] = set()
-        for i, sid in enumerate(slot_ids):
-            if sid in seen:
+        for i, iv_id in enumerate(interval_ids):
+            if iv_id in seen:
                 continue
-            seen.add(sid)
-            if not await self.cfg_repo.check_slot_ownership(sid):
-                raise InvalidOperationError(f"Slot {sid} not found")
-            await self.cfg_repo.insert_metric_slot(metric_id, sid, i, None)
+            seen.add(iv_id)
+            if not await self.cfg_repo.check_interval_ownership(iv_id):
+                raise InvalidOperationError(f"Interval {iv_id} not found")
+            if not await self.cfg_repo.check_interval_active(iv_id):
+                raise InvalidOperationError(f"Interval {iv_id} references a deleted checkpoint")
+            await self.cfg_repo.insert_metric_interval(metric_id, iv_id, i, None)
 
     async def _update_interval_binding(self, metric_id: int, row, data: MetricDefinitionUpdate) -> None:
-        """Handle interval_binding changes — recreate metric_slots."""
-        if data.interval_binding is None and data.interval_slot_ids is None:
+        """Handle interval_binding changes — recreate metric_intervals."""
+        if data.interval_binding is None and data.interval_ids is None and data.all_intervals is None:
             return
         old_binding = row.get("interval_binding", "all_day")
         new_binding = data.interval_binding or old_binding
-        if new_binding == old_binding and data.interval_slot_ids is None:
+        if new_binding == old_binding and data.interval_ids is None and not data.all_intervals:
             return
-        # Remove old interval slots
+        # Remove old metric intervals
         if old_binding == "by_interval":
-            existing = await self.cfg_repo.get_metric_slots(metric_id)
-            for s in existing:
-                await self.cfg_repo.disable_metric_slot(metric_id, s["slot_id"])
-        # Create new interval slots
-        await self._create_interval_slots(metric_id, new_binding, data.interval_slot_ids)
-        # Migrate null-slot entries to first interval slot so they stay visible.
+            existing = await self.cfg_repo.get_metric_intervals(metric_id)
+            for iv in existing:
+                await self.cfg_repo.disable_metric_interval(metric_id, iv["interval_id"])
+        # Create new metric intervals
+        await self._create_metric_intervals(
+            metric_id, new_binding, data.interval_ids,
+            data.all_intervals or False,
+        )
+        # Migrate null-interval entries to first interval so they stay visible.
         # Only needed when actually transitioning from non-by_interval → by_interval.
-        if old_binding != "by_interval" and new_binding == "by_interval" and data.interval_slot_ids:
-            await self.cfg_repo.migrate_null_slot_entries(metric_id, data.interval_slot_ids[0])
+        if old_binding != "by_interval" and new_binding == "by_interval" and data.interval_ids:
+            await self.cfg_repo.migrate_null_interval_entries(metric_id, data.interval_ids[0])
 
     async def _update_condition(self, metric_id: int, data: MetricDefinitionUpdate) -> None:
         if data.remove_condition:

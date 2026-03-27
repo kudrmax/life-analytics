@@ -584,7 +584,7 @@ h3 {
     border-radius: 8px;
 }
 
-.slot-label-row .drag-handle {
+.checkpoint-label-row .drag-handle {
     cursor: grab;
     color: var(--text-dim);
     font-size: 14px;
@@ -594,11 +594,11 @@ h3 {
     text-align: center;
 }
 
-.slot-label-row .drag-handle:active {
+.checkpoint-label-row .drag-handle:active {
     cursor: grabbing;
 }
 
-.slot-label-row.dragging {
+.checkpoint-label-row.dragging {
     opacity: 0.4;
     background: var(--surface2);
     border-radius: 8px;
@@ -1422,7 +1422,7 @@ input[type="month"], input[type="date"] {
 .corr-pair-value.medium { color: var(--yellow); }
 .corr-pair-value.weak { color: var(--red); }
 
-.corr-slot-badge {
+.corr-binding-badge {
     display: inline-block;
     font-size: 10px;
     font-weight: 500;
@@ -2153,13 +2153,13 @@ details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-siz
     }
 }
 
-/* ─── Slots Choice Cards ─── */
-.slots-choice-grid {
+/* ─── Role Choice Cards ─── */
+.role-choice-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 6px;
 }
-.slots-choice-card {
+.role-choice-card {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -2170,26 +2170,26 @@ details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-siz
     background: var(--surface2);
     transition: all 0.15s;
 }
-.slots-choice-card:hover { border-color: var(--accent); }
-.slots-choice-card.selected {
+.role-choice-card:hover { border-color: var(--accent); }
+.role-choice-card.selected {
     border-color: var(--accent);
     background: rgba(108, 140, 255, 0.06);
 }
-.slots-choice-card input[type="radio"] { display: none; }
-.slots-choice-icon {
+.role-choice-card input[type="radio"] { display: none; }
+.role-choice-icon {
     display: flex;
     color: var(--text-dim);
     flex-shrink: 0;
     transition: color 0.15s;
 }
-.slots-choice-icon svg { width: 16px; height: 16px; }
-.slots-choice-card.selected .slots-choice-icon { color: var(--accent); }
-.slots-choice-title {
+.role-choice-icon svg { width: 16px; height: 16px; }
+.role-choice-card.selected .role-choice-icon { color: var(--accent); }
+.role-choice-title {
     font-size: 13px;
     font-weight: 500;
     color: var(--text);
 }
-.slots-config { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.role-config { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 
 .formula-empty-warning {
     padding: 14px 16px;
@@ -2434,45 +2434,34 @@ details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-siz
     background: #fff;
 }
 
-/* ─── Multi-Slot ─── */
-.metric-slot {
+/* ─── Multi-Checkpoint / Interval ─── */
+.metric-checkpoint,
+.metric-interval {
     padding: 6px 0;
 }
 
-.metric-slot + .metric-slot {
+.metric-checkpoint + .metric-checkpoint,
+.metric-interval + .metric-interval {
     border-top: 1px solid var(--border);
 }
 
-.slot-labels-list {
+.checkpoint-labels-list {
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 
-.slot-label-row {
+.checkpoint-label-row {
     display: flex;
     align-items: center;
     gap: 8px;
 }
 
-.slot-label-row input {
+.checkpoint-label-row input {
     flex: 1;
 }
 
-.slot-label-row .slot-category-select {
-    flex: 0 0 auto;
-    width: 140px;
-    padding: 6px 8px;
-    font-size: 13px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface2);
-    color: var(--text);
-    cursor: pointer;
-}
-
-.slot-label-row .btn-remove-slot,
-.enum-option-row .btn-remove-slot {
+.btn-remove-option {
     background: none;
     border: 1px solid var(--border);
     color: var(--text-dim);
@@ -2488,14 +2477,13 @@ details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-siz
     transition: all 0.15s;
 }
 
-.slot-label-row .btn-remove-slot:hover,
-.enum-option-row .btn-remove-slot:hover {
+.btn-remove-option:hover {
     border-color: var(--red);
     color: var(--red);
     background: rgba(239, 83, 80, 0.1);
 }
 
-.btn-add-slot {
+.btn-add-option {
     background: var(--surface2);
     border: 1px dashed var(--border);
     color: var(--text-dim);
@@ -2509,42 +2497,17 @@ details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-siz
     margin-top: 8px;
 }
 
-.btn-add-slot:hover {
+.btn-add-option:hover {
     border-color: var(--accent);
     color: var(--text);
 }
 
-.slot-check-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex: 1;
-    cursor: pointer;
-}
-
-.slot-check-label .slot-label-input {
-    font-size: 14px;
-    color: var(--text);
-}
-
-.slot-del-disabled {
+.checkpoint-del-disabled {
     opacity: 0.3;
     cursor: not-allowed !important;
 }
 
-.slot-add-dropdown {
-    width: 100%;
-    padding: 6px 8px;
-    font-size: 13px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--surface2);
-    color: var(--text);
-    cursor: pointer;
-    margin-top: 4px;
-}
-
-.slot-selected-label {
+.checkpoint-selected-label {
     flex: 1;
     font-size: 14px;
     color: var(--text);
@@ -2553,7 +2516,7 @@ details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-siz
     text-overflow: ellipsis;
 }
 
-.setting-slots {
+.setting-bindings {
     display: inline-block;
     background: var(--accent);
     color: #fff;
@@ -2685,7 +2648,7 @@ emoji-picker {
     text-transform: uppercase;
 }
 
-.slot-badge {
+.checkpoint-badge {
     display: inline-block;
     font-size: 11px;
     font-weight: 600;
@@ -2929,8 +2892,8 @@ emoji-picker {
 .cat-item-child { margin-left: 32px; }
 .cat-item-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .cat-item-name { flex: 1; font-weight: 500; }
-.slot-description { font-size: 12px; color: var(--text-secondary); }
-.slots-choice-desc { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.checkpoint-description { font-size: 12px; color: var(--text-secondary); }
+.role-choice-desc { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
 .cat-item-actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.15s; }
 .cat-item:hover .cat-item-actions { opacity: 1; }
 

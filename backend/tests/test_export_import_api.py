@@ -8,7 +8,7 @@ from io import BytesIO, StringIO
 
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_slot
+from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_checkpoint
 
 
 # ---------------------------------------------------------------------------
@@ -199,14 +199,14 @@ class TestImportBasic:
     ) -> None:
         metrics_csv = (
             "id,slug,name,category_path,icon,type,enabled,sort_order,"
-            "scale_min,scale_max,scale_step,slot_labels,formula,result_type,"
+            "scale_min,scale_max,scale_step,checkpoint_labels,formula,result_type,"
             "provider,metric_key,value_type,filter_name,filter_query,"
             "enum_options,multi_select,private,condition_metric_slug,"
             "condition_type,condition_value\n"
             "1,imp_bool,Imported Bool,,,,bool,1,0,,,,,,,,,,,,,,0,,,\n"
         )
         entries_csv = (
-            "date,metric_slug,value,slot_sort_order,slot_label\n"
+            "date,metric_slug,value,checkpoint_id,checkpoint_label\n"
             "2026-03-01,imp_bool,true,,\n"
         )
         zip_buf = build_zip(metrics_csv, entries_csv)
@@ -226,13 +226,13 @@ class TestImportBasic:
     ) -> None:
         metrics_csv = (
             "id,slug,name,category_path,icon,type,enabled,sort_order,"
-            "scale_min,scale_max,scale_step,slot_labels,formula,result_type,"
+            "scale_min,scale_max,scale_step,checkpoint_labels,formula,result_type,"
             "provider,metric_key,value_type,filter_name,filter_query,"
             "enum_options,multi_select,private,condition_metric_slug,"
             "condition_type,condition_value\n"
             "1,created_by_slug,Created By Slug,,,,bool,1,0,,,,,,,,,,,,,,0,,,\n"
         )
-        entries_csv = "date,metric_slug,value,slot_sort_order,slot_label\n"
+        entries_csv = "date,metric_slug,value,checkpoint_id,checkpoint_label\n"
         zip_buf = build_zip(metrics_csv, entries_csv)
 
         await client.post(
@@ -254,14 +254,14 @@ class TestImportBasic:
     ) -> None:
         metrics_csv = (
             "id,slug,name,category_path,icon,type,enabled,sort_order,"
-            "scale_min,scale_max,scale_step,slot_labels,formula,result_type,"
+            "scale_min,scale_max,scale_step,checkpoint_labels,formula,result_type,"
             "provider,metric_key,value_type,filter_name,filter_query,"
             "enum_options,multi_select,private,condition_metric_slug,"
             "condition_type,condition_value\n"
             "1,dup_test,Dup Test,,,,bool,1,0,,,,,,,,,,,,,,0,,,\n"
         )
         entries_csv = (
-            "date,metric_slug,value,slot_sort_order,slot_label\n"
+            "date,metric_slug,value,checkpoint_id,checkpoint_label\n"
             "2026-03-05,dup_test,true,,\n"
         )
         zip_buf_1 = build_zip(metrics_csv, entries_csv)
@@ -299,7 +299,7 @@ class TestImportBasic:
     ) -> None:
         buf = BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("entries.csv", "date,metric_slug,value,slot_sort_order,slot_label\n")
+            zf.writestr("entries.csv", "date,metric_slug,value,checkpoint_id,checkpoint_label\n")
         buf.seek(0)
 
         resp = await client.post(
@@ -529,17 +529,17 @@ class TestExportAdvanced:
         assert len(metrics_rows) == 1
         assert metrics_rows[0]["category_path"] == "Health > Sleep"
 
-    async def test_export_with_slots(
+    async def test_export_with_checkpoints(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        slot_m = await create_slot(client, user_a["token"], "Morning")
-        slot_e = await create_slot(client, user_a["token"], "Evening")
+        cp_m = await create_checkpoint(client, user_a["token"], "Morning")
+        cp_e = await create_checkpoint(client, user_a["token"], "Evening")
         metric = await create_metric(
             client, user_a["token"],
-            name="Mood Slots", metric_type="bool",
-            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
+            name="Mood Checkpoints", metric_type="bool",
+            checkpoint_configs=[{"checkpoint_id": cp_m["id"]}, {"checkpoint_id": cp_e["id"]}],
         )
-        assert len(metric["slots"]) == 2
+        assert len(metric["checkpoints"]) == 2
 
         export_resp = await client.get(
             "/api/export/csv", headers=auth_headers(user_a["token"]),
@@ -548,8 +548,8 @@ class TestExportAdvanced:
         metrics_rows = parse_csv_rows(files["metrics.csv"])
 
         assert len(metrics_rows) == 1
-        slot_labels = json.loads(metrics_rows[0]["slot_labels"])
-        assert slot_labels == ["Morning", "Evening"]
+        checkpoint_labels = json.loads(metrics_rows[0]["checkpoint_labels"])
+        assert checkpoint_labels == ["Morning", "Evening"]
 
     async def test_export_with_private_metric(
         self, client: AsyncClient, user_a: dict,
@@ -613,14 +613,14 @@ class TestExportImportIsolation:
     ) -> None:
         metrics_csv = (
             "id,slug,name,category_path,icon,type,enabled,sort_order,"
-            "scale_min,scale_max,scale_step,slot_labels,formula,result_type,"
+            "scale_min,scale_max,scale_step,checkpoint_labels,formula,result_type,"
             "provider,metric_key,value_type,filter_name,filter_query,"
             "enum_options,multi_select,private,condition_metric_slug,"
             "condition_type,condition_value\n"
             "1,iso_metric,Isolation Metric,,,,bool,1,0,,,,,,,,,,,,,,0,,,\n"
         )
         entries_csv = (
-            "date,metric_slug,value,slot_sort_order,slot_label\n"
+            "date,metric_slug,value,checkpoint_id,checkpoint_label\n"
             "2026-03-10,iso_metric,true,,\n"
         )
         zip_buf = build_zip(metrics_csv, entries_csv)
@@ -659,12 +659,12 @@ class TestExportImportErrors:
     ) -> None:
         metrics_csv = (
             "id,slug,name,category_path,icon,type,enabled,sort_order,"
-            "scale_min,scale_max,scale_step,slot_labels,formula,result_type,"
+            "scale_min,scale_max,scale_step,checkpoint_labels,formula,result_type,"
             "provider,metric_key,value_type,filter_name,filter_query,"
             "enum_options,multi_select,private,condition_metric_slug,"
             "condition_type,condition_value\n"
         )
-        entries_csv = "date,metric_slug,value,slot_sort_order,slot_label\n"
+        entries_csv = "date,metric_slug,value,checkpoint_id,checkpoint_label\n"
         zip_buf = build_zip(metrics_csv, entries_csv)
 
         resp = await client.post(
@@ -874,23 +874,23 @@ class TestRoundTripTextNotes:
 
 
 # ---------------------------------------------------------------------------
-# Round-trip: slots with categories
+# Round-trip: checkpoints with categories
 # ---------------------------------------------------------------------------
 
-class TestRoundTripSlotsWithCategories:
+class TestRoundTripCheckpointsWithCategories:
 
-    async def test_slots_round_trip(
+    async def test_checkpoints_round_trip(
         self, client: AsyncClient, user_a: dict, user_b: dict,
     ) -> None:
-        # Create global slots, then metric with slot_configs (no category_id)
-        slot_m = await create_slot(client, user_a["token"], "Morning")
-        slot_e = await create_slot(client, user_a["token"], "Evening")
+        # Create global checkpoints, then metric with checkpoint_configs (no category_id)
+        cp_m = await create_checkpoint(client, user_a["token"], "Morning")
+        cp_e = await create_checkpoint(client, user_a["token"], "Evening")
         metric = await create_metric(
-            client, user_a["token"], name="Mood Slotted", metric_type="bool",
-            slug="mood_slotted",
-            slot_configs=[
-                {"slot_id": slot_m["id"]},
-                {"slot_id": slot_e["id"]},
+            client, user_a["token"], name="Mood Checkpointed", metric_type="bool",
+            slug="mood_checkpointed",
+            checkpoint_configs=[
+                {"checkpoint_id": cp_m["id"]},
+                {"checkpoint_id": cp_e["id"]},
             ],
         )
 
@@ -901,14 +901,14 @@ class TestRoundTripSlotsWithCategories:
         assert export_resp.status_code == 200
         files = parse_export_zip(export_resp.content)
 
-        # Verify slot_labels in metrics.csv is simple format (list of strings)
+        # Verify checkpoint_labels in metrics.csv is simple format (list of strings)
         metrics_rows = parse_csv_rows(files["metrics.csv"])
         assert len(metrics_rows) == 1
-        slot_data = json.loads(metrics_rows[0]["slot_labels"])
-        assert len(slot_data) == 2
-        assert isinstance(slot_data[0], str)
-        assert slot_data[0] == "Morning"
-        assert slot_data[1] == "Evening"
+        cp_data = json.loads(metrics_rows[0]["checkpoint_labels"])
+        assert len(cp_data) == 2
+        assert isinstance(cp_data[0], str)
+        assert cp_data[0] == "Morning"
+        assert cp_data[1] == "Evening"
 
         # Import into user_b
         zip_buf = build_zip(files["metrics.csv"], files["entries.csv"])
@@ -920,14 +920,14 @@ class TestRoundTripSlotsWithCategories:
         assert import_resp.status_code == 200
         assert import_resp.json()["metrics"]["imported"] == 1
 
-        # Verify slots recreated for user_b
+        # Verify checkpoints recreated for user_b
         resp_b = await client.get(
             "/api/metrics", headers=auth_headers(user_b["token"]),
         )
-        metric_b = next(m for m in resp_b.json() if m["slug"] == "mood_slotted")
-        assert len(metric_b["slots"]) == 2
-        slot_labels_b = [s["label"] for s in metric_b["slots"]]
-        assert slot_labels_b == ["Morning", "Evening"]
+        metric_b = next(m for m in resp_b.json() if m["slug"] == "mood_checkpointed")
+        assert len(metric_b["checkpoints"]) == 2
+        checkpoint_labels_b = [cp["label"] for cp in metric_b["checkpoints"]]
+        assert checkpoint_labels_b == ["Morning", "Evening"]
 
 
 # ---------------------------------------------------------------------------
@@ -1181,7 +1181,7 @@ class TestImportLegacyFormat:
         # Build CSV with legacy columns (category + fill_time)
         header = (
             "id,slug,name,category_path,icon,type,enabled,sort_order,"
-            "scale_min,scale_max,scale_step,slot_labels,formula,result_type,"
+            "scale_min,scale_max,scale_step,checkpoint_labels,formula,result_type,"
             "provider,metric_key,value_type,filter_name,filter_query,"
             "enum_options,multi_select,private,condition_metric_slug,"
             "condition_type,condition_value,category,fill_time"
@@ -1189,7 +1189,7 @@ class TestImportLegacyFormat:
         # Legacy: fill_time = parent category, category = child category
         # Path built by import: f"{fill_time} > {category}" = "Health > Sleep"
         # Columns: id,slug,name,category_path,icon,type,enabled,sort_order,
-        #   scale_min,scale_max,scale_step,slot_labels,formula,result_type,
+        #   scale_min,scale_max,scale_step,checkpoint_labels,formula,result_type,
         #   provider,metric_key,value_type,filter_name,filter_query,
         #   enum_options,multi_select,private,condition_metric_slug,
         #   condition_type,condition_value,category,fill_time
@@ -1198,7 +1198,7 @@ class TestImportLegacyFormat:
             ",,,,,,,,,,,,,0,,,,Sleep,Health"
         )
         metrics_csv = f"{header}\n{row}\n"
-        entries_csv = "date,metric_slug,value,slot_sort_order,slot_label\n"
+        entries_csv = "date,metric_slug,value,checkpoint_id,checkpoint_label\n"
         zip_buf = build_zip(metrics_csv, entries_csv)
 
         resp = await client.post(
@@ -1247,14 +1247,14 @@ class TestImportLegacyFormat:
 
 METRICS_HEADER = (
     "id,slug,name,category_path,icon,type,enabled,sort_order,"
-    "scale_min,scale_max,scale_step,scale_labels,slot_labels,formula,result_type,"
+    "scale_min,scale_max,scale_step,scale_labels,checkpoint_labels,formula,result_type,"
     "provider,metric_key,value_type,filter_name,filter_query,"
     "enum_options,multi_select,private,condition_metric_slug,"
     "condition_type,condition_value,description,hide_in_cards,"
     "is_checkpoint,interval_binding"
 )
 
-ENTRIES_HEADER = "date,metric_slug,value,slot_sort_order,slot_label"
+ENTRIES_HEADER = "date,metric_slug,value,checkpoint_id,checkpoint_label"
 
 
 def _metric_row(
@@ -1268,7 +1268,7 @@ def _metric_row(
     scale_max: str = "",
     scale_step: str = "",
     scale_labels: str = "",
-    slot_labels: str = "",
+    checkpoint_labels: str = "",
     formula: str = "",
     result_type: str = "",
     provider: str = "",
@@ -1298,7 +1298,7 @@ def _metric_row(
     w.writerow([
         metric_id, slug, name, category_path, icon, metric_type, enabled,
         sort_order, scale_min, scale_max, scale_step, scale_labels,
-        slot_labels, formula, result_type, provider, metric_key, value_type,
+        checkpoint_labels, formula, result_type, provider, metric_key, value_type,
         filter_name, filter_query, enum_options, multi_select, private,
         condition_metric_slug, condition_type, condition_value,
         description, hide_in_cards, is_checkpoint, interval_binding,
@@ -1667,18 +1667,18 @@ class TestImportNewEnum:
 
 
 # ---------------------------------------------------------------------------
-# Import new metric with slots (lines 508-513)
+# Import new metric with checkpoints (lines 508-513)
 # ---------------------------------------------------------------------------
 
-class TestImportNewSlots:
+class TestImportNewCheckpoints:
 
-    async def test_import_new_metric_with_slots(
+    async def test_import_new_metric_with_checkpoints(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Importing a new metric with slot_labels >= 2 creates slots."""
+        """Importing a new metric with checkpoint_labels >= 2 creates checkpoints."""
         row = _metric_row(
-            "slotted_bool", "Slotted Bool",
-            slot_labels=json.dumps(["Morning", "Evening"]),
+            "checkpointed_bool", "Checkpointed Bool",
+            checkpoint_labels=json.dumps(["Morning", "Evening"]),
         )
         metrics_csv = f"{METRICS_HEADER}\n{row}\n"
         entries_csv = f"{ENTRIES_HEADER}\n"
@@ -1695,10 +1695,10 @@ class TestImportNewSlots:
         resp_m = await client.get(
             "/api/metrics", headers=auth_headers(user_a["token"]),
         )
-        metric = next(m for m in resp_m.json() if m["slug"] == "slotted_bool")
-        assert len(metric["slots"]) == 2
-        slot_labels = [s["label"] for s in metric["slots"]]
-        assert slot_labels == ["Morning", "Evening"]
+        metric = next(m for m in resp_m.json() if m["slug"] == "checkpointed_bool")
+        assert len(metric["checkpoints"]) == 2
+        checkpoint_labels = [cp["label"] for cp in metric["checkpoints"]]
+        assert checkpoint_labels == ["Morning", "Evening"]
 
 
 # ---------------------------------------------------------------------------
@@ -1749,28 +1749,28 @@ class TestImportEnumOptionsHelper:
 
 
 # ---------------------------------------------------------------------------
-# Import slots helper (lines 818-852)
+# Import checkpoints helper (lines 818-852)
 # ---------------------------------------------------------------------------
 
-class TestImportSlotsHelper:
+class TestImportCheckpointsHelper:
 
-    async def test_reimport_slots_updates_and_disables(
+    async def test_reimport_checkpoints_updates_and_disables(
         self, client: AsyncClient, user_a: dict, db_pool,
     ) -> None:
-        """Existing slots (A,B,C) re-imported with (X,Y) updates first 2, disables third."""
-        slot_a = await create_slot(client, user_a["token"], "A")
-        slot_b = await create_slot(client, user_a["token"], "B")
-        slot_c = await create_slot(client, user_a["token"], "C")
+        """Existing checkpoints (A,B,C) re-imported with (X,Y) updates first 2, disables third."""
+        cp_a = await create_checkpoint(client, user_a["token"], "A")
+        cp_b = await create_checkpoint(client, user_a["token"], "B")
+        cp_c = await create_checkpoint(client, user_a["token"], "C")
         metric = await create_metric(
-            client, user_a["token"], name="Slot H", metric_type="bool",
-            slug="slot_h",
-            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}, {"slot_id": slot_c["id"]}],
+            client, user_a["token"], name="Checkpoint H", metric_type="bool",
+            slug="checkpoint_h",
+            checkpoint_configs=[{"checkpoint_id": cp_a["id"]}, {"checkpoint_id": cp_b["id"]}, {"checkpoint_id": cp_c["id"]}],
         )
 
-        # Import with 2 slots
+        # Import with 2 checkpoints
         row = _metric_row(
-            "slot_h", "Slot H",
-            slot_labels=json.dumps(["X", "Y"]),
+            "checkpoint_h", "Checkpoint H",
+            checkpoint_labels=json.dumps(["X", "Y"]),
         )
         metrics_csv = f"{METRICS_HEADER}\n{row}\n"
         entries_csv = f"{ENTRIES_HEADER}\n"
@@ -1784,49 +1784,49 @@ class TestImportSlotsHelper:
         assert resp.status_code == 200
 
         async with db_pool.acquire() as conn:
-            slots = await conn.fetch(
-                """SELECT ms.label, msl.sort_order, msl.enabled
-                   FROM metric_slots msl
-                   JOIN measurement_slots ms ON ms.id = msl.slot_id
-                   WHERE msl.metric_id = $1 ORDER BY msl.sort_order""",
+            checkpoints = await conn.fetch(
+                """SELECT c.label, mc.sort_order, mc.enabled
+                   FROM metric_checkpoints mc
+                   JOIN checkpoints c ON c.id = mc.checkpoint_id
+                   WHERE mc.metric_id = $1 ORDER BY mc.sort_order""",
                 metric["id"],
             )
-        assert len(slots) == 3
-        assert slots[0]["label"] == "X"
-        assert slots[0]["enabled"] is True
-        assert slots[1]["label"] == "Y"
-        assert slots[1]["enabled"] is True
-        assert slots[2]["label"] == "C"  # untouched
-        assert slots[2]["enabled"] is False
+        assert len(checkpoints) == 3
+        assert checkpoints[0]["label"] == "X"
+        assert checkpoints[0]["enabled"] is True
+        assert checkpoints[1]["label"] == "Y"
+        assert checkpoints[1]["enabled"] is True
+        assert checkpoints[2]["label"] == "C"  # untouched
+        assert checkpoints[2]["enabled"] is False
 
-    async def test_reimport_slots_with_cat_clears_metric_cat(
+    async def test_reimport_checkpoints_with_cat_clears_metric_cat(
         self, client: AsyncClient, user_a: dict, db_pool,
     ) -> None:
-        """Importing slots with category_path sets metric.category_id = NULL (line 848)."""
-        # Create a category, global slots, and metric with that category
+        """Importing checkpoints with category_path sets metric.category_id = NULL (line 848)."""
+        # Create a category, global checkpoints, and metric with that category
         cat = await _create_category(client, user_a["token"], "SomeCat")
-        slot_s1 = await create_slot(client, user_a["token"], "S1")
-        slot_s2 = await create_slot(client, user_a["token"], "S2")
+        cp_s1 = await create_checkpoint(client, user_a["token"], "S1")
+        cp_s2 = await create_checkpoint(client, user_a["token"], "S2")
         resp = await client.post(
             "/api/metrics",
             json={
-                "name": "CatSlot", "type": "bool", "slug": "cat_slot",
+                "name": "CatCheckpoint", "type": "bool", "slug": "cat_checkpoint",
                 "category_id": cat["id"],
-                "slot_configs": [{"slot_id": slot_s1["id"]}, {"slot_id": slot_s2["id"]}],
+                "checkpoint_configs": [{"checkpoint_id": cp_s1["id"]}, {"checkpoint_id": cp_s2["id"]}],
             },
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 201
         metric = resp.json()
 
-        # Import with slots that have category_path
-        slot_labels_val = json.dumps([
-            {"label": "S1", "category_path": "SlotCat"},
-            {"label": "S2", "category_path": "SlotCat"},
+        # Import with checkpoints that have category_path
+        checkpoint_labels_val = json.dumps([
+            {"label": "S1", "category_path": "CheckpointCat"},
+            {"label": "S2", "category_path": "CheckpointCat"},
         ])
         row = _metric_row(
-            "cat_slot", "CatSlot",
-            slot_labels=slot_labels_val,
+            "cat_checkpoint", "CatCheckpoint",
+            checkpoint_labels=checkpoint_labels_val,
         )
         metrics_csv = f"{METRICS_HEADER}\n{row}\n"
         entries_csv = f"{ENTRIES_HEADER}\n"
@@ -2071,18 +2071,18 @@ class TestImportErrors:
 
 
 # ---------------------------------------------------------------------------
-# Import legacy slot_labels as plain strings (lines 384, 391-392)
+# Import legacy checkpoint_labels as plain strings (lines 384, 391-392)
 # ---------------------------------------------------------------------------
 
-class TestImportLegacySlots:
+class TestImportLegacyCheckpoints:
 
-    async def test_import_legacy_slot_labels_strings(
+    async def test_import_legacy_checkpoint_labels_strings(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """slot_labels as plain string list ["Morning","Evening"] creates slots."""
+        """checkpoint_labels as plain string list ["Morning","Evening"] creates checkpoints."""
         row = _metric_row(
-            "legacy_slots", "Legacy Slots",
-            slot_labels=json.dumps(["Morning", "Evening"]),
+            "legacy_checkpoints", "Legacy Checkpoints",
+            checkpoint_labels=json.dumps(["Morning", "Evening"]),
         )
         metrics_csv = f"{METRICS_HEADER}\n{row}\n"
         entries_csv = f"{ENTRIES_HEADER}\n"
@@ -2099,9 +2099,9 @@ class TestImportLegacySlots:
         resp_m = await client.get(
             "/api/metrics", headers=auth_headers(user_a["token"]),
         )
-        metric = next(m for m in resp_m.json() if m["slug"] == "legacy_slots")
-        assert len(metric["slots"]) == 2
-        labels = [s["label"] for s in metric["slots"]]
+        metric = next(m for m in resp_m.json() if m["slug"] == "legacy_checkpoints")
+        assert len(metric["checkpoints"]) == 2
+        labels = [cp["label"] for cp in metric["checkpoints"]]
         assert labels == ["Morning", "Evening"]
 
 
@@ -2334,25 +2334,26 @@ class TestImportUnknownSlugEntry:
 
 
 # ---------------------------------------------------------------------------
-# Import with slot entry that creates slot on the fly (lines 636-651)
+# Import with checkpoint entry that creates checkpoint on the fly (lines 636-651)
 # ---------------------------------------------------------------------------
 
-class TestImportSlotOnTheFly:
+class TestImportCheckpointOnTheFly:
 
-    async def test_import_creates_slot_on_the_fly(
+    async def test_import_creates_checkpoint_on_the_fly(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Entry with slot_sort_order not in existing slots creates a new slot."""
+        """Entry with slot_sort_order (legacy) not in existing checkpoints creates a new checkpoint."""
         await create_metric(
-            client, user_a["token"], name="No Slot", metric_type="bool",
-            slug="no_slot",
+            client, user_a["token"], name="No Checkpoint", metric_type="bool",
+            slug="no_checkpoint",
         )
 
-        row = _metric_row("no_slot", "No Slot")
+        row = _metric_row("no_checkpoint", "No Checkpoint")
         metrics_csv = f"{METRICS_HEADER}\n{row}\n"
+        # Use legacy slot_sort_order/slot_label columns to test backward-compat path
         entries_csv = (
-            f"{ENTRIES_HEADER}\n"
-            "2026-03-01,no_slot,true,0,Morning\n"
+            "date,metric_slug,value,slot_sort_order,slot_label\n"
+            "2026-03-01,no_checkpoint,true,0,Morning\n"
         )
         zip_buf = build_zip(metrics_csv, entries_csv)
 
@@ -2364,12 +2365,12 @@ class TestImportSlotOnTheFly:
         assert resp.status_code == 200
         assert resp.json()["entries"]["imported"] == 1
 
-        # Verify the metric now has a slot
+        # Verify the metric now has a checkpoint
         resp_m = await client.get(
             "/api/metrics", headers=auth_headers(user_a["token"]),
         )
-        metric = next(m for m in resp_m.json() if m["slug"] == "no_slot")
-        assert len(metric["slots"]) >= 1
+        metric = next(m for m in resp_m.json() if m["slug"] == "no_checkpoint")
+        assert len(metric["checkpoints"]) >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -2648,31 +2649,31 @@ class TestImportEnumEmptyResolution:
 
 
 # ---------------------------------------------------------------------------
-# Export with slot entries (covers slot_sort_order/slot_label in entries.csv)
+# Export with checkpoint entries (covers checkpoint_id/checkpoint_label in entries.csv)
 # ---------------------------------------------------------------------------
 
-class TestExportSlotEntries:
+class TestExportCheckpointEntries:
 
-    async def test_export_entries_with_slots(
+    async def test_export_entries_with_checkpoints(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Entries for slotted metric include slot_sort_order and slot_label."""
-        slot_m = await create_slot(client, user_a["token"], "Morning")
-        slot_e = await create_slot(client, user_a["token"], "Evening")
+        """Entries for checkpointed metric include checkpoint_id and checkpoint_label."""
+        cp_m = await create_checkpoint(client, user_a["token"], "Morning")
+        cp_e = await create_checkpoint(client, user_a["token"], "Evening")
         metric = await create_metric(
-            client, user_a["token"], name="Slot Entry", metric_type="bool",
-            slug="slot_entry",
-            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
+            client, user_a["token"], name="Checkpoint Entry", metric_type="bool",
+            slug="checkpoint_entry",
+            checkpoint_configs=[{"checkpoint_id": cp_m["id"]}, {"checkpoint_id": cp_e["id"]}],
         )
-        # Create entries for each slot
-        slots = metric["slots"]
+        # Create entries for each checkpoint
+        checkpoints = metric["checkpoints"]
         await create_entry(
             client, user_a["token"], metric["id"], "2026-03-01", True,
-            slot_id=slots[0]["id"],
+            checkpoint_id=checkpoints[0]["id"],
         )
         await create_entry(
             client, user_a["token"], metric["id"], "2026-03-01", False,
-            slot_id=slots[1]["id"],
+            checkpoint_id=checkpoints[1]["id"],
         )
 
         resp = await client.get(
@@ -2683,58 +2684,59 @@ class TestExportSlotEntries:
         entries_rows = parse_csv_rows(files["entries.csv"])
         assert len(entries_rows) == 2
 
-        # Check slot info is present
-        slot_labels_export = {r["slot_label"] for r in entries_rows}
-        assert "Morning" in slot_labels_export
-        assert "Evening" in slot_labels_export
+        # Check checkpoint info is present
+        checkpoint_labels_export = {r["checkpoint_label"] for r in entries_rows}
+        assert "Morning" in checkpoint_labels_export
+        assert "Evening" in checkpoint_labels_export
 
 
 # ---------------------------------------------------------------------------
-# Import entries use enabled slots, not disabled (sort_order collision fix)
+# Import entries use enabled checkpoints, not disabled (sort_order collision fix)
 # ---------------------------------------------------------------------------
 
-class TestImportIgnoresDisabledSlots:
+class TestImportIgnoresDisabledCheckpoints:
 
-    async def test_import_entry_uses_enabled_slot_not_disabled(
+    async def test_import_entry_uses_enabled_checkpoint_not_disabled(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """When disabled and enabled slots share sort_order, import must use the enabled one."""
-        # Create 3 slots
-        slot_a = await create_slot(client, user_a["token"], "Morning")
-        slot_b = await create_slot(client, user_a["token"], "Afternoon")
-        slot_c = await create_slot(client, user_a["token"], "Evening")
+        """When disabled and enabled checkpoints share sort_order, import must use the enabled one."""
+        # Create 3 checkpoints
+        cp_a = await create_checkpoint(client, user_a["token"], "Morning")
+        cp_b = await create_checkpoint(client, user_a["token"], "Afternoon")
+        cp_c = await create_checkpoint(client, user_a["token"], "Evening")
 
-        # Create metric with all 3 slots
+        # Create metric with all 3 checkpoints
         metric = await create_metric(
             client, user_a["token"],
             name="M", metric_type="bool",
-            slot_configs=[
-                {"slot_id": slot_a["id"]},
-                {"slot_id": slot_b["id"]},
-                {"slot_id": slot_c["id"]},
+            checkpoint_configs=[
+                {"checkpoint_id": cp_a["id"]},
+                {"checkpoint_id": cp_b["id"]},
+                {"checkpoint_id": cp_c["id"]},
             ],
         )
-        # Remove slot_b (sort_order=1) → disabled, then slot_c moves to sort_order=1
+        # Remove cp_b (sort_order=1) → disabled, then cp_c moves to sort_order=1
         await client.patch(
             f"/api/metrics/{metric['id']}",
-            json={"slot_configs": [
-                {"slot_id": slot_a["id"]},
-                {"slot_id": slot_c["id"]},
+            json={"checkpoint_configs": [
+                {"checkpoint_id": cp_a["id"]},
+                {"checkpoint_id": cp_c["id"]},
             ]},
             headers=auth_headers(user_a["token"]),
         )
 
-        # Verify slot_c is now at sort_order=1
+        # Verify cp_c is now at sort_order=1
         resp_m = await client.get("/api/metrics", headers=auth_headers(user_a["token"]))
         m = next(x for x in resp_m.json() if x["id"] == metric["id"])
-        assert len(m["slots"]) == 2
-        assert m["slots"][1]["id"] == slot_c["id"]
+        assert len(m["checkpoints"]) == 2
+        assert m["checkpoints"][1]["id"] == cp_c["id"]
 
-        # Import an entry at sort_order=1 — should go to slot_c (enabled), not slot_b (disabled)
-        row = _metric_row(m["slug"], "M", slot_labels=json.dumps(["Morning", "Evening"]))
+        # Import an entry at sort_order=1 — should go to cp_c (enabled), not cp_b (disabled)
+        # Use legacy slot_sort_order column to test backward-compat path
+        row = _metric_row(m["slug"], "M", checkpoint_labels=json.dumps(["Morning", "Evening"]))
         metrics_csv = f"{METRICS_HEADER}\n{row}\n"
         entries_csv = (
-            f"{ENTRIES_HEADER}\n"
+            "date,metric_slug,value,slot_sort_order,slot_label\n"
             f"2026-03-01,{m['slug']},true,1,Evening\n"
         )
         zip_buf = build_zip(metrics_csv, entries_csv)
@@ -2747,14 +2749,14 @@ class TestImportIgnoresDisabledSlots:
         assert resp.status_code == 200
         assert resp.json()["entries"]["imported"] == 1
 
-        # Verify entry is on slot_c (Evening), not slot_b (Afternoon)
+        # Verify entry is on cp_c (Evening), not cp_b (Afternoon)
         entries_resp = await client.get(
             f"/api/entries?date=2026-03-01&metric_id={metric['id']}",
             headers=auth_headers(user_a["token"]),
         )
         entries = entries_resp.json()
         assert len(entries) == 1
-        assert entries[0]["slot_id"] == slot_c["id"]
+        assert entries[0]["checkpoint_id"] == cp_c["id"]
 
 
 # ---------------------------------------------------------------------------
@@ -2876,13 +2878,13 @@ class TestImportOldIntervalBindingFormat:
 
 class TestExportIntervalBinding:
     async def test_export_by_interval_metric(self, client, user_a):
-        s1 = await create_slot(client, user_a["token"], "Утро")
-        await create_slot(client, user_a["token"], "День")
+        cp1 = await create_checkpoint(client, user_a["token"], "Утро")
+        await create_checkpoint(client, user_a["token"], "День")
 
         await client.post(
             "/api/metrics",
             json={"name": "Душ", "type": "bool", "interval_binding": "by_interval",
-                  "interval_slot_ids": [s1["id"]]},
+                  "interval_ids": [cp1["id"]]},
             headers=auth_headers(user_a["token"]),
         )
 

@@ -37,11 +37,11 @@ class TestAutoSourceType(unittest.TestCase):
     def test_is_workday_value(self) -> None:
         self.assertEqual(AutoSourceType.IS_WORKDAY.value, "is_workday")
 
-    def test_slot_max_value(self) -> None:
-        self.assertEqual(AutoSourceType.SLOT_MAX.value, "slot_max")
+    def test_checkpoint_max_value(self) -> None:
+        self.assertEqual(AutoSourceType.CHECKPOINT_MAX.value, "checkpoint_max")
 
-    def test_slot_min_value(self) -> None:
-        self.assertEqual(AutoSourceType.SLOT_MIN.value, "slot_min")
+    def test_checkpoint_min_value(self) -> None:
+        self.assertEqual(AutoSourceType.CHECKPOINT_MIN.value, "checkpoint_min")
 
     def test_rolling_avg_value(self) -> None:
         self.assertEqual(AutoSourceType.ROLLING_AVG.value, "rolling_avg")
@@ -166,17 +166,17 @@ class TestSourceKeyToStr(unittest.TestCase):
         sk = SourceKey(metric_id=42)
         self.assertEqual(sk.to_str(), "metric:42")
 
-    def test_metric_with_slot(self) -> None:
-        sk = SourceKey(metric_id=10, slot_id=3)
-        self.assertEqual(sk.to_str(), "metric:10:slot:3")
+    def test_metric_with_checkpoint(self) -> None:
+        sk = SourceKey(metric_id=10, checkpoint_id=3)
+        self.assertEqual(sk.to_str(), "metric:10:checkpoint:3")
 
     def test_metric_with_enum_opt(self) -> None:
         sk = SourceKey(metric_id=7, enum_option_id=15)
         self.assertEqual(sk.to_str(), "metric:7:enum_opt:15")
 
-    def test_metric_with_enum_opt_and_slot(self) -> None:
-        sk = SourceKey(metric_id=5, slot_id=2, enum_option_id=9)
-        self.assertEqual(sk.to_str(), "metric:5:enum_opt:9:slot:2")
+    def test_metric_with_enum_opt_and_checkpoint(self) -> None:
+        sk = SourceKey(metric_id=5, checkpoint_id=2, enum_option_id=9)
+        self.assertEqual(sk.to_str(), "metric:5:enum_opt:9:checkpoint:2")
 
     def test_auto_without_parent(self) -> None:
         sk = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK)
@@ -210,17 +210,17 @@ class TestSourceKeyToStr(unittest.TestCase):
         sk = SourceKey(auto_type=AutoSourceType.IS_WORKDAY, auto_option_id=1)
         self.assertEqual(sk.to_str(), "auto:is_workday:opt:1")
 
-    def test_auto_slot_max_with_parent(self) -> None:
+    def test_auto_checkpoint_max_with_parent(self) -> None:
         sk = SourceKey(
-            auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=42
+            auto_type=AutoSourceType.CHECKPOINT_MAX, auto_parent_metric_id=42
         )
-        self.assertEqual(sk.to_str(), "auto:slot_max:metric:42")
+        self.assertEqual(sk.to_str(), "auto:checkpoint_max:metric:42")
 
-    def test_auto_slot_min_with_parent(self) -> None:
+    def test_auto_checkpoint_min_with_parent(self) -> None:
         sk = SourceKey(
-            auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=42
+            auto_type=AutoSourceType.CHECKPOINT_MIN, auto_parent_metric_id=42
         )
-        self.assertEqual(sk.to_str(), "auto:slot_min:metric:42")
+        self.assertEqual(sk.to_str(), "auto:checkpoint_min:metric:42")
 
     def test_auto_rolling_avg_with_parent_and_window(self) -> None:
         sk = SourceKey(
@@ -253,27 +253,40 @@ class TestSourceKeyParse(unittest.TestCase):
     def test_parse_plain_metric(self) -> None:
         sk = SourceKey.parse("metric:42")
         self.assertEqual(sk.metric_id, 42)
-        self.assertIsNone(sk.slot_id)
+        self.assertIsNone(sk.checkpoint_id)
+        self.assertIsNone(sk.interval_id)
         self.assertIsNone(sk.enum_option_id)
         self.assertIsNone(sk.auto_type)
 
-    def test_parse_metric_with_slot(self) -> None:
-        sk = SourceKey.parse("metric:10:slot:3")
+    def test_parse_metric_with_checkpoint(self) -> None:
+        sk = SourceKey.parse("metric:10:checkpoint:3")
         self.assertEqual(sk.metric_id, 10)
-        self.assertEqual(sk.slot_id, 3)
+        self.assertEqual(sk.checkpoint_id, 3)
         self.assertIsNone(sk.enum_option_id)
+
+    def test_parse_metric_with_interval(self) -> None:
+        sk = SourceKey.parse("metric:10:interval:5")
+        self.assertEqual(sk.metric_id, 10)
+        self.assertEqual(sk.interval_id, 5)
+        self.assertIsNone(sk.checkpoint_id)
 
     def test_parse_metric_with_enum_opt(self) -> None:
         sk = SourceKey.parse("metric:7:enum_opt:15")
         self.assertEqual(sk.metric_id, 7)
         self.assertEqual(sk.enum_option_id, 15)
-        self.assertIsNone(sk.slot_id)
+        self.assertIsNone(sk.checkpoint_id)
 
-    def test_parse_metric_with_enum_opt_and_slot(self) -> None:
-        sk = SourceKey.parse("metric:5:enum_opt:9:slot:2")
+    def test_parse_metric_with_enum_opt_and_checkpoint(self) -> None:
+        sk = SourceKey.parse("metric:5:enum_opt:9:checkpoint:2")
         self.assertEqual(sk.metric_id, 5)
         self.assertEqual(sk.enum_option_id, 9)
-        self.assertEqual(sk.slot_id, 2)
+        self.assertEqual(sk.checkpoint_id, 2)
+
+    def test_parse_legacy_slot_format(self) -> None:
+        """Legacy slot: format maps to checkpoint_id for backward compat."""
+        sk = SourceKey.parse("metric:10:slot:3")
+        self.assertEqual(sk.metric_id, 10)
+        self.assertEqual(sk.checkpoint_id, 3)
 
     def test_parse_auto_without_parent(self) -> None:
         sk = SourceKey.parse("auto:day_of_week")
@@ -308,17 +321,27 @@ class TestSourceKeyParse(unittest.TestCase):
         self.assertEqual(sk.auto_type, AutoSourceType.IS_WORKDAY)
         self.assertEqual(sk.auto_option_id, 1)
 
-    def test_parse_auto_slot_max(self) -> None:
-        sk = SourceKey.parse("auto:slot_max:metric:42")
-        self.assertEqual(sk.auto_type, AutoSourceType.SLOT_MAX)
+    def test_parse_auto_checkpoint_max(self) -> None:
+        sk = SourceKey.parse("auto:checkpoint_max:metric:42")
+        self.assertEqual(sk.auto_type, AutoSourceType.CHECKPOINT_MAX)
         self.assertEqual(sk.auto_parent_metric_id, 42)
         self.assertIsNone(sk.auto_option_id)
 
-    def test_parse_auto_slot_min(self) -> None:
-        sk = SourceKey.parse("auto:slot_min:metric:42")
-        self.assertEqual(sk.auto_type, AutoSourceType.SLOT_MIN)
+    def test_parse_auto_checkpoint_min(self) -> None:
+        sk = SourceKey.parse("auto:checkpoint_min:metric:42")
+        self.assertEqual(sk.auto_type, AutoSourceType.CHECKPOINT_MIN)
         self.assertEqual(sk.auto_parent_metric_id, 42)
         self.assertIsNone(sk.auto_option_id)
+
+    def test_parse_legacy_auto_slot_max(self) -> None:
+        """Legacy auto:slot_max maps to CHECKPOINT_MAX."""
+        sk = SourceKey.parse("auto:slot_max:metric:42")
+        self.assertEqual(sk.auto_type, AutoSourceType.CHECKPOINT_MAX)
+
+    def test_parse_legacy_auto_slot_min(self) -> None:
+        """Legacy auto:slot_min maps to CHECKPOINT_MIN."""
+        sk = SourceKey.parse("auto:slot_min:metric:42")
+        self.assertEqual(sk.auto_type, AutoSourceType.CHECKPOINT_MIN)
 
     def test_parse_auto_rolling_avg(self) -> None:
         sk = SourceKey.parse("auto:rolling_avg:metric:5:opt:7")
@@ -355,14 +378,17 @@ class TestSourceKeyRoundTrip(unittest.TestCase):
     def test_round_trip_plain_metric(self) -> None:
         self._assert_round_trip(SourceKey(metric_id=1))
 
-    def test_round_trip_metric_with_slot(self) -> None:
-        self._assert_round_trip(SourceKey(metric_id=2, slot_id=3))
+    def test_round_trip_metric_with_checkpoint(self) -> None:
+        self._assert_round_trip(SourceKey(metric_id=2, checkpoint_id=3))
+
+    def test_round_trip_metric_with_interval(self) -> None:
+        self._assert_round_trip(SourceKey(metric_id=2, interval_id=5))
 
     def test_round_trip_metric_with_enum_opt(self) -> None:
         self._assert_round_trip(SourceKey(metric_id=4, enum_option_id=5))
 
-    def test_round_trip_metric_with_enum_opt_and_slot(self) -> None:
-        self._assert_round_trip(SourceKey(metric_id=6, slot_id=7, enum_option_id=8))
+    def test_round_trip_metric_with_enum_opt_and_checkpoint(self) -> None:
+        self._assert_round_trip(SourceKey(metric_id=6, checkpoint_id=7, enum_option_id=8))
 
     def test_round_trip_auto_without_parent(self) -> None:
         self._assert_round_trip(SourceKey(auto_type=AutoSourceType.WEEK_NUMBER))
@@ -387,14 +413,14 @@ class TestSourceKeyRoundTrip(unittest.TestCase):
             SourceKey(auto_type=AutoSourceType.IS_WORKDAY, auto_option_id=2)
         )
 
-    def test_round_trip_auto_slot_max(self) -> None:
+    def test_round_trip_auto_checkpoint_max(self) -> None:
         self._assert_round_trip(
-            SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=10)
+            SourceKey(auto_type=AutoSourceType.CHECKPOINT_MAX, auto_parent_metric_id=10)
         )
 
-    def test_round_trip_auto_slot_min(self) -> None:
+    def test_round_trip_auto_checkpoint_min(self) -> None:
         self._assert_round_trip(
-            SourceKey(auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=10)
+            SourceKey(auto_type=AutoSourceType.CHECKPOINT_MIN, auto_parent_metric_id=10)
         )
 
     def test_round_trip_auto_rolling_avg_window_3(self) -> None:
@@ -459,8 +485,8 @@ class TestSourceKeyFrozen(unittest.TestCase):
         self.assertIsInstance(hash(sk), int)
 
     def test_equal_instances_same_hash(self) -> None:
-        a = SourceKey(metric_id=5, slot_id=3)
-        b = SourceKey(metric_id=5, slot_id=3)
+        a = SourceKey(metric_id=5, checkpoint_id=3)
+        b = SourceKey(metric_id=5, checkpoint_id=3)
         self.assertEqual(a, b)
         self.assertEqual(hash(a), hash(b))
 

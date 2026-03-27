@@ -422,6 +422,196 @@ MIGRATIONS = [
         UPDATE metric_definitions SET interval_binding = 'by_interval' WHERE interval_binding IN ('fixed', 'floating');
         ALTER TABLE metric_definitions ALTER COLUMN interval_binding SET DEFAULT 'all_day';
     """),
+    (22, "slots_to_checkpoints_and_intervals", """
+        -- 1. Rename measurement_slots → checkpoints (skip if already done or fresh DB)
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'measurement_slots')
+               AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'checkpoints') THEN
+                ALTER TABLE measurement_slots RENAME TO checkpoints;
+            END IF;
+        END $$;
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_measurement_slots_user_label')
+               AND NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_checkpoints_user_label') THEN
+                ALTER INDEX idx_measurement_slots_user_label RENAME TO idx_checkpoints_user_label;
+            END IF;
+        END $$;
+
+        -- 2. Create intervals table
+        CREATE TABLE IF NOT EXISTS intervals (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            start_checkpoint_id INTEGER NOT NULL REFERENCES checkpoints(id) ON DELETE CASCADE,
+            end_checkpoint_id INTEGER NOT NULL REFERENCES checkpoints(id) ON DELETE CASCADE,
+            UNIQUE(user_id, start_checkpoint_id, end_checkpoint_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_intervals_user ON intervals(user_id);
+
+        -- 3. Populate intervals from consecutive checkpoint pairs (ALL checkpoints, incl deleted)
+        DO $intervals$
+        DECLARE
+            _uid INTEGER;
+            _prev_id INTEGER;
+            _curr_id INTEGER;
+            _first BOOLEAN;
+        BEGIN
+            FOR _uid IN SELECT DISTINCT user_id FROM checkpoints
+            LOOP
+                _first := TRUE;
+                _prev_id := NULL;
+                FOR _curr_id IN
+                    SELECT id FROM checkpoints
+                    WHERE user_id = _uid
+                    ORDER BY sort_order
+                LOOP
+                    IF _first THEN
+                        _first := FALSE;
+                    ELSE
+                        INSERT INTO intervals (user_id, start_checkpoint_id, end_checkpoint_id)
+                        VALUES (_uid, _prev_id, _curr_id)
+                        ON CONFLICT DO NOTHING;
+                    END IF;
+                    _prev_id := _curr_id;
+                END LOOP;
+            END LOOP;
+        END $intervals$;
+
+        -- 4. Create metric_checkpoints table (for assessment metrics)
+        CREATE TABLE IF NOT EXISTS metric_checkpoints (
+            id SERIAL PRIMARY KEY,
+            metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            checkpoint_id INTEGER NOT NULL REFERENCES checkpoints(id) ON DELETE CASCADE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+            UNIQUE(metric_id, checkpoint_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_metric_checkpoints_metric ON metric_checkpoints(metric_id);
+        CREATE INDEX IF NOT EXISTS idx_metric_checkpoints_checkpoint ON metric_checkpoints(checkpoint_id);
+
+        -- 5. Create metric_intervals table (for fact metrics with intervals)
+        CREATE TABLE IF NOT EXISTS metric_intervals (
+            id SERIAL PRIMARY KEY,
+            metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
+            interval_id INTEGER NOT NULL REFERENCES intervals(id) ON DELETE CASCADE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+            UNIQUE(metric_id, interval_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_metric_intervals_metric ON metric_intervals(metric_id);
+        CREATE INDEX IF NOT EXISTS idx_metric_intervals_interval ON metric_intervals(interval_id);
+
+        -- 6. Migrate metric_slots → metric_checkpoints (assessment metrics) — skip if metric_slots gone
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'metric_slots') THEN
+                INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order, enabled, category_id)
+                SELECT ms.metric_id, ms.slot_id, ms.sort_order, ms.enabled, ms.category_id
+                FROM metric_slots ms
+                JOIN metric_definitions md ON md.id = ms.metric_id
+                WHERE md.is_checkpoint = TRUE
+                ON CONFLICT DO NOTHING;
+
+                -- 7. Migrate metric_slots → metric_intervals (fact metrics)
+                INSERT INTO metric_intervals (metric_id, interval_id, sort_order, enabled, category_id)
+                SELECT ms.metric_id, i.id, ms.sort_order, ms.enabled, ms.category_id
+                FROM metric_slots ms
+                JOIN metric_definitions md ON md.id = ms.metric_id
+                JOIN intervals i ON i.start_checkpoint_id = ms.slot_id AND i.user_id = md.user_id
+                WHERE md.is_checkpoint = FALSE
+                ON CONFLICT DO NOTHING;
+            END IF;
+        END $$;
+
+        -- 8. Add checkpoint_id and interval_id to entries
+        ALTER TABLE entries ADD COLUMN IF NOT EXISTS checkpoint_id INTEGER REFERENCES checkpoints(id);
+        ALTER TABLE entries ADD COLUMN IF NOT EXISTS interval_id INTEGER REFERENCES intervals(id);
+
+        -- 9-10. Migrate entries slot_id → checkpoint_id / interval_id (skip if slot_id gone)
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'entries' AND column_name = 'slot_id') THEN
+                UPDATE entries e
+                SET checkpoint_id = e.slot_id
+                FROM metric_definitions md
+                WHERE e.metric_id = md.id
+                  AND md.is_checkpoint = TRUE
+                  AND e.slot_id IS NOT NULL
+                  AND e.checkpoint_id IS NULL;
+
+                UPDATE entries e
+                SET interval_id = i.id
+                FROM metric_definitions md, intervals i
+                WHERE e.metric_id = md.id
+                  AND md.is_checkpoint = FALSE
+                  AND e.slot_id IS NOT NULL
+                  AND e.interval_id IS NULL
+                  AND i.start_checkpoint_id = e.slot_id
+                  AND i.user_id = e.user_id;
+
+                ALTER TABLE entries DROP COLUMN slot_id;
+            END IF;
+        END $$;
+
+        -- 11. CHECK: checkpoint_id and interval_id mutually exclusive
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'entries_checkpoint_interval_exclusive') THEN
+                ALTER TABLE entries ADD CONSTRAINT entries_checkpoint_interval_exclusive
+                    CHECK (NOT (checkpoint_id IS NOT NULL AND interval_id IS NOT NULL));
+            END IF;
+        END $$;
+
+        -- 12. Replace partial unique indexes
+        DROP INDEX IF EXISTS entries_no_slot_key;
+        DROP INDEX IF EXISTS entries_with_slot_key;
+        CREATE UNIQUE INDEX IF NOT EXISTS entries_checkpoint_key
+            ON entries(metric_id, user_id, date, checkpoint_id)
+            WHERE checkpoint_id IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS entries_interval_key
+            ON entries(metric_id, user_id, date, interval_id)
+            WHERE interval_id IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS entries_no_binding_key
+            ON entries(metric_id, user_id, date)
+            WHERE checkpoint_id IS NULL AND interval_id IS NULL;
+
+        -- 14. Add flags to metric_definitions
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS all_checkpoints BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS all_intervals BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE metric_definitions DROP COLUMN IF EXISTS interval_start_slot_id;
+
+        -- 15. CHECK: all_checkpoints only for assessments, all_intervals only for facts
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'md_all_checkpoints_role') THEN
+                ALTER TABLE metric_definitions ADD CONSTRAINT md_all_checkpoints_role
+                    CHECK (NOT (all_checkpoints = TRUE AND is_checkpoint = FALSE));
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'md_all_intervals_role') THEN
+                ALTER TABLE metric_definitions ADD CONSTRAINT md_all_intervals_role
+                    CHECK (NOT (all_intervals = TRUE AND is_checkpoint = TRUE));
+            END IF;
+        END $$;
+
+        -- 16. Clean correlation data (source_key format changes)
+        DELETE FROM correlation_pairs;
+        DELETE FROM correlation_reports;
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'correlation_pairs' AND column_name = 'slot_a_id') THEN
+                ALTER TABLE correlation_pairs RENAME COLUMN slot_a_id TO checkpoint_a_id;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'correlation_pairs' AND column_name = 'slot_b_id') THEN
+                ALTER TABLE correlation_pairs RENAME COLUMN slot_b_id TO checkpoint_b_id;
+            END IF;
+        END $$;
+        ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS checkpoint_a_id INTEGER;
+        ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS checkpoint_b_id INTEGER;
+        ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS interval_a_id INTEGER;
+        ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS interval_b_id INTEGER;
+
+        -- 17. Drop old tables
+        DROP TABLE IF EXISTS metric_slots;
+    """),
 ]
 
 

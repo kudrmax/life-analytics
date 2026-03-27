@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_slot
+from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_checkpoint
 
 
 # ── Create ────────────────────────────────────────────────────────────
@@ -178,28 +178,28 @@ class TestCreateWithCustomSlug:
         assert resp.json()["slug"] == "custom_slug"
 
 
-class TestCreateWithSlots:
-    """POST /api/metrics — with measurement slots."""
+class TestCreateWithCheckpoints:
+    """POST /api/metrics — with measurement checkpoints."""
 
-    async def test_create_with_slot_configs(
+    async def test_create_with_checkpoint_configs(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        slot_am = await create_slot(client, user_a["token"], "AM")
-        slot_pm = await create_slot(client, user_a["token"], "PM")
+        cp_am = await create_checkpoint(client, user_a["token"], "AM")
+        cp_pm = await create_checkpoint(client, user_a["token"], "PM")
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "Pressure",
                 "type": "number",
-                "slot_configs": [{"slot_id": slot_am["id"]}, {"slot_id": slot_pm["id"]}],
+                "checkpoint_configs": [{"checkpoint_id": cp_am["id"]}, {"checkpoint_id": cp_pm["id"]}],
             },
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 201
         data = resp.json()
-        assert len(data["slots"]) == 2
-        slot_labels = [s["label"] for s in data["slots"]]
-        assert slot_labels == ["AM", "PM"]
+        assert len(data["checkpoints"]) == 2
+        checkpoint_labels = [s["label"] for s in data["checkpoints"]]
+        assert checkpoint_labels == ["AM", "PM"]
 
 
 class TestCreateWithCondition:
@@ -775,7 +775,7 @@ class TestUpdateComputedResultType:
 
 
 class TestUpdateComputedFormulaValidation:
-    """PATCH /api/metrics/{id} — formula referencing nonexistent metric → 400."""
+    """PATCH /api/metrics/{id} — formula referencing nonexistent metric -> 400."""
 
     async def test_update_computed_formula_invalid_ref(
         self, client: AsyncClient, user_a: dict,
@@ -873,7 +873,7 @@ class TestPatchEnumOptionsAddRemove:
         a_id = next(o["id"] for o in opts if o["label"] == "A")
         b_id = next(o["id"] for o in opts if o["label"] == "B")
 
-        # Keep A, rename B→B_renamed, drop C, add D
+        # Keep A, rename B->B_renamed, drop C, add D
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
             json={
@@ -902,7 +902,7 @@ class TestPatchEnumOptionsAddRemove:
 
 
 class TestPatchEnumOptionsDuplicateLabel:
-    """PATCH /api/metrics/{id} — duplicate enum option labels → 400."""
+    """PATCH /api/metrics/{id} — duplicate enum option labels -> 400."""
 
     async def test_patch_enum_options_duplicate_label(
         self, client: AsyncClient, user_a: dict,
@@ -932,138 +932,138 @@ class TestPatchEnumOptionsDuplicateLabel:
         assert resp.status_code == 400
 
 
-# ── Update slots ─────────────────────────────────────────────────────
+# ── Update checkpoints ───────────────────────────────────────────────
 
 
-class TestPatchSlotLabelsFirstTime:
-    """PATCH /api/metrics/{id} — add slots to a metric that had none; entries migrate."""
+class TestPatchCheckpointConfigsFirstTime:
+    """PATCH /api/metrics/{id} — add checkpoints to a metric that had none; entries migrate."""
 
-    async def test_patch_slot_labels_first_time(
+    async def test_patch_checkpoint_configs_first_time(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
         metric = await create_metric(
-            client, user_a["token"], name="Slottable", metric_type="number",
+            client, user_a["token"], name="Checkpointable", metric_type="number",
         )
         entry_date = "2026-03-10"
         await create_entry(
             client, user_a["token"], metric["id"], entry_date, 42,
         )
 
-        slot_m = await create_slot(client, user_a["token"], "Morning")
-        slot_e = await create_slot(client, user_a["token"], "Evening")
+        cp_m = await create_checkpoint(client, user_a["token"], "Morning")
+        cp_e = await create_checkpoint(client, user_a["token"], "Evening")
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
-            json={"slot_configs": [{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}]},
+            json={"checkpoint_configs": [{"checkpoint_id": cp_m["id"]}, {"checkpoint_id": cp_e["id"]}]},
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data["slots"]) == 2
-        slot_labels = [s["label"] for s in data["slots"]]
-        assert slot_labels == ["Morning", "Evening"]
+        assert len(data["checkpoints"]) == 2
+        checkpoint_labels = [s["label"] for s in data["checkpoints"]]
+        assert checkpoint_labels == ["Morning", "Evening"]
 
-        # Verify existing entry was migrated to first slot via daily endpoint
+        # Verify existing entry was migrated to first checkpoint via daily endpoint
         resp = await client.get(
             f"/api/daily/{entry_date}",
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 200
         daily = resp.json()
-        # Multi-slot metrics are split into per-checkpoint items
+        # Multi-checkpoint metrics are split into per-checkpoint items
         metric_items = [
             m for m in daily["metrics"] if m["metric_id"] == metric["id"]
         ]
         assert len(metric_items) == 2
-        # Collect all slots across items
-        all_slots = [s for item in metric_items for s in item["slots"]]
-        assert len(all_slots) == 2
-        # First slot should have the migrated value
-        first_slot = all_slots[0]
-        assert first_slot["entry"] is not None
-        assert first_slot["entry"]["value"] == 42
+        # Collect all checkpoints across items
+        all_checkpoints = [s for item in metric_items for s in item["checkpoints"]]
+        assert len(all_checkpoints) == 2
+        # First checkpoint should have the migrated value
+        first_checkpoint = all_checkpoints[0]
+        assert first_checkpoint["entry"] is not None
+        assert first_checkpoint["entry"]["value"] == 42
 
 
-class TestPatchSlotLabelsUpdate:
-    """PATCH /api/metrics/{id} — update existing slot labels and add new ones."""
+class TestPatchCheckpointConfigsUpdate:
+    """PATCH /api/metrics/{id} — update existing checkpoint configs and add new ones."""
 
-    async def test_patch_slot_labels_update(
+    async def test_patch_checkpoint_configs_update(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        slot_a = await create_slot(client, user_a["token"], "A")
-        slot_b = await create_slot(client, user_a["token"], "B")
+        cp_a = await create_checkpoint(client, user_a["token"], "A")
+        cp_b = await create_checkpoint(client, user_a["token"], "B")
         metric = await create_metric(
             client, user_a["token"],
-            name="Slotted", metric_type="number",
-            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}],
+            name="Checkpointed", metric_type="number",
+            checkpoint_configs=[{"checkpoint_id": cp_a["id"]}, {"checkpoint_id": cp_b["id"]}],
         )
-        assert len(metric["slots"]) == 2
+        assert len(metric["checkpoints"]) == 2
 
-        slot_c = await create_slot(client, user_a["token"], "C")
+        cp_c = await create_checkpoint(client, user_a["token"], "C")
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
-            json={"slot_configs": [
-                {"slot_id": slot_a["id"]},
-                {"slot_id": slot_b["id"]},
-                {"slot_id": slot_c["id"]},
+            json={"checkpoint_configs": [
+                {"checkpoint_id": cp_a["id"]},
+                {"checkpoint_id": cp_b["id"]},
+                {"checkpoint_id": cp_c["id"]},
             ]},
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 200
         data = resp.json()
-        enabled_slots = [s for s in data["slots"] if s.get("enabled", True)]
-        assert len(enabled_slots) == 3
-        labels = [s["label"] for s in enabled_slots]
+        enabled_checkpoints = [s for s in data["checkpoints"] if s.get("enabled", True)]
+        assert len(enabled_checkpoints) == 3
+        labels = [s["label"] for s in enabled_checkpoints]
         assert labels == ["A", "B", "C"]
 
 
-class TestPatchSlotLabelsReduceFails:
-    """PATCH /api/metrics/{id} — reducing to fewer than 2 slots → 400."""
+class TestPatchCheckpointConfigsReduceFails:
+    """PATCH /api/metrics/{id} — reducing to fewer than 2 checkpoints -> 400."""
 
-    async def test_patch_slot_labels_reduce_fails(
+    async def test_patch_checkpoint_configs_reduce_fails(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        slot_a = await create_slot(client, user_a["token"], "A")
-        slot_b = await create_slot(client, user_a["token"], "B")
+        cp_a = await create_checkpoint(client, user_a["token"], "A")
+        cp_b = await create_checkpoint(client, user_a["token"], "B")
         metric = await create_metric(
             client, user_a["token"],
-            name="Reduce Slots", metric_type="number",
-            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}],
+            name="Reduce Checkpoints", metric_type="number",
+            checkpoint_configs=[{"checkpoint_id": cp_a["id"]}, {"checkpoint_id": cp_b["id"]}],
         )
 
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
-            json={"slot_configs": [{"slot_id": slot_a["id"]}]},
+            json={"checkpoint_configs": [{"checkpoint_id": cp_a["id"]}]},
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 400
 
 
-class TestPatchSlotLabelsDisableExtra:
-    """PATCH /api/metrics/{id} — reducing from 3 to 2 slots disables the third."""
+class TestPatchCheckpointConfigsDisableExtra:
+    """PATCH /api/metrics/{id} — reducing from 3 to 2 checkpoints disables the third."""
 
-    async def test_patch_slot_labels_disable_extra(
+    async def test_patch_checkpoint_configs_disable_extra(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        slot_a = await create_slot(client, user_a["token"], "A")
-        slot_b = await create_slot(client, user_a["token"], "B")
-        slot_c = await create_slot(client, user_a["token"], "C")
+        cp_a = await create_checkpoint(client, user_a["token"], "A")
+        cp_b = await create_checkpoint(client, user_a["token"], "B")
+        cp_c = await create_checkpoint(client, user_a["token"], "C")
         metric = await create_metric(
             client, user_a["token"],
-            name="Disable Slot", metric_type="number",
-            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}, {"slot_id": slot_c["id"]}],
+            name="Disable Checkpoint", metric_type="number",
+            checkpoint_configs=[{"checkpoint_id": cp_a["id"]}, {"checkpoint_id": cp_b["id"]}, {"checkpoint_id": cp_c["id"]}],
         )
-        assert len(metric["slots"]) == 3
+        assert len(metric["checkpoints"]) == 3
 
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
-            json={"slot_configs": [{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}]},
+            json={"checkpoint_configs": [{"checkpoint_id": cp_a["id"]}, {"checkpoint_id": cp_b["id"]}]},
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 200
         data = resp.json()
-        enabled_slots = [s for s in data["slots"] if s.get("enabled", True)]
-        assert len(enabled_slots) == 2
-        labels = [s["label"] for s in enabled_slots]
+        enabled_checkpoints = [s for s in data["checkpoints"] if s.get("enabled", True)]
+        assert len(enabled_checkpoints) == 2
+        labels = [s["label"] for s in enabled_checkpoints]
         assert labels == ["A", "B"]
 
 
@@ -1071,7 +1071,7 @@ class TestPatchSlotLabelsDisableExtra:
 
 
 class TestCreateIntegrationMetricNoProvider:
-    """POST /api/metrics — type=integration without provider → 400."""
+    """POST /api/metrics — type=integration without provider -> 400."""
 
     async def test_create_integration_no_provider(
         self, client: AsyncClient, user_a: dict,
@@ -1085,7 +1085,7 @@ class TestCreateIntegrationMetricNoProvider:
 
 
 class TestCreateIntegrationMetricUnknownProvider:
-    """POST /api/metrics — type=integration with unknown provider → 400."""
+    """POST /api/metrics — type=integration with unknown provider -> 400."""
 
     async def test_create_integration_unknown_provider(
         self, client: AsyncClient, user_a: dict,
@@ -1104,7 +1104,7 @@ class TestCreateIntegrationMetricUnknownProvider:
 
 
 class TestCreateEnumMetricTooFewOptions:
-    """POST /api/metrics — enum with only 1 option → 400."""
+    """POST /api/metrics — enum with only 1 option -> 400."""
 
     async def test_create_enum_too_few_options(
         self, client: AsyncClient, user_a: dict,
@@ -1122,7 +1122,7 @@ class TestCreateEnumMetricTooFewOptions:
 
 
 class TestCreateEnumMetricDuplicateLabels:
-    """POST /api/metrics — enum with duplicate labels → 400."""
+    """POST /api/metrics — enum with duplicate labels -> 400."""
 
     async def test_create_enum_duplicate_labels(
         self, client: AsyncClient, user_a: dict,
@@ -1139,157 +1139,157 @@ class TestCreateEnumMetricDuplicateLabels:
         assert resp.status_code == 400
 
 
-# ── Slot reorder / add (id-based matching) ───────────────────────────
+# ── Checkpoint reorder / add (id-based matching) ─────────────────────
 
 
-class TestSlotReorderAndAdd:
-    """PATCH /api/metrics — slot reorder and insert must preserve entries."""
+class TestCheckpointReorderAndAdd:
+    """PATCH /api/metrics — checkpoint reorder and insert must preserve entries."""
 
-    async def test_reorder_slots_preserves_entries(
+    async def test_reorder_checkpoints_preserves_entries(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        slot_a = await create_slot(client, user_a["token"], "A")
-        slot_b = await create_slot(client, user_a["token"], "B")
+        cp_a = await create_checkpoint(client, user_a["token"], "A")
+        cp_b = await create_checkpoint(client, user_a["token"], "B")
         metric = await create_metric(
             client, user_a["token"],
             name="Reorder", metric_type="number",
-            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}],
+            checkpoint_configs=[{"checkpoint_id": cp_a["id"]}, {"checkpoint_id": cp_b["id"]}],
         )
-        slot_a = metric["slots"][0]
-        slot_b = metric["slots"][1]
+        cp_a = metric["checkpoints"][0]
+        cp_b = metric["checkpoints"][1]
 
-        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 10, slot_id=slot_a["id"])
-        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 20, slot_id=slot_b["id"])
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 10, checkpoint_id=cp_a["id"])
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 20, checkpoint_id=cp_b["id"])
 
-        # Swap order: B first, A second (in slot_configs)
-        # But API returns slots sorted by global sort_order (A=0, B=1)
+        # Swap order: B first, A second (in checkpoint_configs)
+        # But API returns checkpoints sorted by global sort_order (A=0, B=1)
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
-            json={"slot_configs": [
-                {"slot_id": slot_b["id"]},
-                {"slot_id": slot_a["id"]},
+            json={"checkpoint_configs": [
+                {"checkpoint_id": cp_b["id"]},
+                {"checkpoint_id": cp_a["id"]},
             ]},
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 200
         data = resp.json()
-        slots = data["slots"]
-        assert slots[0]["id"] == slot_a["id"]
-        assert slots[0]["label"] == "A"
-        assert slots[1]["id"] == slot_b["id"]
-        assert slots[1]["label"] == "B"
+        checkpoints = data["checkpoints"]
+        assert checkpoints[0]["id"] == cp_a["id"]
+        assert checkpoints[0]["label"] == "A"
+        assert checkpoints[1]["id"] == cp_b["id"]
+        assert checkpoints[1]["label"] == "B"
 
-        # Verify entries still attached to original slot ids
+        # Verify entries still attached to original checkpoint ids
         daily_resp = await client.get(
             "/api/daily/2026-03-10",
             headers=auth_headers(user_a["token"]),
         )
         assert daily_resp.status_code == 200
-        # Multi-slot metrics are split into per-checkpoint items
+        # Multi-checkpoint metrics are split into per-checkpoint items
         m_items = [m for m in daily_resp.json()["metrics"] if m["metric_id"] == metric["id"]]
-        all_slots = [s for item in m_items for s in item["slots"]]
-        slot_values = {s["slot_id"]: s["entry"]["value"] for s in all_slots if s["entry"]}
-        assert slot_values[slot_a["id"]] == 10
-        assert slot_values[slot_b["id"]] == 20
+        all_checkpoints = [s for item in m_items for s in item["checkpoints"]]
+        cp_values = {s["checkpoint_id"]: s["entry"]["value"] for s in all_checkpoints if s["entry"]}
+        assert cp_values[cp_a["id"]] == 10
+        assert cp_values[cp_b["id"]] == 20
 
-    async def test_add_slot_in_middle_preserves_entries(
+    async def test_add_checkpoint_in_middle_preserves_entries(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        slot_a = await create_slot(client, user_a["token"], "A")
-        slot_b = await create_slot(client, user_a["token"], "B")
+        cp_a = await create_checkpoint(client, user_a["token"], "A")
+        cp_b = await create_checkpoint(client, user_a["token"], "B")
         metric = await create_metric(
             client, user_a["token"],
             name="Middle", metric_type="number",
-            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}],
+            checkpoint_configs=[{"checkpoint_id": cp_a["id"]}, {"checkpoint_id": cp_b["id"]}],
         )
-        slot_a = metric["slots"][0]
-        slot_b = metric["slots"][1]
+        cp_a = metric["checkpoints"][0]
+        cp_b = metric["checkpoints"][1]
 
-        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 10, slot_id=slot_a["id"])
-        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 20, slot_id=slot_b["id"])
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 10, checkpoint_id=cp_a["id"])
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 20, checkpoint_id=cp_b["id"])
 
-        # Insert new slot in the middle
-        slot_new = await create_slot(client, user_a["token"], "New")
+        # Insert new checkpoint in the middle
+        cp_new = await create_checkpoint(client, user_a["token"], "New")
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
-            json={"slot_configs": [
-                {"slot_id": slot_a["id"]},
-                {"slot_id": slot_new["id"]},
-                {"slot_id": slot_b["id"]},
+            json={"checkpoint_configs": [
+                {"checkpoint_id": cp_a["id"]},
+                {"checkpoint_id": cp_new["id"]},
+                {"checkpoint_id": cp_b["id"]},
             ]},
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data["slots"]) == 3
-        # Slots returned in global sort_order: A(0), B(1), New(2)
-        slots = data["slots"]
-        assert slots[0]["id"] == slot_a["id"]
-        assert slots[1]["id"] == slot_b["id"]
-        assert slots[2]["label"] == "New"
+        assert len(data["checkpoints"]) == 3
+        # Checkpoints returned in global sort_order: A(0), B(1), New(2)
+        checkpoints = data["checkpoints"]
+        assert checkpoints[0]["id"] == cp_a["id"]
+        assert checkpoints[1]["id"] == cp_b["id"]
+        assert checkpoints[2]["label"] == "New"
 
-        # Entries still on original slots
+        # Entries still on original checkpoints
         daily_resp = await client.get(
             "/api/daily/2026-03-10",
             headers=auth_headers(user_a["token"]),
         )
         assert daily_resp.status_code == 200
-        # Multi-slot metrics are split into per-checkpoint items
+        # Multi-checkpoint metrics are split into per-checkpoint items
         m_items = [m for m in daily_resp.json()["metrics"] if m["metric_id"] == metric["id"]]
-        all_slots = [s for item in m_items for s in item["slots"]]
-        slot_values = {s["slot_id"]: s["entry"]["value"] for s in all_slots if s["entry"]}
-        assert slot_values[slot_a["id"]] == 10
-        assert slot_values[slot_b["id"]] == 20
-        new_slot = next(s for s in all_slots if s["label"] == "New")
-        assert new_slot["entry"] is None
+        all_checkpoints = [s for item in m_items for s in item["checkpoints"]]
+        cp_values = {s["checkpoint_id"]: s["entry"]["value"] for s in all_checkpoints if s["entry"]}
+        assert cp_values[cp_a["id"]] == 10
+        assert cp_values[cp_b["id"]] == 20
+        new_cp = next(s for s in all_checkpoints if s["label"] == "New")
+        assert new_cp["entry"] is None
 
-    async def test_add_slot_at_end(
+    async def test_add_checkpoint_at_end(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        slot_a = await create_slot(client, user_a["token"], "A")
-        slot_b = await create_slot(client, user_a["token"], "B")
+        cp_a = await create_checkpoint(client, user_a["token"], "A")
+        cp_b = await create_checkpoint(client, user_a["token"], "B")
         metric = await create_metric(
             client, user_a["token"],
             name="End", metric_type="number",
-            slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}],
+            checkpoint_configs=[{"checkpoint_id": cp_a["id"]}, {"checkpoint_id": cp_b["id"]}],
         )
-        slot_a = metric["slots"][0]
-        slot_b = metric["slots"][1]
+        cp_a = metric["checkpoints"][0]
+        cp_b = metric["checkpoints"][1]
 
-        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 10, slot_id=slot_a["id"])
-        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 20, slot_id=slot_b["id"])
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 10, checkpoint_id=cp_a["id"])
+        await create_entry(client, user_a["token"], metric["id"], "2026-03-10", 20, checkpoint_id=cp_b["id"])
 
-        slot_c = await create_slot(client, user_a["token"], "C")
+        cp_c = await create_checkpoint(client, user_a["token"], "C")
         resp = await client.patch(
             f"/api/metrics/{metric['id']}",
-            json={"slot_configs": [
-                {"slot_id": slot_a["id"]},
-                {"slot_id": slot_b["id"]},
-                {"slot_id": slot_c["id"]},
+            json={"checkpoint_configs": [
+                {"checkpoint_id": cp_a["id"]},
+                {"checkpoint_id": cp_b["id"]},
+                {"checkpoint_id": cp_c["id"]},
             ]},
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data["slots"]) == 3
-        slots = sorted(data["slots"], key=lambda s: s["sort_order"])
-        assert slots[0]["id"] == slot_a["id"]
-        assert slots[1]["id"] == slot_b["id"]
-        assert slots[2]["label"] == "C"
+        assert len(data["checkpoints"]) == 3
+        checkpoints = sorted(data["checkpoints"], key=lambda s: s["sort_order"])
+        assert checkpoints[0]["id"] == cp_a["id"]
+        assert checkpoints[1]["id"] == cp_b["id"]
+        assert checkpoints[2]["label"] == "C"
 
-    async def test_other_users_slot_rejected(
+    async def test_other_users_checkpoint_rejected(
         self, client: AsyncClient, user_a: dict, user_b: dict,
     ) -> None:
-        """Using another user's slot_id should be rejected."""
-        slot_own = await create_slot(client, user_a["token"], "Own")
-        slot_other = await create_slot(client, user_b["token"], "Other")
+        """Using another user's checkpoint_id should be rejected."""
+        cp_own = await create_checkpoint(client, user_a["token"], "Own")
+        cp_other = await create_checkpoint(client, user_b["token"], "Other")
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "Test", "type": "number",
-                "slot_configs": [
-                    {"slot_id": slot_own["id"]},
-                    {"slot_id": slot_other["id"]},
+                "checkpoint_configs": [
+                    {"checkpoint_id": cp_own["id"]},
+                    {"checkpoint_id": cp_other["id"]},
                 ],
             },
             headers=auth_headers(user_a["token"]),

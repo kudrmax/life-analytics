@@ -177,88 +177,93 @@ async def _init_db_schema(conn):
         )
     """)
 
-    # Measurement slots — legacy DDL for existing DBs (migration 13 converts to new schema)
-    # For fresh installs, migration 13 is a no-op since init_db + migration marks cover it.
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS measurement_slots (
-            id SERIAL PRIMARY KEY,
-            metric_id INTEGER REFERENCES metric_definitions(id) ON DELETE CASCADE,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            label VARCHAR(100) NOT NULL DEFAULT '',
-            enabled BOOLEAN NOT NULL DEFAULT TRUE,
-            category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL
-        )
-    """)
-    # After migration 13, measurement_slots has (id, user_id, label, sort_order).
-    # Add user_id column for pre-migration DBs so metric_slots FK works:
-    await conn.execute("""
-        ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS
-            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
-    """)
+    # --- Checkpoints / Intervals schema ---
+    # Migration 22 renames measurement_slots→checkpoints, drops metric_slots,
+    # replaces entries.slot_id with checkpoint_id+interval_id.
+    # Legacy DDL is needed for migrations 8-21 to work on fresh DBs.
+    _has_checkpoints = await conn.fetchval(
+        "SELECT EXISTS(SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema='public' AND table_name='checkpoints')"
+    )
 
-    # Create unique index only if user_id column is NOT NULL (post-migration 13)
-    await conn.execute("""
-        DO $$ BEGIN
-            IF EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name = 'measurement_slots' AND column_name = 'user_id'
-                  AND is_nullable = 'NO'
-            ) THEN
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_measurement_slots_user_label
-                    ON measurement_slots(user_id, LOWER(label));
-            END IF;
-        END $$
-    """)
-
-    # Junction table: metric <-> slot (per-metric slot config)
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS metric_slots (
-            id SERIAL PRIMARY KEY,
-            metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
-            slot_id INTEGER NOT NULL REFERENCES measurement_slots(id) ON DELETE CASCADE,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            enabled BOOLEAN NOT NULL DEFAULT TRUE,
-            category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
-            UNIQUE(metric_id, slot_id)
-        )
-    """)
-    await conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_metric_slots_metric ON metric_slots(metric_id)
-    """)
-    await conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_metric_slots_slot ON metric_slots(slot_id)
-    """)
-
-    # Add slot_id column to entries (nullable)
-    await conn.execute("""
-        ALTER TABLE entries ADD COLUMN IF NOT EXISTS
-            slot_id INTEGER REFERENCES measurement_slots(id)
-    """)
-
-    # Migrate from old UNIQUE constraint to partial indexes
-    await conn.execute("""
-        DO $$ BEGIN
-            IF EXISTS (
-                SELECT 1 FROM pg_constraint
-                WHERE conname = 'entries_metric_id_user_id_date_key'
-                AND conrelid = 'entries'::regclass
-            ) THEN
-                ALTER TABLE entries DROP CONSTRAINT entries_metric_id_user_id_date_key;
-            END IF;
-        END $$
-    """)
-
-    # Partial index for metrics without slots (max 1 entry per metric/user/date)
-    await conn.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS entries_no_slot_key
-        ON entries(metric_id, user_id, date) WHERE slot_id IS NULL
-    """)
-
-    # Partial index for metrics with slots (max 1 entry per metric/user/date/slot)
-    await conn.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS entries_with_slot_key
-        ON entries(metric_id, user_id, date, slot_id) WHERE slot_id IS NOT NULL
-    """)
+    if not _has_checkpoints:
+        # Legacy slot DDL — required for migrations 8-21 on fresh/pre-migration-22 DBs
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS measurement_slots (
+                id SERIAL PRIMARY KEY,
+                metric_id INTEGER REFERENCES metric_definitions(id) ON DELETE CASCADE,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                label VARCHAR(100) NOT NULL DEFAULT '',
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL
+            )
+        """)
+        await conn.execute("""
+            ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
+        """)
+        await conn.execute("""
+            DO $$ BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'measurement_slots' AND column_name = 'user_id'
+                      AND is_nullable = 'NO'
+                ) THEN
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_measurement_slots_user_label
+                        ON measurement_slots(user_id, LOWER(label));
+                END IF;
+            END $$
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS metric_slots (
+                id SERIAL PRIMARY KEY,
+                metric_id INTEGER NOT NULL REFERENCES metric_definitions(id) ON DELETE CASCADE,
+                slot_id INTEGER NOT NULL REFERENCES measurement_slots(id) ON DELETE CASCADE,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+                UNIQUE(metric_id, slot_id)
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_metric_slots_metric ON metric_slots(metric_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_metric_slots_slot ON metric_slots(slot_id)
+        """)
+        await conn.execute("""
+            ALTER TABLE entries ADD COLUMN IF NOT EXISTS
+                slot_id INTEGER REFERENCES measurement_slots(id)
+        """)
+        await conn.execute("""
+            DO $$ BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'entries_metric_id_user_id_date_key'
+                    AND conrelid = 'entries'::regclass
+                ) THEN
+                    ALTER TABLE entries DROP CONSTRAINT entries_metric_id_user_id_date_key;
+                END IF;
+            END $$
+        """)
+        await conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS entries_no_slot_key
+            ON entries(metric_id, user_id, date) WHERE slot_id IS NULL
+        """)
+        await conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS entries_with_slot_key
+            ON entries(metric_id, user_id, date, slot_id) WHERE slot_id IS NOT NULL
+        """)
+        await conn.execute("""
+            ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS
+                interval_start_slot_id INTEGER REFERENCES measurement_slots(id) ON DELETE SET NULL
+        """)
+        await conn.execute("""
+            ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS description TEXT
+        """)
+        await conn.execute("""
+            ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE
+        """)
 
     # Add icon column to metric_definitions
     await conn.execute("""
@@ -283,13 +288,10 @@ async def _init_db_schema(conn):
         ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS interval_binding VARCHAR(20) NOT NULL DEFAULT 'all_day'
     """)
     await conn.execute("""
-        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS interval_start_slot_id INTEGER REFERENCES measurement_slots(id) ON DELETE SET NULL
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS all_checkpoints BOOLEAN NOT NULL DEFAULT FALSE
     """)
     await conn.execute("""
-        ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS description TEXT
-    """)
-    await conn.execute("""
-        ALTER TABLE measurement_slots ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE
+        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS all_intervals BOOLEAN NOT NULL DEFAULT FALSE
     """)
 
     # Add category_id column to metric_definitions (for existing DBs that had category/fill_time columns)
@@ -317,8 +319,10 @@ async def _init_db_schema(conn):
             report_id INTEGER NOT NULL REFERENCES correlation_reports(id) ON DELETE CASCADE,
             metric_a_id INTEGER,
             metric_b_id INTEGER,
-            slot_a_id INTEGER,
-            slot_b_id INTEGER,
+            checkpoint_a_id INTEGER,
+            checkpoint_b_id INTEGER,
+            interval_a_id INTEGER,
+            interval_b_id INTEGER,
             source_key_a VARCHAR(100) NOT NULL DEFAULT '',
             source_key_b VARCHAR(100) NOT NULL DEFAULT '',
             type_a VARCHAR(20) NOT NULL DEFAULT '',

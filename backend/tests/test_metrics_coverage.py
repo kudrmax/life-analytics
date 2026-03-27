@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_slot
+from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_checkpoint
 
 
 # ── Computed metric creation validation ──────────────────────────────
@@ -87,62 +87,62 @@ class TestCreateComputedValidation:
         assert resp.status_code == 400
 
 
-# ── Create with slot_configs ─────────────────────────────────────────
+# ── Create with checkpoint_configs ───────────────────────────────────
 
 
-class TestCreateWithSlotConfigs:
-    """POST /api/metrics — with slot_configs (per-slot category)."""
+class TestCreateWithCheckpointConfigs:
+    """POST /api/metrics — with checkpoint_configs (per-checkpoint category)."""
 
-    async def test_create_with_slot_configs_and_category(
+    async def test_create_with_checkpoint_configs_and_category(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
         cat_resp = await client.post(
             "/api/categories",
-            json={"name": "SlotCat"},
+            json={"name": "CpCat"},
             headers=auth_headers(user_a["token"]),
         )
         assert cat_resp.status_code == 201
         cat_id = cat_resp.json()["id"]
 
-        slot_m = await create_slot(client, user_a["token"], "Morning")
-        slot_e = await create_slot(client, user_a["token"], "Evening")
+        cp_m = await create_checkpoint(client, user_a["token"], "Morning")
+        cp_e = await create_checkpoint(client, user_a["token"], "Evening")
         resp = await client.post(
             "/api/metrics",
             json={
-                "name": "SlotCfg",
+                "name": "CpCfg",
                 "type": "number",
-                "slot_configs": [
-                    {"slot_id": slot_m["id"], "category_id": cat_id},
-                    {"slot_id": slot_e["id"], "category_id": cat_id},
+                "checkpoint_configs": [
+                    {"checkpoint_id": cp_m["id"], "category_id": cat_id},
+                    {"checkpoint_id": cp_e["id"], "category_id": cat_id},
                 ],
             },
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 201
         data = resp.json()
-        assert len(data["slots"]) == 2
+        assert len(data["checkpoints"]) == 2
         assert data["category_id"] is None
 
-    async def test_create_slot_configs_category_id_ignored(
+    async def test_create_checkpoint_configs_category_id_ignored(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """category_id in slot_configs is ignored (always NULL)."""
-        slot_a = await create_slot(client, user_a["token"], "A")
-        slot_b = await create_slot(client, user_a["token"], "B")
+        """category_id in checkpoint_configs is ignored (always NULL)."""
+        cp_a = await create_checkpoint(client, user_a["token"], "A")
+        cp_b = await create_checkpoint(client, user_a["token"], "B")
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "IgnoredCat",
                 "type": "number",
-                "slot_configs": [
-                    {"slot_id": slot_a["id"], "category_id": 999999},
-                    {"slot_id": slot_b["id"]},
+                "checkpoint_configs": [
+                    {"checkpoint_id": cp_a["id"], "category_id": 999999},
+                    {"checkpoint_id": cp_b["id"]},
                 ],
             },
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 201
-        assert len(resp.json()["slots"]) == 2
+        assert len(resp.json()["checkpoints"]) == 2
 
 
 # ── Create condition validation ──────────────────────────────────────
@@ -220,34 +220,34 @@ class TestScaleValidation:
         assert resp.status_code == 400
 
 
-# ── Reorder with slots ───────────────────────────────────────────────
+# ── Reorder with checkpoints ─────────────────────────────────────────
 
 
-class TestReorderWithSlots:
-    """POST /api/metrics/reorder — slot-level category assignment."""
+class TestReorderWithCheckpoints:
+    """POST /api/metrics/reorder — checkpoint-level category assignment."""
 
-    async def test_reorder_with_slot_id(self, client: AsyncClient, user_a: dict) -> None:
+    async def test_reorder_with_checkpoint_id(self, client: AsyncClient, user_a: dict) -> None:
         cat_resp = await client.post("/api/categories", json={"name": "RC"},
                                      headers=auth_headers(user_a["token"]))
         cat_id = cat_resp.json()["id"]
-        slot_am = await create_slot(client, user_a["token"], "AM")
-        slot_pm = await create_slot(client, user_a["token"], "PM")
+        cp_am = await create_checkpoint(client, user_a["token"], "AM")
+        cp_pm = await create_checkpoint(client, user_a["token"], "PM")
         m = await create_metric(client, user_a["token"], name="X", metric_type="number",
-                                slot_configs=[{"slot_id": slot_am["id"]}, {"slot_id": slot_pm["id"]}])
-        slot_id = m["slots"][0]["id"]
+                                checkpoint_configs=[{"checkpoint_id": cp_am["id"]}, {"checkpoint_id": cp_pm["id"]}])
+        cp_id = m["checkpoints"][0]["id"]
         resp = await client.post("/api/metrics/reorder", json=[
-            {"id": m["id"], "sort_order": 0, "slot_id": slot_id, "category_id": cat_id},
+            {"id": m["id"], "sort_order": 0, "checkpoint_id": cp_id, "category_id": cat_id},
         ], headers=auth_headers(user_a["token"]))
         assert resp.status_code == 200
 
-    async def test_reorder_propagates_category_to_slots(self, client: AsyncClient, user_a: dict) -> None:
+    async def test_reorder_propagates_category_to_checkpoints(self, client: AsyncClient, user_a: dict) -> None:
         cat_resp = await client.post("/api/categories", json={"name": "PC"},
                                      headers=auth_headers(user_a["token"]))
         cat_id = cat_resp.json()["id"]
-        slot_a = await create_slot(client, user_a["token"], "A")
-        slot_b = await create_slot(client, user_a["token"], "B")
+        cp_a = await create_checkpoint(client, user_a["token"], "A")
+        cp_b = await create_checkpoint(client, user_a["token"], "B")
         m = await create_metric(client, user_a["token"], name="X", metric_type="number",
-                                slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}])
+                                checkpoint_configs=[{"checkpoint_id": cp_a["id"]}, {"checkpoint_id": cp_b["id"]}])
         resp = await client.post("/api/metrics/reorder", json=[
             {"id": m["id"], "sort_order": 0, "category_id": cat_id},
         ], headers=auth_headers(user_a["token"]))
@@ -341,39 +341,39 @@ class TestMiscEdgeCases:
         assert resp.status_code == 200
         assert resp.json()["category_id"] is None
 
-    async def test_update_slot_configs_with_category(self, client: AsyncClient, user_a: dict) -> None:
+    async def test_update_checkpoint_configs_with_category(self, client: AsyncClient, user_a: dict) -> None:
         cat_resp = await client.post("/api/categories", json={"name": "SC"},
                                      headers=auth_headers(user_a["token"]))
         cat_id = cat_resp.json()["id"]
-        slot_a = await create_slot(client, user_a["token"], "A")
-        slot_b = await create_slot(client, user_a["token"], "B")
+        cp_a = await create_checkpoint(client, user_a["token"], "A")
+        cp_b = await create_checkpoint(client, user_a["token"], "B")
         m = await create_metric(client, user_a["token"], name="X", metric_type="number",
-                                slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}])
+                                checkpoint_configs=[{"checkpoint_id": cp_a["id"]}, {"checkpoint_id": cp_b["id"]}])
         resp = await client.patch(f"/api/metrics/{m['id']}", json={
-            "slot_configs": [{"slot_id": slot_a["id"], "category_id": cat_id}, {"slot_id": slot_b["id"]}],
+            "checkpoint_configs": [{"checkpoint_id": cp_a["id"], "category_id": cat_id}, {"checkpoint_id": cp_b["id"]}],
         }, headers=auth_headers(user_a["token"]))
         assert resp.status_code == 200
 
-    async def test_update_slot_configs_category_id_ignored(self, client: AsyncClient, user_a: dict) -> None:
-        """category_id in slot_configs is ignored on update (always NULL)."""
-        slot_a = await create_slot(client, user_a["token"], "A")
-        slot_b = await create_slot(client, user_a["token"], "B")
+    async def test_update_checkpoint_configs_category_id_ignored(self, client: AsyncClient, user_a: dict) -> None:
+        """category_id in checkpoint_configs is ignored on update (always NULL)."""
+        cp_a = await create_checkpoint(client, user_a["token"], "A")
+        cp_b = await create_checkpoint(client, user_a["token"], "B")
         m = await create_metric(client, user_a["token"], name="X", metric_type="number",
-                                slot_configs=[{"slot_id": slot_a["id"]}, {"slot_id": slot_b["id"]}])
+                                checkpoint_configs=[{"checkpoint_id": cp_a["id"]}, {"checkpoint_id": cp_b["id"]}])
         resp = await client.patch(f"/api/metrics/{m['id']}", json={
-            "slot_configs": [{"slot_id": slot_a["id"], "category_id": 999999}, {"slot_id": slot_b["id"]}],
+            "checkpoint_configs": [{"checkpoint_id": cp_a["id"], "category_id": 999999}, {"checkpoint_id": cp_b["id"]}],
         }, headers=auth_headers(user_a["token"]))
         assert resp.status_code == 200
 
-    async def test_update_slot_configs_first_time(self, client: AsyncClient, user_a: dict) -> None:
+    async def test_update_checkpoint_configs_first_time(self, client: AsyncClient, user_a: dict) -> None:
         m = await create_metric(client, user_a["token"], name="X", metric_type="number")
-        slot_s1 = await create_slot(client, user_a["token"], "S1")
-        slot_s2 = await create_slot(client, user_a["token"], "S2")
+        cp_s1 = await create_checkpoint(client, user_a["token"], "S1")
+        cp_s2 = await create_checkpoint(client, user_a["token"], "S2")
         resp = await client.patch(f"/api/metrics/{m['id']}", json={
-            "slot_configs": [{"slot_id": slot_s1["id"]}, {"slot_id": slot_s2["id"]}],
+            "checkpoint_configs": [{"checkpoint_id": cp_s1["id"]}, {"checkpoint_id": cp_s2["id"]}],
         }, headers=auth_headers(user_a["token"]))
         assert resp.status_code == 200
-        assert len(resp.json()["slots"]) == 2
+        assert len(resp.json()["checkpoints"]) == 2
 
     async def test_update_computed_comparison_non_bool_400(self, client: AsyncClient, user_a: dict) -> None:
         num = await create_metric(client, user_a["token"], name="N", metric_type="number")
@@ -397,13 +397,13 @@ class TestMiscEdgeCases:
         }, headers=auth_headers(user_a["token"]))
         assert resp.status_code == 400
 
-    async def test_single_slot_config_no_existing_noop(self, client: AsyncClient, user_a: dict) -> None:
+    async def test_single_checkpoint_config_no_existing_noop(self, client: AsyncClient, user_a: dict) -> None:
         m = await create_metric(client, user_a["token"], name="X", metric_type="number")
-        slot_only = await create_slot(client, user_a["token"], "Only")
-        resp = await client.patch(f"/api/metrics/{m['id']}", json={"slot_configs": [{"slot_id": slot_only["id"]}]},
+        cp_only = await create_checkpoint(client, user_a["token"], "Only")
+        resp = await client.patch(f"/api/metrics/{m['id']}", json={"checkpoint_configs": [{"checkpoint_id": cp_only["id"]}]},
                                   headers=auth_headers(user_a["token"]))
         assert resp.status_code == 200
-        assert len(resp.json()["slots"]) == 0
+        assert len(resp.json()["checkpoints"]) == 0
 
     async def test_integration_no_metric_key_400(self, client: AsyncClient, user_a: dict) -> None:
         resp = await client.post("/api/metrics", json={

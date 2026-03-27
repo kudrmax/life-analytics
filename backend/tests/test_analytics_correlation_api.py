@@ -13,7 +13,7 @@ import pytest
 
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_slot
+from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_checkpoint
 
 
 # ---------------------------------------------------------------------------
@@ -1223,38 +1223,40 @@ class TestPairHintWords:
 
 
 # ---------------------------------------------------------------------------
-# Multi-slot metric in correlations (lines 932-934)
+# Multi-checkpoint metric in correlations (lines 932-934)
 # ---------------------------------------------------------------------------
 
-class TestCorrelationMultiSlot:
-    """Multi-slot metric produces per-slot sources in correlation report."""
+class TestCorrelationMultiCheckpoint:
+    """Multi-checkpoint metric produces per-checkpoint sources in correlation report."""
 
-    async def test_multi_slot_produces_slot_sources(
+    async def test_multi_checkpoint_produces_checkpoint_sources(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Metric with 2 slots creates aggregate + per-slot sources."""
+        """Metric with 2 checkpoints creates aggregate + per-checkpoint sources."""
         token = user_a["token"]
 
-        slot_m = await create_slot(client, token, "Morning")
-        slot_e = await create_slot(client, token, "Evening")
-        metric = await create_metric(
-            client, token, name="MultiSlotCorr", metric_type="number",
-            slug="mslot_corr",
-            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
-        )
+        cp_m = await create_checkpoint(client, token, "Morning")
+        cp_e = await create_checkpoint(client, token, "Evening")
+        resp = await client.post("/api/metrics", json={
+            "name": "MultiCpCorr", "type": "number", "slug": "mcp_corr",
+            "is_checkpoint": True,
+            "checkpoint_configs": [{"checkpoint_id": cp_m["id"]}, {"checkpoint_id": cp_e["id"]}],
+        }, headers=auth_headers(token))
+        assert resp.status_code == 201
+        metric = resp.json()
         mid = metric["id"]
-        slots = metric["slots"]
-        slot_a = slots[0]["id"]
-        slot_b = slots[1]["id"]
+        checkpoints = metric["checkpoints"]
+        cp_a = checkpoints[0]["id"]
+        cp_b = checkpoints[1]["id"]
 
         bool_m = await create_metric(
-            client, token, name="FlagSlot", metric_type="bool", slug="flag_slot",
+            client, token, name="FlagCp", metric_type="bool", slug="flag_cp",
         )
 
         for day in range(1, 16):
             date_str = f"2026-01-{day:02d}"
-            await create_entry(client, token, mid, date_str, day * 10, slot_id=slot_a)
-            await create_entry(client, token, mid, date_str, day * 5, slot_id=slot_b)
+            await create_entry(client, token, mid, date_str, day * 10, checkpoint_id=cp_a)
+            await create_entry(client, token, mid, date_str, day * 5, checkpoint_id=cp_b)
             await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
 
         await _start_report(client, token)
@@ -1269,15 +1271,15 @@ class TestCorrelationMultiSlot:
         pairs_data = resp.json()
         assert pairs_data["total"] > 0
 
-        # Look for slot labels in pairs
-        slot_labels_found = set()
+        # Look for binding labels (checkpoint names) in pairs
+        binding_labels_found = set()
         for p in pairs_data["pairs"]:
-            if p.get("slot_label_a"):
-                slot_labels_found.add(p["slot_label_a"])
-            if p.get("slot_label_b"):
-                slot_labels_found.add(p["slot_label_b"])
-        assert "Morning" in slot_labels_found or "Evening" in slot_labels_found, (
-            f"Expected slot labels in pairs, got: {slot_labels_found}"
+            if p.get("binding_label_a"):
+                binding_labels_found.add(p["binding_label_a"])
+            if p.get("binding_label_b"):
+                binding_labels_found.add(p["binding_label_b"])
+        assert "Morning" in binding_labels_found or "Evening" in binding_labels_found, (
+            f"Expected checkpoint labels in pairs, got: {binding_labels_found}"
         )
 
 
@@ -1564,29 +1566,30 @@ class TestQualityIssueIntegration:
 
 
 # ---------------------------------------------------------------------------
-# SLOT_MAX / SLOT_MIN auto-sources
+# CHECKPOINT_MAX / CHECKPOINT_MIN auto-sources
 # ---------------------------------------------------------------------------
 
-class TestSlotMaxMinAutoSources:
+class TestCheckpointMaxMinAutoSources:
 
-    async def test_number_metric_with_slots_produces_slot_max_min(
+    async def test_number_metric_with_checkpoints_produces_checkpoint_max_min(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Number metric with slots produces slot_max and slot_min auto-sources."""
+        """Number metric with checkpoints produces checkpoint_max and checkpoint_min auto-sources."""
         token = user_a["token"]
 
-        # Create two slots
-        slot_a = await create_slot(client, token, "Утро")
-        slot_b = await create_slot(client, token, "Вечер")
+        # Create two checkpoints
+        cp_a = await create_checkpoint(client, token, "Утро")
+        cp_b = await create_checkpoint(client, token, "Вечер")
 
-        # Create number metric linked to both slots
+        # Create number metric linked to both checkpoints
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "Кофе", "type": "number",
-                "slot_configs": [
-                    {"slot_id": slot_a["id"]},
-                    {"slot_id": slot_b["id"]},
+                "is_checkpoint": True,
+                "checkpoint_configs": [
+                    {"checkpoint_id": cp_a["id"]},
+                    {"checkpoint_id": cp_b["id"]},
                 ],
             },
             headers=auth_headers(token),
@@ -1596,14 +1599,14 @@ class TestSlotMaxMinAutoSources:
 
         # Create bool metric as correlation counterpart
         bool_m = await create_metric(
-            client, token, name="CorrBool", metric_type="bool", slug="corrbool_slotmm",
+            client, token, name="CorrBool", metric_type="bool", slug="corrbool_cpmm",
         )
 
         # Create entries (15 days)
         for day in range(1, 16):
             date_str = f"2026-01-{day:02d}"
-            await create_entry(client, token, num_m["id"], date_str, day, slot_id=slot_a["id"])
-            await create_entry(client, token, num_m["id"], date_str, day * 2, slot_id=slot_b["id"])
+            await create_entry(client, token, num_m["id"], date_str, day, checkpoint_id=cp_a["id"])
+            await create_entry(client, token, num_m["id"], date_str, day * 2, checkpoint_id=cp_b["id"])
             await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
 
         # Run correlation report
@@ -1627,29 +1630,30 @@ class TestSlotMaxMinAutoSources:
             labels.add(p["label_a"])
             labels.add(p["label_b"])
 
-        # slot_max and slot_min should appear
+        # checkpoint_max and checkpoint_min should appear
         max_labels = [l for l in labels if "максимум" in l]
         min_labels = [l for l in labels if "минимум" in l]
-        assert len(max_labels) > 0, f"Expected slot_max label with 'максимум', got labels: {labels}"
-        assert len(min_labels) > 0, f"Expected slot_min label with 'минимум', got labels: {labels}"
+        assert len(max_labels) > 0, f"Expected checkpoint_max label with 'максимум', got labels: {labels}"
+        assert len(min_labels) > 0, f"Expected checkpoint_min label with 'минимум', got labels: {labels}"
 
-    async def test_slot_max_min_chart_reconstruction(
+    async def test_checkpoint_max_min_chart_reconstruction(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Pair chart reconstruction works for slot_max/slot_min sources."""
+        """Pair chart reconstruction works for checkpoint_max/checkpoint_min sources."""
         token = user_a["token"]
 
-        slot_a = await create_slot(client, token, "AM")
-        slot_b = await create_slot(client, token, "PM")
+        cp_a = await create_checkpoint(client, token, "AM")
+        cp_b = await create_checkpoint(client, token, "PM")
 
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "Mood", "type": "scale",
                 "scale_min": 1, "scale_max": 10, "scale_step": 1,
-                "slot_configs": [
-                    {"slot_id": slot_a["id"]},
-                    {"slot_id": slot_b["id"]},
+                "is_checkpoint": True,
+                "checkpoint_configs": [
+                    {"checkpoint_id": cp_a["id"]},
+                    {"checkpoint_id": cp_b["id"]},
                 ],
             },
             headers=auth_headers(token),
@@ -1658,13 +1662,13 @@ class TestSlotMaxMinAutoSources:
         scale_m = resp.json()
 
         bool_m = await create_metric(
-            client, token, name="Exercise", metric_type="bool", slug="exercise_slotmm",
+            client, token, name="Exercise", metric_type="bool", slug="exercise_cpmm",
         )
 
         for day in range(1, 16):
             date_str = f"2026-01-{day:02d}"
-            await create_entry(client, token, scale_m["id"], date_str, day % 10 + 1, slot_id=slot_a["id"])
-            await create_entry(client, token, scale_m["id"], date_str, (day * 3) % 10 + 1, slot_id=slot_b["id"])
+            await create_entry(client, token, scale_m["id"], date_str, day % 10 + 1, checkpoint_id=cp_a["id"])
+            await create_entry(client, token, scale_m["id"], date_str, (day * 3) % 10 + 1, checkpoint_id=cp_b["id"])
             await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
 
         await _start_report(client, token)
@@ -1678,13 +1682,13 @@ class TestSlotMaxMinAutoSources:
         )
         pairs_data = resp.json()
 
-        # Find a slot_max pair
+        # Find a checkpoint_max pair
         max_pair = None
         for p in pairs_data["pairs"]:
             if "максимум" in p.get("label_a", "") or "максимум" in p.get("label_b", ""):
                 max_pair = p
                 break
-        assert max_pair is not None, "Expected slot_max pair"
+        assert max_pair is not None, "Expected checkpoint_max pair"
 
         # Get pair chart
         resp = await client.get(
@@ -1702,22 +1706,22 @@ class TestSlotMaxMinAutoSources:
 
 class TestBoolAggregateAnnotation:
 
-    async def test_bool_with_slots_aggregate_label_has_annotation(
+    async def test_bool_with_checkpoints_aggregate_label_has_annotation(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Bool metric with slots: aggregate source label contains '(хоть раз)'."""
+        """Bool metric with checkpoints: aggregate source label contains '(хоть раз)'."""
         token = user_a["token"]
 
-        slot_a = await create_slot(client, token, "Morning")
-        slot_b = await create_slot(client, token, "Evening")
+        cp_a = await create_checkpoint(client, token, "Morning")
+        cp_b = await create_checkpoint(client, token, "Evening")
 
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "Зарядка", "type": "bool",
-                "slot_configs": [
-                    {"slot_id": slot_a["id"]},
-                    {"slot_id": slot_b["id"]},
+                "checkpoint_configs": [
+                    {"checkpoint_id": cp_a["id"]},
+                    {"checkpoint_id": cp_b["id"]},
                 ],
             },
             headers=auth_headers(token),
@@ -1731,8 +1735,8 @@ class TestBoolAggregateAnnotation:
 
         for day in range(1, 16):
             date_str = f"2026-01-{day:02d}"
-            await create_entry(client, token, bool_m["id"], date_str, True, slot_id=slot_a["id"])
-            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, slot_id=slot_b["id"])
+            await create_entry(client, token, bool_m["id"], date_str, True, checkpoint_id=cp_a["id"])
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, checkpoint_id=cp_b["id"])
             await create_entry(client, token, num_m["id"], date_str, day * 100)
 
         await _start_report(client, token)
@@ -1765,27 +1769,32 @@ class TestBoolAggregateAnnotation:
         for lbl in aggregate_labels:
             assert "Зарядка" in lbl
 
-    async def test_bool_with_single_slot_no_annotation(
+    async def test_bool_with_single_interval_no_annotation(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Bool metric with 1 slot (fixed interval) should NOT have '(хоть раз)' annotation."""
+        """Bool metric with 1 interval (fixed interval) should NOT have '(хоть раз)' annotation."""
         token = user_a["token"]
 
-        slot_a = await create_slot(client, token, "Morning")
-        await create_slot(client, token, "Evening")
+        await create_checkpoint(client, token, "Morning")
+        await create_checkpoint(client, token, "Evening")
+
+        # Get actual intervals
+        iv_resp = await client.get("/api/checkpoints/intervals", headers=auth_headers(token))
+        intervals = iv_resp.json()
+        iv1 = intervals[0]
 
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "FixedBool", "type": "bool",
                 "interval_binding": "by_interval",
-                "interval_slot_ids": [slot_a["id"]],
+                "interval_ids": [iv1["id"]],
             },
             headers=auth_headers(token),
         )
         assert resp.status_code == 201
         bool_m = resp.json()
-        assert len(bool_m["slots"]) == 1
+        assert len(bool_m["intervals"]) == 1
 
         num_m = await create_metric(
             client, token, name="StepsFixed", metric_type="number", slug="steps_fixed_annot",
@@ -1793,7 +1802,7 @@ class TestBoolAggregateAnnotation:
 
         for day in range(1, 16):
             date_str = f"2026-01-{day:02d}"
-            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, slot_id=slot_a["id"])
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, interval_id=iv1["id"])
             await create_entry(client, token, num_m["id"], date_str, day * 100)
 
         await _start_report(client, token)
@@ -1815,10 +1824,10 @@ class TestBoolAggregateAnnotation:
                 f"Unexpected annotation in label_b: {p['label_b']}"
             )
 
-    async def test_bool_without_slots_no_annotation(
+    async def test_bool_without_checkpoints_no_annotation(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Bool metric without slots should NOT have '(хоть раз)' annotation."""
+        """Bool metric without checkpoints should NOT have '(хоть раз)' annotation."""
         token = user_a["token"]
 
         bool_m = await create_metric(
@@ -1855,40 +1864,45 @@ class TestBoolAggregateAnnotation:
 
 
 # ---------------------------------------------------------------------------
-# Single-slot metric: no duplicate aggregate + per-slot, interval labels
+# Single-interval metric: no duplicate aggregate + per-interval, interval labels
 # ---------------------------------------------------------------------------
 
-class TestSingleSlotNoDuplicate:
-    """Bool metric with 1 slot (fixed interval) should NOT produce both aggregate and per-slot pairs."""
+class TestSingleIntervalNoDuplicate:
+    """Bool metric with 1 interval (fixed interval) should NOT produce both aggregate and per-interval pairs."""
 
-    async def test_single_slot_no_aggregate_duplicate(
+    async def test_single_interval_no_aggregate_duplicate(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
         token = user_a["token"]
 
-        slot_a = await create_slot(client, token, "Утро")
-        await create_slot(client, token, "День")
+        await create_checkpoint(client, token, "Утро")
+        await create_checkpoint(client, token, "День")
+
+        # Get actual intervals
+        iv_resp = await client.get("/api/checkpoints/intervals", headers=auth_headers(token))
+        intervals = iv_resp.json()
+        iv1 = intervals[0]
 
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "Зарядка", "type": "bool",
                 "interval_binding": "by_interval",
-                "interval_slot_ids": [slot_a["id"]],
+                "interval_ids": [iv1["id"]],
             },
             headers=auth_headers(token),
         )
         assert resp.status_code == 201
         bool_m = resp.json()
-        assert len(bool_m["slots"]) == 1
+        assert len(bool_m["intervals"]) == 1
 
         num_m = await create_metric(
-            client, token, name="Шаги", metric_type="number", slug="steps_single_slot",
+            client, token, name="Шаги", metric_type="number", slug="steps_single_interval",
         )
 
         for day in range(1, 16):
             date_str = f"2026-01-{day:02d}"
-            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, slot_id=slot_a["id"])
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, interval_id=iv1["id"])
             await create_entry(client, token, num_m["id"], date_str, day * 100)
 
         await _start_report(client, token)
@@ -1913,26 +1927,31 @@ class TestSingleSlotNoDuplicate:
             elif "Шаги" in lb and "Зарядка" in la:
                 zaryadka_labels.add(la)
 
-        # Should be exactly 1 label (per-slot only), not 2 (aggregate "Зарядка" + per-slot "Зарядка: ...")
+        # Should be exactly 1 label (per-interval only), not 2 (aggregate "Зарядка" + per-interval "Зарядка: ...")
         assert len(zaryadka_labels) == 1, (
-            f"Expected 1 label for single-slot metric, got {len(zaryadka_labels)}: {zaryadka_labels}"
+            f"Expected 1 label for single-interval metric, got {len(zaryadka_labels)}: {zaryadka_labels}"
         )
 
-    async def test_single_slot_uses_interval_label(
+    async def test_single_interval_uses_interval_label(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Per-slot label for interval-bound metric should show 'X → Y', not just 'X'."""
+        """Per-interval label for interval-bound metric should show 'X → Y', not just 'X'."""
         token = user_a["token"]
 
-        slot_a = await create_slot(client, token, "Утро")
-        await create_slot(client, token, "День")
+        await create_checkpoint(client, token, "Утро")
+        await create_checkpoint(client, token, "День")
+
+        # Get actual intervals
+        iv_resp = await client.get("/api/checkpoints/intervals", headers=auth_headers(token))
+        intervals = iv_resp.json()
+        iv1 = intervals[0]
 
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "Зарядка", "type": "bool",
                 "interval_binding": "by_interval",
-                "interval_slot_ids": [slot_a["id"]],
+                "interval_ids": [iv1["id"]],
             },
             headers=auth_headers(token),
         )
@@ -1945,7 +1964,7 @@ class TestSingleSlotNoDuplicate:
 
         for day in range(1, 16):
             date_str = f"2026-01-{day:02d}"
-            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, slot_id=slot_a["id"])
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, interval_id=iv1["id"])
             await create_entry(client, token, num_m["id"], date_str, day * 100)
 
         await _start_report(client, token)
@@ -1959,7 +1978,7 @@ class TestSingleSlotNoDuplicate:
         )
         pairs_data = resp.json()
 
-        # Find label for Зарядка — should contain interval "Утро → День"
+        # Single-interval metric should just use metric name as label (no interval annotation)
         zaryadka_labels = set()
         for p in pairs_data["pairs"]:
             if "Зарядка" in p.get("label_a", ""):
@@ -1967,37 +1986,42 @@ class TestSingleSlotNoDuplicate:
             if "Зарядка" in p.get("label_b", ""):
                 zaryadka_labels.add(p["label_b"])
 
-        assert any("Утро → День" in lbl for lbl in zaryadka_labels), (
-            f"Expected interval label 'Утро → День' in labels, got: {zaryadka_labels}"
+        assert "Зарядка" in zaryadka_labels, (
+            f"Expected 'Зарядка' label in pairs, got: {zaryadka_labels}"
         )
 
-    async def test_single_slot_slot_label_uses_interval(
+    async def test_single_interval_checkpoint_label_uses_interval(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """slot_label_a/b field should show interval label, not raw checkpoint name."""
+        """binding_label_a/b field should show interval label, not raw checkpoint name."""
         token = user_a["token"]
 
-        slot_a = await create_slot(client, token, "Утро")
-        await create_slot(client, token, "День")
+        await create_checkpoint(client, token, "Утро")
+        await create_checkpoint(client, token, "День")
+
+        # Get actual intervals
+        iv_resp = await client.get("/api/checkpoints/intervals", headers=auth_headers(token))
+        intervals = iv_resp.json()
+        iv1 = intervals[0]
 
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "Зарядка", "type": "bool",
                 "interval_binding": "by_interval",
-                "interval_slot_ids": [slot_a["id"]],
+                "interval_ids": [iv1["id"]],
             },
             headers=auth_headers(token),
         )
         bool_m = resp.json()
 
         num_m = await create_metric(
-            client, token, name="Шаги", metric_type="number", slug="steps_slot_lbl",
+            client, token, name="Шаги", metric_type="number", slug="steps_cp_lbl",
         )
 
         for day in range(1, 16):
             date_str = f"2026-01-{day:02d}"
-            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, slot_id=slot_a["id"])
+            await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0, interval_id=iv1["id"])
             await create_entry(client, token, num_m["id"], date_str, day * 100)
 
         await _start_report(client, token)
@@ -2010,34 +2034,39 @@ class TestSingleSlotNoDuplicate:
         )
         pairs_data = resp.json()
 
-        slot_labels = set()
+        checkpoint_labels = set()
         for p in pairs_data["pairs"]:
-            if "Зарядка" in p.get("label_a", "") and p.get("slot_label_a"):
-                slot_labels.add(p["slot_label_a"])
-            if "Зарядка" in p.get("label_b", "") and p.get("slot_label_b"):
-                slot_labels.add(p["slot_label_b"])
+            if "Зарядка" in p.get("label_a", "") and p.get("binding_label_a"):
+                checkpoint_labels.add(p["binding_label_a"])
+            if "Зарядка" in p.get("label_b", "") and p.get("binding_label_b"):
+                checkpoint_labels.add(p["binding_label_b"])
 
-        # slot_label should be interval "Утро → День", not raw "Утро"
-        for sl in slot_labels:
-            assert "→" in sl, (
-                f"Expected interval label with '→', got raw checkpoint name: '{sl}'"
+        # checkpoint_label should be interval "Утро → День", not raw "Утро"
+        for cl in checkpoint_labels:
+            assert "→" in cl, (
+                f"Expected interval label with '→', got raw checkpoint name: '{cl}'"
             )
 
     async def test_fixed_number_has_nonzero_auto_source(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Fixed number metric (1 slot) should generate nonzero auto-source like daily."""
+        """Fixed number metric (1 interval) should generate nonzero auto-source like daily."""
         token = user_a["token"]
 
-        slot_a = await create_slot(client, token, "Утро")
-        await create_slot(client, token, "День")
+        await create_checkpoint(client, token, "Утро")
+        await create_checkpoint(client, token, "День")
+
+        # Get actual intervals
+        iv_resp = await client.get("/api/checkpoints/intervals", headers=auth_headers(token))
+        intervals = iv_resp.json()
+        iv1 = intervals[0]
 
         resp = await client.post(
             "/api/metrics",
             json={
                 "name": "Отжимания", "type": "number",
                 "interval_binding": "by_interval",
-                "interval_slot_ids": [slot_a["id"]],
+                "interval_ids": [iv1["id"]],
             },
             headers=auth_headers(token),
         )
@@ -2049,7 +2078,7 @@ class TestSingleSlotNoDuplicate:
 
         for day in range(1, 16):
             date_str = f"2026-01-{day:02d}"
-            await create_entry(client, token, num_fixed["id"], date_str, day * 5, slot_id=slot_a["id"])
+            await create_entry(client, token, num_fixed["id"], date_str, day * 5, interval_id=iv1["id"])
             await create_entry(client, token, bool_m["id"], date_str, day % 2 == 0)
 
         await _start_report(client, token)

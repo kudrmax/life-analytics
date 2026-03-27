@@ -59,7 +59,7 @@ class AnalyticsService:
         qt.mark("values")
         points = [{"date": d, "value": v} for d, v in sorted(aggregated.items())]
         display_name = metric["name"]
-        if mt == MetricType.bool and await self.repo.has_multiple_enabled_slots(metric_id):
+        if mt == MetricType.bool and await self.repo.has_multiple_enabled_checkpoints(metric_id):
             display_name = f"{display_name} (хоть раз)"
         qt.mark("display_name"); qt.log()
         return {"metric_id": metric_id, "metric_name": display_name, "start": start, "end": end, "points": points}
@@ -109,7 +109,7 @@ class AnalyticsService:
             ref_ids = get_referenced_metric_ids(formula)
             aggregated = await fetcher.values_by_date_for_computed(formula, metric.get("result_type") or "float", ref_ids, start_date, end_date, self.user_id)
         else:
-            aggregated = await fetcher.values_by_date_for_slot(metric_id, mt, start_date, end_date, self.user_id)
+            aggregated = await fetcher.values_by_date_for_checkpoint(metric_id, mt, start_date, end_date, self.user_id)
         qt.mark("values")
         values = list(aggregated.values())
         if len(values) < 3:

@@ -162,15 +162,15 @@ class TestEvalSinglePair(unittest.TestCase):
         engine = self._setup_engine()
         data_a = {f"2025-01-{i:02d}": float(i) for i in range(1, 31)}
         data_b = {f"2025-01-{i:02d}": float(i * 3) for i in range(1, 31)}
-        sk_a = SourceKey(metric_id=1, slot_id=5)
+        sk_a = SourceKey(metric_id=1, checkpoint_id=5)
         sk_b = SourceKey(metric_id=2)
         result = engine._eval_single_pair(data_a, data_b, sk_a, sk_b, "number", "scale", 0, 1, 1, False, False)
         assert isinstance(result, CorrelationPairResult)
         assert result.report_id == 1
         assert result.metric_a_id == 1
         assert result.metric_b_id == 2
-        assert result.slot_a_id == 5
-        assert result.slot_b_id is None
+        assert result.checkpoint_a_id == 5
+        assert result.checkpoint_b_id is None
         assert result.type_a == "number"
         assert result.type_b == "scale"
         assert result.lag_days == 1
@@ -180,15 +180,15 @@ class TestEvalSinglePair(unittest.TestCase):
 
 
 class TestBuildSources(unittest.TestCase):
-    def _setup_engine(self, metrics_rows: list, slots: dict | None = None,
+    def _setup_engine(self, metrics_rows: list, checkpoints: dict | None = None,
                       enum_opts: dict | None = None) -> CorrelationEngine:
         engine = _make_engine()
         engine._metrics_rows = metrics_rows
-        engine._slots_by_metric = defaultdict(list, slots or {})
+        engine._checkpoints_by_metric = defaultdict(list, checkpoints or {})
         engine._enum_opts_by_metric = defaultdict(list, enum_opts or {})
         return engine
 
-    def test_bool_no_slots(self) -> None:
+    def test_bool_no_checkpoints(self) -> None:
         engine = self._setup_engine([{"id": 1, "type": "bool", "name": "X"}])
         engine._build_sources()
         assert len(engine._sources) == 1
@@ -196,13 +196,13 @@ class TestBuildSources(unittest.TestCase):
         assert sk.metric_id == 1
         assert mt == "bool"
 
-    def test_bool_with_slots(self) -> None:
+    def test_bool_with_checkpoints(self) -> None:
         engine = self._setup_engine(
-            [{"id": 1, "type": "bool", "name": "X"}],
-            slots={1: [{"id": 10}, {"id": 11}]},
+            [{"id": 1, "type": "bool", "name": "X", "is_checkpoint": True}],
+            checkpoints={1: [{"id": 10}, {"id": 11}]},
         )
         engine._build_sources()
-        assert len(engine._sources) == 3  # aggregate + 2 slots
+        assert len(engine._sources) == 3  # aggregate + 2 checkpoints
 
     def test_enum_with_options(self) -> None:
         engine = self._setup_engine(

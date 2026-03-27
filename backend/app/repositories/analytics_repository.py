@@ -62,9 +62,9 @@ class AnalyticsRepository(BaseRepository):
             metric_id, start, end, self.user_id,
         )
 
-    async def has_multiple_enabled_slots(self, metric_id: int) -> bool:
+    async def has_multiple_enabled_checkpoints(self, metric_id: int) -> bool:
         count = await self.conn.fetchval(
-            "SELECT COUNT(*) FROM metric_slots WHERE metric_id = $1 AND enabled = TRUE",
+            "SELECT COUNT(*) FROM metric_checkpoints WHERE metric_id = $1 AND enabled = TRUE",
             metric_id,
         )
         return count >= 2
@@ -163,17 +163,26 @@ class AnalyticsRepository(BaseRepository):
         return await self.conn.fetch(
             f"""SELECT cp.id AS pair_id,
                        cp.type_a, cp.type_b, cp.correlation, cp.data_points, cp.lag_days, cp.p_value, cp.quality_issue,
-                       cp.metric_a_id, cp.metric_b_id, cp.slot_a_id, cp.slot_b_id,
+                       cp.metric_a_id, cp.metric_b_id, cp.checkpoint_a_id, cp.checkpoint_b_id,
+                       cp.interval_a_id, cp.interval_b_id,
                        cp.source_key_a, cp.source_key_b,
                        ma.name AS name_a, ma.icon AS icon_a, COALESCE(ma.private, FALSE) AS private_a, ma.description AS description_a,
                        mb.name AS name_b, mb.icon AS icon_b, COALESCE(mb.private, FALSE) AS private_b, mb.description AS description_b,
-                       sa.label AS slot_label_a,
-                       sb.label AS slot_label_b
+                       ca.label AS checkpoint_label_a,
+                       cb.label AS checkpoint_label_b,
+                       ics.label AS interval_start_label_a, ice.label AS interval_end_label_a,
+                       ids.label AS interval_start_label_b, ide.label AS interval_end_label_b
                 FROM correlation_pairs cp
                 LEFT JOIN metric_definitions ma ON ma.id = cp.metric_a_id
                 LEFT JOIN metric_definitions mb ON mb.id = cp.metric_b_id
-                LEFT JOIN measurement_slots sa ON sa.id = cp.slot_a_id
-                LEFT JOIN measurement_slots sb ON sb.id = cp.slot_b_id
+                LEFT JOIN checkpoints ca ON ca.id = cp.checkpoint_a_id
+                LEFT JOIN checkpoints cb ON cb.id = cp.checkpoint_b_id
+                LEFT JOIN intervals ia ON ia.id = cp.interval_a_id
+                LEFT JOIN checkpoints ics ON ics.id = ia.start_checkpoint_id
+                LEFT JOIN checkpoints ice ON ice.id = ia.end_checkpoint_id
+                LEFT JOIN intervals ib ON ib.id = cp.interval_b_id
+                LEFT JOIN checkpoints ids ON ids.id = ib.start_checkpoint_id
+                LEFT JOIN checkpoints ide ON ide.id = ib.end_checkpoint_id
                 WHERE cp.report_id = $1 {cat_filter}{metric_filter}
                 ORDER BY ABS(cp.correlation) DESC
                 LIMIT ${limit_idx} OFFSET ${offset_idx}""",
@@ -197,11 +206,11 @@ class AnalyticsRepository(BaseRepository):
         )
         return {r["id"]: r["label"] for r in rows}
 
-    async def get_metrics_with_multiple_slots(self, metric_ids: list[int]) -> set[int]:
+    async def get_metrics_with_multiple_checkpoints(self, metric_ids: list[int]) -> set[int]:
         if not metric_ids:
             return set()
         rows = await self.conn.fetch(
-            "SELECT metric_id FROM metric_slots WHERE metric_id = ANY($1) AND enabled = TRUE GROUP BY metric_id HAVING COUNT(*) >= 2",
+            "SELECT metric_id FROM metric_checkpoints WHERE metric_id = ANY($1) AND enabled = TRUE GROUP BY metric_id HAVING COUNT(*) >= 2",
             list(metric_ids),
         )
         return {r["metric_id"] for r in rows}
@@ -223,22 +232,22 @@ class AnalyticsRepository(BaseRepository):
             metric_id,
         )
 
-    async def get_enabled_slot_ids(self, metric_id: int) -> list[int]:
+    async def get_enabled_checkpoint_ids(self, metric_id: int) -> list[int]:
         rows = await self.conn.fetch(
-            """SELECT ms.id FROM metric_slots msl
-               JOIN measurement_slots ms ON ms.id = msl.slot_id
-               WHERE msl.metric_id = $1 AND msl.enabled = TRUE""",
+            """SELECT c.id FROM metric_checkpoints mc
+               JOIN checkpoints c ON c.id = mc.checkpoint_id
+               WHERE mc.metric_id = $1 AND mc.enabled = TRUE""",
             metric_id,
         )
         return [r["id"] for r in rows]
 
-    async def get_ordered_slot_ids(self, metric_id: int) -> list[int]:
-        """Return slot IDs ordered by sort_order for a metric."""
+    async def get_ordered_checkpoint_ids(self, metric_id: int) -> list[int]:
+        """Return checkpoint IDs ordered by sort_order for a metric."""
         rows = await self.conn.fetch(
-            """SELECT ms.id FROM metric_slots msl
-               JOIN measurement_slots ms ON ms.id = msl.slot_id
-               WHERE msl.metric_id = $1 AND msl.enabled = TRUE
-               ORDER BY ms.sort_order""",
+            """SELECT c.id FROM metric_checkpoints mc
+               JOIN checkpoints c ON c.id = mc.checkpoint_id
+               WHERE mc.metric_id = $1 AND mc.enabled = TRUE
+               ORDER BY c.sort_order""",
             metric_id,
         )
         return [r["id"] for r in rows]
@@ -251,21 +260,40 @@ class AnalyticsRepository(BaseRepository):
 
     # ── Value fetcher support ────────────────────────────────────────
 
-    async def fetch_entries_values_with_slot(
+    async def fetch_entries_values_with_checkpoint(
         self, metric_id: int, value_table: str, extra_cols: str,
-        start: date_type, end: date_type, slot_id: int | None = None,
+        start: date_type, end: date_type, checkpoint_id: int | None = None,
     ) -> list[asyncpg.Record]:
-        slot_filter = ""
+        checkpoint_filter = ""
         params: list = [metric_id, start, end, self.user_id]
-        if slot_id is not None:
-            slot_filter = " AND e.slot_id = $5"
-            params.append(slot_id)
+        if checkpoint_id is not None:
+            checkpoint_filter = " AND e.checkpoint_id = $5"
+            params.append(checkpoint_id)
         return await self.conn.fetch(
             f"""SELECT e.date, v.value{extra_cols}
                 FROM entries e
                 JOIN {value_table} v ON v.entry_id = e.id
                 WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
-                  AND e.user_id = $4{slot_filter}
+                  AND e.user_id = $4{checkpoint_filter}
+                ORDER BY e.date""",
+            *params,
+        )
+
+    async def fetch_entries_values_with_interval(
+        self, metric_id: int, value_table: str, extra_cols: str,
+        start: date_type, end: date_type, interval_id: int | None = None,
+    ) -> list[asyncpg.Record]:
+        interval_filter = ""
+        params: list = [metric_id, start, end, self.user_id]
+        if interval_id is not None:
+            interval_filter = " AND e.interval_id = $5"
+            params.append(interval_id)
+        return await self.conn.fetch(
+            f"""SELECT e.date, v.value{extra_cols}
+                FROM entries e
+                JOIN {value_table} v ON v.entry_id = e.id
+                WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
+                  AND e.user_id = $4{interval_filter}
                 ORDER BY e.date""",
             *params,
         )
@@ -286,21 +314,40 @@ class AnalyticsRepository(BaseRepository):
         )
         return {r["id"]: r["type"] for r in rows}
 
-    async def fetch_enum_entries_with_slot(
+    async def fetch_enum_entries_with_checkpoint(
         self, metric_id: int, start: date_type, end: date_type,
-        slot_id: int | None = None,
+        checkpoint_id: int | None = None,
     ) -> list[asyncpg.Record]:
-        slot_filter = ""
+        checkpoint_filter = ""
         params: list = [metric_id, start, end, self.user_id]
-        if slot_id is not None:
-            slot_filter = " AND e.slot_id = $5"
-            params.append(slot_id)
+        if checkpoint_id is not None:
+            checkpoint_filter = " AND e.checkpoint_id = $5"
+            params.append(checkpoint_id)
         return await self.conn.fetch(
             f"""SELECT e.date, ve.selected_option_ids
                 FROM entries e
                 JOIN values_enum ve ON ve.entry_id = e.id
                 WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
-                  AND e.user_id = $4{slot_filter}
+                  AND e.user_id = $4{checkpoint_filter}
+                ORDER BY e.date""",
+            *params,
+        )
+
+    async def fetch_enum_entries_with_interval(
+        self, metric_id: int, start: date_type, end: date_type,
+        interval_id: int | None = None,
+    ) -> list[asyncpg.Record]:
+        interval_filter = ""
+        params: list = [metric_id, start, end, self.user_id]
+        if interval_id is not None:
+            interval_filter = " AND e.interval_id = $5"
+            params.append(interval_id)
+        return await self.conn.fetch(
+            f"""SELECT e.date, ve.selected_option_ids
+                FROM entries e
+                JOIN values_enum ve ON ve.entry_id = e.id
+                WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
+                  AND e.user_id = $4{interval_filter}
                 ORDER BY e.date""",
             *params,
         )

@@ -334,33 +334,36 @@ const api = {
         return result;
     },
 
-    // Slots (Время замера)
-    getSlots() {
-        return this.cachedGet('/api/slots');
+    // Checkpoints (Контрольные точки)
+    getCheckpoints() {
+        return this.cachedGet('/api/checkpoints');
     },
-    async createSlot(data) {
-        const result = await this.request('POST', '/api/slots', data);
-        invalidateCache('/api/slots');
+    getIntervals() {
+        return this.request('GET', '/api/checkpoints/intervals');
+    },
+    async createCheckpoint(data) {
+        const result = await this.request('POST', '/api/checkpoints', data);
+        invalidateCache('/api/checkpoints');
         return result;
     },
-    async updateSlot(id, data) {
-        const result = await this.request('PATCH', `/api/slots/${id}`, data);
-        invalidateCache('/api/slots');
+    async updateCheckpoint(id, data) {
+        const result = await this.request('PATCH', `/api/checkpoints/${id}`, data);
+        invalidateCache('/api/checkpoints');
         return result;
     },
-    async deleteSlot(id) {
-        const result = await this.request('DELETE', `/api/slots/${id}`);
-        invalidateCache('/api/slots', '/api/metrics', '/api/daily/');
+    async deleteCheckpoint(id) {
+        const result = await this.request('DELETE', `/api/checkpoints/${id}`);
+        invalidateCache('/api/checkpoints', '/api/metrics', '/api/daily/');
         return result;
     },
-    async mergeSlot(sourceId, targetId) {
-        const result = await this.request('POST', `/api/slots/${sourceId}/merge/${targetId}`);
-        invalidateCache('/api/slots', '/api/metrics', '/api/daily/');
+    async mergeCheckpoint(sourceId, targetId) {
+        const result = await this.request('POST', `/api/checkpoints/${sourceId}/merge/${targetId}`);
+        invalidateCache('/api/checkpoints', '/api/metrics', '/api/daily/');
         return result;
     },
-    async reorderSlots(items) {
-        const result = await this.request('POST', '/api/slots/reorder', items);
-        invalidateCache('/api/slots');
+    async reorderCheckpoints(items) {
+        const result = await this.request('POST', '/api/checkpoints/reorder', items);
+        invalidateCache('/api/checkpoints');
         return result;
     },
 

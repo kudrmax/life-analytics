@@ -48,17 +48,19 @@ class PairFormatter:
         enum_labels: dict[int, str],
         parent_names: dict[int, str],
         privacy_mode: bool = False,
-        metrics_with_slots: set[int] | None = None,
-        slot_labels: dict[int, str] | None = None,
-        slot_ordering: dict[int, list[int]] | None = None,
+        metrics_with_checkpoints: set[int] | None = None,
+        checkpoint_labels: dict[int, str] | None = None,
+        checkpoint_ordering: dict[int, list[int]] | None = None,
+        interval_labels: dict[int, str] | None = None,
     ) -> None:
         self._icons = metric_icons
         self._enum_labels = enum_labels
         self._parent_names = parent_names
         self._privacy_mode = privacy_mode
-        self._metrics_with_slots = metrics_with_slots or set()
-        self._slot_labels = slot_labels or {}
-        self._slot_ordering = slot_ordering or {}
+        self._metrics_with_checkpoints = metrics_with_checkpoints or set()
+        self._checkpoint_labels = checkpoint_labels or {}
+        self._checkpoint_ordering = checkpoint_ordering or {}
+        self._interval_labels = interval_labels or {}
 
     def format_pair(self, p: dict[str, Any]) -> dict[str, Any]:
         """Полное форматирование одной пары: лейблы, иконки, хинты, CI, quality."""
@@ -77,13 +79,15 @@ class PairFormatter:
 
         label_a = PRIVATE_MASK if blocked_a else self.build_display_label(
             p["source_key_a"], p["name_a"], self._parent_names.get(sk_a.auto_parent_metric_id),
-            metric_type=p["type_a"], has_slots=(p["metric_a_id"] in self._metrics_with_slots if p["metric_a_id"] else False),
-            slot_labels=self._slot_labels, slot_ordering=self._slot_ordering,
+            metric_type=p["type_a"], has_checkpoints=(p["metric_a_id"] in self._metrics_with_checkpoints if p["metric_a_id"] else False),
+            checkpoint_labels=self._checkpoint_labels, checkpoint_ordering=self._checkpoint_ordering,
+            interval_labels=self._interval_labels,
         )
         label_b = PRIVATE_MASK if blocked_b else self.build_display_label(
             p["source_key_b"], p["name_b"], self._parent_names.get(sk_b.auto_parent_metric_id),
-            metric_type=p["type_b"], has_slots=(p["metric_b_id"] in self._metrics_with_slots if p["metric_b_id"] else False),
-            slot_labels=self._slot_labels, slot_ordering=self._slot_ordering,
+            metric_type=p["type_b"], has_checkpoints=(p["metric_b_id"] in self._metrics_with_checkpoints if p["metric_b_id"] else False),
+            checkpoint_labels=self._checkpoint_labels, checkpoint_ordering=self._checkpoint_ordering,
+            interval_labels=self._interval_labels,
         )
         icon_a = PRIVATE_ICON if blocked_a else self.resolve_icon(p["source_key_a"], p["icon_a"])
         icon_b = PRIVATE_ICON if blocked_b else self.resolve_icon(p["source_key_b"], p["icon_b"])
@@ -114,8 +118,8 @@ class PairFormatter:
             "type_b": p["type_b"],
             "icon_a": icon_a,
             "icon_b": icon_b,
-            "slot_label_a": self._resolve_slot_label(p, "a"),
-            "slot_label_b": self._resolve_slot_label(p, "b"),
+            "binding_label_a": self._resolve_binding_label(p, "a"),
+            "binding_label_b": self._resolve_binding_label(p, "b"),
             "correlation": corr,
             "data_points": p["data_points"],
             "lag_days": p["lag_days"],
@@ -138,11 +142,23 @@ class PairFormatter:
             "quality_severity": QualityAssessor.SEVERITY.get(p.get("quality_issue")) if p.get("quality_issue") else None,
         }
 
-    def _resolve_slot_label(self, p: dict[str, Any], side: str) -> str:
-        slot_id = p.get(f"slot_{side}_id")
-        if slot_id and slot_id in self._slot_labels:
-            return self._slot_labels[slot_id]
-        return p.get(f"slot_label_{side}") or ""
+    def _resolve_binding_label(self, p: dict[str, Any], side: str) -> str:
+        # Direct labels from SQL JOIN (fetch_pairs_page)
+        cp_label = p.get(f"checkpoint_label_{side}")
+        if cp_label:
+            return cp_label
+        iv_start = p.get(f"interval_start_label_{side}")
+        iv_end = p.get(f"interval_end_label_{side}")
+        if iv_start and iv_end:
+            return f"{iv_start} → {iv_end}"
+        # Fallback to loaded label dicts
+        checkpoint_id = p.get(f"checkpoint_{side}_id")
+        if checkpoint_id and checkpoint_id in self._checkpoint_labels:
+            return self._checkpoint_labels[checkpoint_id]
+        interval_id = p.get(f"interval_{side}_id")
+        if interval_id and interval_id in self._interval_labels:
+            return self._interval_labels[interval_id]
+        return ""
 
     def resolve_icon(self, source_key_str: str, db_icon: str | None) -> str:
         """Resolve icon from source_key or metric ID."""
@@ -161,9 +177,10 @@ class PairFormatter:
         metric_name: str | None,
         parent_metric_name: str | None,
         metric_type: str | None = None,
-        has_slots: bool = False,
-        slot_labels: dict[int, str] | None = None,
-        slot_ordering: dict[int, list[int]] | None = None,
+        has_checkpoints: bool = False,
+        checkpoint_labels: dict[int, str] | None = None,
+        checkpoint_ordering: dict[int, list[int]] | None = None,
+        interval_labels: dict[int, str] | None = None,
     ) -> str:
         """Build human-readable label for a correlation source."""
         sk = SourceKey.parse(source_key_str)
@@ -179,9 +196,9 @@ class PairFormatter:
                 return f"{parent_metric_name}: не ноль"
             if sk.auto_type == AutoSourceType.NOTE_COUNT and parent_metric_name:
                 return f"{parent_metric_name}: кол-во заметок"
-            if sk.auto_type == AutoSourceType.SLOT_MAX and parent_metric_name:
+            if sk.auto_type == AutoSourceType.CHECKPOINT_MAX and parent_metric_name:
                 return f"{parent_metric_name}: максимум"
-            if sk.auto_type == AutoSourceType.SLOT_MIN and parent_metric_name:
+            if sk.auto_type == AutoSourceType.CHECKPOINT_MIN and parent_metric_name:
                 return f"{parent_metric_name}: минимум"
             if sk.auto_type == AutoSourceType.ROLLING_AVG and sk.auto_option_id and parent_metric_name:
                 return f"{parent_metric_name}: среднее {sk.auto_option_id} дн."
@@ -190,14 +207,14 @@ class PairFormatter:
             if sk.auto_type == AutoSourceType.STREAK_FALSE and parent_metric_name:
                 return f"{parent_metric_name}: серия подряд (нет)"
             if sk.auto_type == AutoSourceType.DELTA and parent_metric_name:
-                if slot_labels and slot_ordering and sk.auto_parent_metric_id is not None:
-                    ordered = slot_ordering.get(sk.auto_parent_metric_id, [])
-                    start_label = slot_labels.get(sk.auto_option_id, "?") if sk.auto_option_id else "?"
+                if checkpoint_labels and checkpoint_ordering and sk.auto_parent_metric_id is not None:
+                    ordered = checkpoint_ordering.get(sk.auto_parent_metric_id, [])
+                    start_label = checkpoint_labels.get(sk.auto_option_id, "?") if sk.auto_option_id else "?"
                     end_label = "?"
                     if sk.auto_option_id is not None:
-                        for idx_s, sid in enumerate(ordered):
-                            if sid == sk.auto_option_id and idx_s + 1 < len(ordered):
-                                end_label = slot_labels.get(ordered[idx_s + 1], "?")
+                        for idx_s, cid in enumerate(ordered):
+                            if cid == sk.auto_option_id and idx_s + 1 < len(ordered):
+                                end_label = checkpoint_labels.get(ordered[idx_s + 1], "?")
                                 break
                     return f"{parent_metric_name}: Δ {start_label} → {end_label}"
                 return f"{parent_metric_name}: Δ"
@@ -206,14 +223,19 @@ class PairFormatter:
             if sk.auto_type == AutoSourceType.RANGE and parent_metric_name:
                 return f"{parent_metric_name}: размах"
             return "Авто-источник"
-        # Bool aggregate with slots — annotate "(хоть раз)"
-        if metric_type == MetricType.bool and has_slots and sk.slot_id is None:
+        # Bool aggregate with checkpoints — annotate "(хоть раз)"
+        if metric_type == MetricType.bool and has_checkpoints and sk.checkpoint_id is None:
             return f"{metric_name} (хоть раз)" if metric_name else "Удалённая метрика"
-        # Per-slot source — append slot label
-        if sk.slot_id is not None and slot_labels:
-            slot_label = slot_labels.get(sk.slot_id)
-            if slot_label and metric_name:
-                return f"{metric_name}: {slot_label}"
+        # Per-checkpoint source — append checkpoint label
+        if sk.checkpoint_id is not None and checkpoint_labels:
+            checkpoint_label = checkpoint_labels.get(sk.checkpoint_id)
+            if checkpoint_label and metric_name:
+                return f"{metric_name}: {checkpoint_label}"
+        # Per-interval source — append interval label
+        if sk.interval_id is not None and interval_labels:
+            interval_label = interval_labels.get(sk.interval_id)
+            if interval_label and metric_name:
+                return f"{metric_name}: {interval_label}"
         return metric_name or "Удалённая метрика"
 
     @staticmethod

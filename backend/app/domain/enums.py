@@ -15,8 +15,16 @@ class MetricType(str, Enum):
     duration = "duration"
     text = "text"
 
+class IntervalBinding(str, Enum):
+    """Привязка факта к времени (metric_definitions.interval_binding)."""
+    ALL_DAY = "all_day"
+    BY_INTERVAL = "by_interval"
+    MOMENT = "moment"
+
+
 __all__ = [
     "MetricType",
+    "IntervalBinding",
     "ReportStatus",
     "CorrelationStrength",
     "ConditionType",

@@ -49,8 +49,8 @@ def compute_auto_source(
         return _compute_month(inp)
     if auto_type == AutoSourceType.IS_WORKDAY:
         return _compute_is_workday(inp)
-    if auto_type in (AutoSourceType.SLOT_MAX, AutoSourceType.SLOT_MIN):
-        return _compute_slot_agg(auto_type, inp)
+    if auto_type in (AutoSourceType.CHECKPOINT_MAX, AutoSourceType.CHECKPOINT_MIN):
+        return _compute_checkpoint_agg(auto_type, inp)
     if auto_type == AutoSourceType.DELTA:
         return _compute_delta(inp)
     if auto_type == AutoSourceType.TREND:
@@ -107,10 +107,10 @@ def _compute_is_workday(inp: AutoSourceInput) -> dict[str, float]:
     return {d: (1.0 if date_type.fromisoformat(d).isoweekday() > 5 else 0.0) for d in inp.all_dates}
 
 
-def _compute_slot_agg(auto_type: AutoSourceType, inp: AutoSourceInput) -> dict[str, float]:
+def _compute_checkpoint_agg(auto_type: AutoSourceType, inp: AutoSourceInput) -> dict[str, float]:
     if not inp.slot_data:
         return {}
-    agg_fn = max if auto_type == AutoSourceType.SLOT_MAX else min
+    agg_fn = max if auto_type == AutoSourceType.CHECKPOINT_MAX else min
     all_dates_set: set[str] = set()
     for sd in inp.slot_data:
         all_dates_set.update(sd.keys())
@@ -145,8 +145,8 @@ def _compute_range(inp: AutoSourceInput) -> dict[str, float]:
     """Range = max - min across all checkpoints per day."""
     if not inp.slot_data:
         return {}
-    max_d = _compute_slot_agg(AutoSourceType.SLOT_MAX, inp)
-    min_d = _compute_slot_agg(AutoSourceType.SLOT_MIN, inp)
+    max_d = _compute_checkpoint_agg(AutoSourceType.CHECKPOINT_MAX, inp)
+    min_d = _compute_checkpoint_agg(AutoSourceType.CHECKPOINT_MIN, inp)
     return {d: max_d[d] - min_d[d] for d in max_d if d in min_d}
 
 

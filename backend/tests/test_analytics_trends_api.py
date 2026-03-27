@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_slot
+from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_checkpoint
 
 
 # ---------------------------------------------------------------------------
@@ -305,31 +305,31 @@ class TestTrendsFilledDays:
 
 
 # ---------------------------------------------------------------------------
-# Multi-slot in trends
+# Multi-checkpoint in trends
 # ---------------------------------------------------------------------------
 
-class TestTrendsMultiSlot:
-    """Metric with slots — values aggregated (averaged) per day."""
+class TestTrendsMultiCheckpoint:
+    """Metric with checkpoints — values aggregated (averaged) per day."""
 
-    async def test_multi_slot_values_averaged(
+    async def test_multi_checkpoint_values_averaged(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        slot_m = await create_slot(client, user_a["token"], "Morning")
-        slot_e = await create_slot(client, user_a["token"], "Evening")
+        cp_m = await create_checkpoint(client, user_a["token"], "Morning")
+        cp_e = await create_checkpoint(client, user_a["token"], "Evening")
         metric = await create_metric(
             client, user_a["token"],
             name="Multi", metric_type="number",
-            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
+            checkpoint_configs=[{"checkpoint_id": cp_m["id"]}, {"checkpoint_id": cp_e["id"]}],
         )
         mid = metric["id"]
         token = user_a["token"]
-        slots = metric["slots"]
-        slot_morning = slots[0]["id"]
-        slot_evening = slots[1]["id"]
+        checkpoints = metric["checkpoints"]
+        cp_morning = checkpoints[0]["id"]
+        cp_evening = checkpoints[1]["id"]
 
         # Morning=100, Evening=200 → avg=150
-        await create_entry(client, token, mid, "2026-01-10", 100, slot_id=slot_morning)
-        await create_entry(client, token, mid, "2026-01-10", 200, slot_id=slot_evening)
+        await create_entry(client, token, mid, "2026-01-10", 100, checkpoint_id=cp_morning)
+        await create_entry(client, token, mid, "2026-01-10", 200, checkpoint_id=cp_evening)
 
         data = await _trends(client, token, mid)
         assert len(data["points"]) == 1
