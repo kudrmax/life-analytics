@@ -611,6 +611,35 @@ MIGRATIONS = [
 
         -- 17. Drop old tables
         DROP TABLE IF EXISTS metric_slots;
+
+        -- 18. Ensure intervals exist for all users with checkpoints (idempotent)
+        DO $ensure_intervals$
+        DECLARE
+            _uid INTEGER;
+            _prev_id INTEGER;
+            _curr_id INTEGER;
+            _first BOOLEAN;
+        BEGIN
+            FOR _uid IN SELECT DISTINCT user_id FROM checkpoints WHERE deleted = FALSE
+            LOOP
+                _first := TRUE;
+                _prev_id := NULL;
+                FOR _curr_id IN
+                    SELECT id FROM checkpoints
+                    WHERE user_id = _uid AND deleted = FALSE
+                    ORDER BY sort_order, id
+                LOOP
+                    IF _first THEN
+                        _first := FALSE;
+                    ELSE
+                        INSERT INTO intervals (user_id, start_checkpoint_id, end_checkpoint_id)
+                        VALUES (_uid, _prev_id, _curr_id)
+                        ON CONFLICT DO NOTHING;
+                    END IF;
+                    _prev_id := _curr_id;
+                END LOOP;
+            END LOOP;
+        END $ensure_intervals$;
     """),
 ]
 

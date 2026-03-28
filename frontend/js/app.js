@@ -763,8 +763,9 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
         }
     }
 
-    // Save checkpoints and moment metrics for dynamic interval selection
+    // Save checkpoints, intervals and moment metrics for dynamic interval selection
     _todayCheckpoints = summary.checkpoints || [];
+    window._todayIntervals = summary.intervals || [];
     _momentMetricsById = {};
     for (const m of summary.metrics) {
         if (m.interval_binding === 'moment') _momentMetricsById[String(m.metric_id)] = m;
@@ -1390,6 +1391,7 @@ async function handleNumberChange(e) {
     const bindingEl = input.closest('.metric-checkpoint') || input.closest('.metric-interval');
     const entryId = bindingEl ? bindingEl.dataset.entryId : card.dataset.entryId;
     const bindingId = bindingEl ? (bindingEl.dataset.checkpointId || bindingEl.dataset.intervalId) : (card.dataset.checkpointId || card.dataset.intervalId || null);
+    const bindingType = (bindingEl && bindingEl.dataset.intervalId) || (!bindingEl && card.dataset.intervalId) ? 'interval' : 'checkpoint';
 
     const raw = input.value.trim();
     if (raw === '') {
@@ -1414,7 +1416,7 @@ async function handleNumberChange(e) {
     }
 
     card.classList.add('filled');
-    saveDaily(metricId, entryId, parsed, bindingId).then(({ entryId: newId }) => {
+    saveDaily(metricId, entryId, parsed, bindingId, bindingType).then(({ entryId: newId }) => {
         if (!newId) return;
         if (bindingEl) bindingEl.dataset.entryId = newId;
         else card.dataset.entryId = newId;
@@ -1611,12 +1613,11 @@ async function handleFormClick(e) {
         if (existing) { existing.remove(); return; }
         // Find already-used interval IDs
         const usedIntervalIds = new Set([...card.querySelectorAll('.metric-interval[data-interval-id]')].map(s => parseInt(s.dataset.intervalId)));
-        // Build available intervals from checkpoints (consecutive pairs)
+        // Build available intervals from daily summary intervals
         const available = [];
-        for (let i = 0; i < _todayCheckpoints.length - 1; i++) {
-            const cp = _todayCheckpoints[i];
-            if (!usedIntervalIds.has(cp.id)) {
-                available.push({ intervalId: cp.id, label: `${cp.label} → ${_todayCheckpoints[i + 1].label}` });
+        for (const iv of (window._todayIntervals || [])) {
+            if (!usedIntervalIds.has(iv.id)) {
+                available.push({ intervalId: iv.id, label: iv.label });
             }
         }
         if (available.length === 0) return;
@@ -1638,11 +1639,9 @@ async function handleFormClick(e) {
         const metricId = btn.dataset.metricId;
         const mData = _momentMetricsById[metricId];
         if (!mData) return;
-        // Build label from checkpoints
-        const cpIdx = _todayCheckpoints.findIndex(c => c.id === parseInt(intervalId));
-        const label = (cpIdx >= 0 && cpIdx + 1 < _todayCheckpoints.length)
-            ? `${_todayCheckpoints[cpIdx].label} → ${_todayCheckpoints[cpIdx + 1].label}`
-            : '';
+        // Build label from intervals
+        const ivData = (window._todayIntervals || []).find(iv => iv.id === parseInt(intervalId));
+        const label = ivData ? ivData.label : '';
         // Build input
         let input;
         if (mData.type === 'enum') input = renderEnum(null, mData.enum_options, mData.multi_select, false);
@@ -1670,6 +1669,7 @@ async function handleFormClick(e) {
     const bindingEl = btn.closest('.metric-checkpoint') || btn.closest('.metric-interval');
     const entryId = bindingEl ? bindingEl.dataset.entryId : card.dataset.entryId;
     const bindingId = bindingEl ? (bindingEl.dataset.checkpointId || bindingEl.dataset.intervalId) : (card.dataset.checkpointId || card.dataset.intervalId || null);
+    const bindingType = (bindingEl && bindingEl.dataset.intervalId) || (!bindingEl && card.dataset.intervalId) ? 'interval' : 'checkpoint';
 
     // Integration fetch
     if (btn.dataset.action === 'fetch-integration') {
@@ -1715,7 +1715,7 @@ async function handleFormClick(e) {
         });
         btn.classList.add('active', boolVal ? 'yes' : 'no');
         card.classList.add('filled');
-        saveDaily(metricId, entryId, boolVal, bindingId).then(({ entryId: newId }) => {
+        saveDaily(metricId, entryId, boolVal, bindingId, bindingType).then(({ entryId: newId }) => {
             if (!newId) return;
             if (bindingEl) bindingEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
@@ -1735,7 +1735,7 @@ async function handleFormClick(e) {
         container.querySelectorAll('.scale-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         card.classList.add('filled');
-        saveDaily(metricId, entryId, parseInt(btn.dataset.value), bindingId).then(({ entryId: newId }) => {
+        saveDaily(metricId, entryId, parseInt(btn.dataset.value), bindingId, bindingType).then(({ entryId: newId }) => {
             if (!newId) return;
             if (bindingEl) bindingEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
@@ -1787,7 +1787,7 @@ async function handleFormClick(e) {
 
         // activeIds может быть [] если нажата "Ничего" — это валидный ответ
         card.classList.add('filled');
-        saveDaily(metricId, entryId, activeIds, bindingId).then(({ entryId: newId }) => {
+        saveDaily(metricId, entryId, activeIds, bindingId, bindingType).then(({ entryId: newId }) => {
             if (!newId) return;
             if (bindingEl) bindingEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
@@ -1808,7 +1808,7 @@ async function handleFormClick(e) {
         input.value = 0;
         card.classList.add('filled');
         btn.remove();
-        saveDaily(metricId, entryId, 0, bindingId).then(({ entryId: newId }) => {
+        saveDaily(metricId, entryId, 0, bindingId, bindingType).then(({ entryId: newId }) => {
             if (!newId) return;
             if (bindingEl) bindingEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
@@ -1833,7 +1833,7 @@ async function handleFormClick(e) {
         card.classList.add('filled');
         const zeroBtn = container.querySelector('.number-zero-btn');
         if (zeroBtn) zeroBtn.remove();
-        saveDaily(metricId, entryId, newVal, bindingId).then(({ entryId: newId }) => {
+        saveDaily(metricId, entryId, newVal, bindingId, bindingType).then(({ entryId: newId }) => {
             if (!newId) return;
             if (bindingEl) bindingEl.dataset.entryId = newId;
             else card.dataset.entryId = newId;
@@ -1854,7 +1854,7 @@ async function handleFormClick(e) {
         const currentVal = timeTrigger.classList.contains('has-value') ? timeTrigger.textContent.trim() : '';
         showClockPicker(currentVal, async (newVal) => {
             try {
-                await saveDaily(metricId, entryId, newVal, bindingId);
+                await saveDaily(metricId, entryId, newVal, bindingId, bindingType);
                 await renderTodayForm(true);
             } catch (error) {
                 alert('Ошибка: ' + error.message);
@@ -1883,7 +1883,7 @@ async function handleFormClick(e) {
             try {
                 const parts = hhmmVal.split(':').map(Number);
                 const minutes = parts[0] * 60 + parts[1];
-                await saveDaily(metricId, entryId, minutes, bindingId);
+                await saveDaily(metricId, entryId, minutes, bindingId, bindingType);
                 await renderTodayForm(true);
             } catch (error) {
                 alert('Ошибка: ' + error.message);
@@ -1927,7 +1927,7 @@ function _ensureClearButton(card, bindingEl, entryId) {
 
 const _savingKeys = new Set();
 
-async function saveDaily(metricId, entryId, value, bindingId) {
+async function saveDaily(metricId, entryId, value, bindingId, bindingType) {
     const key = `${metricId}-${bindingId || 'null'}`;
     let result;
     if (entryId) {
@@ -1942,7 +1942,13 @@ async function saveDaily(metricId, entryId, value, bindingId) {
                 date: currentDate,
                 value,
             };
-            if (bindingId) payload.checkpoint_id = parseInt(bindingId);
+            if (bindingId) {
+                if (bindingType === 'interval') {
+                    payload.interval_id = parseInt(bindingId);
+                } else {
+                    payload.checkpoint_id = parseInt(bindingId);
+                }
+            }
             const res = await api.createEntry(payload);
             result = { entryId: res.id };
         } finally {

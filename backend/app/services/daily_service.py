@@ -37,7 +37,9 @@ class DailyService:
         result = split_by_checkpoints(result, all_user_checkpoints, active_intervals)
         qt.mark("build"); qt.log()
         checkpoints = [{"id": c["id"], "label": c["label"]} for c in all_user_checkpoints]
-        return {"date": date_str, "metrics": result, "checkpoints": checkpoints, "auto_metrics": auto_metrics, "progress": progress}
+        intervals = [{"id": iv["id"], "start_checkpoint_id": iv["start_checkpoint_id"],
+                       "end_checkpoint_id": iv["end_checkpoint_id"], "label": iv["label"]} for iv in active_intervals]
+        return {"date": date_str, "metrics": result, "checkpoints": checkpoints, "intervals": intervals, "auto_metrics": auto_metrics, "progress": progress}
 
     async def _load_daily_data(self, d: date_type, qt: QueryTimer) -> dict:
         metrics = await self.repo.get_enabled_metrics_with_config()
