@@ -2617,10 +2617,10 @@ class TestImportScaleEntry:
 
 class TestImportEnumEmptyResolution:
 
-    async def test_import_enum_no_matching_labels_skipped(
+    async def test_import_enum_no_matching_labels_imports_empty(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Enum entry whose labels don't match any options is skipped."""
+        """Enum entry whose labels don't match any options is imported as empty selection []."""
         metric = await _create_enum_metric(
             client, user_a["token"], name="Mood NoMatch", options=["X", "Y"],
         )
@@ -2644,7 +2644,7 @@ class TestImportEnumEmptyResolution:
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 200
-        assert resp.json()["entries"]["skipped"] >= 1
+        assert resp.json()["entries"]["imported"] >= 1
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,7 @@ class EntryImporter:
 
         all_metric_ids = list(slug_to_id.values())
         slot_lookup = await self.repo.get_slot_lookup(all_metric_ids)
+        global_label_lookup = await self.repo.get_global_slot_label_lookup()
 
         text = zip_file.read('entries.csv').decode('utf-8')
         reader = csv.DictReader(StringIO(text))
@@ -39,7 +40,7 @@ class EntryImporter:
                     continue
 
                 d = date_type.fromisoformat(row['date'])
-                slot_id = self._resolve_slot_id(row, metric_id, slot_lookup)
+                slot_id = self._resolve_slot_id(row, metric_id, slot_lookup, global_label_lookup)
                 if slot_id is None and row.get('slot_sort_order', '') not in ('', None):
                     try:
                         so = int(row['slot_sort_order'])
@@ -47,6 +48,7 @@ class EntryImporter:
                         new_sid = await self.repo.find_or_create_slot(label)
                         await self.repo.insert_metric_slot_on_fly(metric_id, new_sid, so)
                         slot_lookup[metric_id][so] = new_sid
+                        global_label_lookup[label] = new_sid
                         slot_id = new_sid
                     except (ValueError, TypeError):
                         pass
@@ -98,10 +100,16 @@ class EntryImporter:
                 await self.repo.insert_note(mid, d, note_text)
 
     @staticmethod
-    def _resolve_slot_id(row: dict, metric_id: int, slot_lookup: dict) -> int | None:
+    def _resolve_slot_id(row: dict, metric_id: int, slot_lookup: dict,
+                         global_label_lookup: dict | None = None) -> int | None:
         csv_so = row.get('slot_sort_order', '')
         if csv_so in ('', None):
             return None
+        # Try by label first (more reliable — labels are stable across export/import)
+        label = row.get('slot_label', '')
+        if label and global_label_lookup and label in global_label_lookup:
+            return global_label_lookup[label]
+        # Fallback: try by sort_order in metric_slots
         try:
             so = int(csv_so)
             if metric_id in slot_lookup and so in slot_lookup[metric_id]:
@@ -116,7 +124,7 @@ class EntryImporter:
                 return None
             label_to_id = await self.repo.get_enum_option_labels(metric_id)
             ids = [label_to_id[lbl] for lbl in value if lbl in label_to_id]
-            return ids if ids else None
+            return ids  # [] is valid — means "no options selected"
         if mt == MetricType.time:
             return value if isinstance(value, str) else None
         if mt in (MetricType.number, MetricType.duration, MetricType.scale):

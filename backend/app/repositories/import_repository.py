@@ -202,7 +202,7 @@ class ImportRepository(BaseRepository):
         if not metric_ids:
             return defaultdict(dict)
         rows = await self.conn.fetch(
-            """SELECT msl.metric_id, ms.sort_order, ms.id
+            """SELECT msl.metric_id, msl.sort_order, ms.id, ms.label
                FROM metric_slots msl JOIN measurement_slots ms ON ms.id = msl.slot_id
                WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE""",
             metric_ids)
@@ -210,6 +210,13 @@ class ImportRepository(BaseRepository):
         for sr in rows:
             result[sr["metric_id"]][sr["sort_order"]] = sr["id"]
         return result
+
+    async def get_global_slot_label_lookup(self) -> dict[str, int]:
+        """Lookup: label → slot_id for ALL user's slots. For label-based entry import."""
+        rows = await self.conn.fetch(
+            "SELECT id, label FROM measurement_slots WHERE user_id = $1 AND deleted = FALSE",
+            self.user_id)
+        return {r["label"]: r["id"] for r in rows}
 
     async def check_entry_duplicate(self, metric_id: int, d: date_type, slot_id: int | None) -> bool:
         if slot_id is not None:
