@@ -3800,13 +3800,19 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
 
     html += `<h2>Настройки метрик <span class="corr-count">${allMetrics.filter(m => m.enabled).length}</span></h2>`;
     html += '<div class="settings-actions">';
+    html += '<div class="settings-actions-row">';
     html += '<button class="btn-primary" id="add-metric"><i data-lucide="plus"></i> Новая метрика</button>';
+    html += '</div>';
+    html += '<div class="settings-actions-row">';
     html += '<button class="btn-small" id="manage-categories-btn"><i data-lucide="folders"></i> Категории</button>';
     html += '<button class="btn-small" id="manage-checkpoints-btn"><i data-lucide="clock"></i> Контрольные точки</button>';
     html += '<button class="btn-small" id="manage-order-btn"><i data-lucide="arrow-up-down"></i> Порядок</button>';
-    html += '<button class="btn-small" id="export-btn"><i data-lucide="download"></i> Экспорт</button>';
+    html += '</div>';
+    html += '<div class="settings-actions-row">';
     html += '<button class="btn-small" id="import-btn"><i data-lucide="upload"></i> Импорт</button>';
+    html += '<button class="btn-small" id="export-btn"><i data-lucide="download"></i> Экспорт</button>';
     html += '<button class="btn-small" id="copy-metrics-btn"><i data-lucide="copy"></i> Копировать</button>';
+    html += '</div>';
     html += '</div>';
     html += '<input type="file" id="import-file" accept=".zip" style="display:none">';
 

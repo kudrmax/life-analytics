@@ -2365,8 +2365,14 @@ details.corr-section-low[open] summary h4::before { content: '\25BC  '; font-siz
 
 .settings-actions {
     display: flex;
+    flex-direction: column;
     gap: 8px;
     margin-bottom: 20px;
+}
+
+.settings-actions-row {
+    display: flex;
+    gap: 8px;
     flex-wrap: wrap;
 }
 
