@@ -167,6 +167,7 @@ function navigateTo(page, params = {}) {
         case 'settings': renderSettings(main, params); break;
         case 'categories': renderCategoryManager(main); break;
         case 'checkpoints': renderCheckpointManager(main); break;
+        case 'order': renderOrderPage(main); break;
     }
 }
 
@@ -835,35 +836,54 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
         const uniqueMetricCount = new Set(summary.metrics.map(m => m.metric_id)).size;
         html += `<h3 class="section-header">Ваши метрики <span class="corr-count">${uniqueMetricCount}</span></h3>`;
 
-        // Checkpoint sandwich layout
-        for (const cp of checkpoints) {
-            const cpMetrics = metricsByCheckpoint[cp.id] || [];
-            const assessments = cpMetrics.filter(m => m.is_checkpoint);
-            const facts = cpMetrics.filter(m => !m.is_checkpoint);
-            // Sandwich: line — assessments — line
-            html += `<div class="checkpoint-sandwich">`;
-            html += `<div class="checkpoint-sandwich-line">${_escapeHtml(cp.label)}</div>`;
-            if (assessments.length > 0) {
-                html += `<div class="checkpoint-sandwich-assessments">`;
-                html += renderSectionMetrics(assessments);
-                html += `</div>`;
-            }
-            html += `<div class="checkpoint-sandwich-line">${_escapeHtml(cp.label)}</div>`;
-            html += `</div>`;
-            // Facts between sandwiches — with spacing
-            if (facts.length > 0) {
-                html += `<div class="checkpoint-interval-facts">`;
-                html += renderSectionMetrics(facts);
-                html += `</div>`;
+        // Build ordered blocks from backend metric order (respects daily_layout)
+        const cpLabelById = {};
+        for (const cp of checkpoints) cpLabelById[cp.id] = cp.label;
+
+        const orderedBlocks = [];
+        const seenBlockKeys = new Set();
+        for (const m of summary.metrics) {
+            const cpId = m.checkpoint_section_id;
+            // Block key: "cp:ID" for checkpoint assessments, "iv:ID" for interval facts, "daily" for standalone
+            let key;
+            if (cpId != null && m.is_checkpoint) key = `cp:${cpId}`;
+            else if (cpId != null && !m.is_checkpoint) key = `iv:${cpId}`;
+            else key = 'daily';
+            if (!seenBlockKeys.has(key)) {
+                seenBlockKeys.add(key);
+                orderedBlocks.push({ key, cpId, isCheckpoint: cpId != null && m.is_checkpoint });
             }
         }
 
-        // Daily metrics section
-        if (dailyMetrics.length > 0) {
-            if (checkpoints.length > 0) {
-                html += `<h2 class="fill-time-header">Не привязаны к интервалам</h2>`;
+        for (const block of orderedBlocks) {
+            if (block.key === 'daily') {
+                if (checkpoints.length > 0 && dailyMetrics.length > 0) {
+                    html += `<h2 class="fill-time-header">Не привязаны к интервалам</h2>`;
+                }
+                html += renderSectionMetrics(dailyMetrics);
+            } else if (block.isCheckpoint) {
+                const cpMetrics = metricsByCheckpoint[block.cpId] || [];
+                const assessments = cpMetrics.filter(m => m.is_checkpoint);
+                const label = cpLabelById[block.cpId] || '';
+                html += `<div class="checkpoint-sandwich">`;
+                html += `<div class="checkpoint-sandwich-line">${_escapeHtml(label)}</div>`;
+                if (assessments.length > 0) {
+                    html += `<div class="checkpoint-sandwich-assessments">`;
+                    html += renderSectionMetrics(assessments);
+                    html += `</div>`;
+                }
+                html += `<div class="checkpoint-sandwich-line">${_escapeHtml(label)}</div>`;
+                html += `</div>`;
+            } else {
+                // Interval facts block
+                const cpMetrics = metricsByCheckpoint[block.cpId] || [];
+                const facts = cpMetrics.filter(m => !m.is_checkpoint);
+                if (facts.length > 0) {
+                    html += `<div class="checkpoint-interval-facts">`;
+                    html += renderSectionMetrics(facts);
+                    html += `</div>`;
+                }
             }
-            html += renderSectionMetrics(dailyMetrics);
         }
     }
 
@@ -3797,6 +3817,7 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
     html += '<button class="btn-primary" id="add-metric"><i data-lucide="plus"></i> Новая метрика</button>';
     html += '<button class="btn-small" id="manage-categories-btn"><i data-lucide="folders"></i> Категории</button>';
     html += '<button class="btn-small" id="manage-checkpoints-btn"><i data-lucide="clock"></i> Контрольные точки</button>';
+    html += '<button class="btn-small" id="manage-order-btn"><i data-lucide="arrow-up-down"></i> Порядок</button>';
     html += '<button class="btn-small" id="export-btn"><i data-lucide="download"></i> Экспорт</button>';
     html += '<button class="btn-small" id="import-btn"><i data-lucide="upload"></i> Импорт</button>';
     html += '<button class="btn-small" id="copy-metrics-btn"><i data-lucide="copy"></i> Копировать</button>';
@@ -3895,7 +3916,6 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
                 : '<i data-lucide="toggle-left"></i> Да/Нет') + checkpointsBadge + condBadge;
             const descHtml = m.description ? `<span class="metric-description">${_escapeHtml(m.description)}</span>` : '';
             return `<div class="setting-row" data-metric-id="${m.id}"${checkpointIds ? ` data-checkpoint-ids="${checkpointIds}"` : ''}>
-                <span class="drag-handle">⠿</span>
                 <div class="setting-info">
                     <span class="setting-name">${metricLabelHtml(m)}</span>
                     <span class="setting-type">${typeIcon}</span>
@@ -4206,110 +4226,220 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
             }
         });
     });
-    setupMetricDragDrop(container);
+    document.getElementById('manage-order-btn')?.addEventListener('click', () => {
+        navigateTo('order');
+    });
     console.debug(`[render] settings  ${(performance.now() - _t0).toFixed(0)}ms`);
 }
 
-function setupMetricDragDrop(container) {
-    let dragRow = null;
+async function renderOrderPage(container) {
+    container.innerHTML = '<div class="loading-spinner"></div>';
+    let data;
+    try { data = await api.getLayout(); } catch (e) { container.innerHTML = '<p>Ошибка загрузки</p>'; return; }
+    const catById = {};
+    for (const c of (data.categories || [])) catById[c.id] = c;
+
+    let html = '<div class="cat-manager-header">';
+    html += '<button class="btn-icon" id="order-back-btn"><i data-lucide="arrow-left"></i></button>';
+    html += '<h2>Порядок метрик</h2>';
+    html += '</div>';
+
+    html += '<div class="order-list" id="orderList">';
+
+    for (const block of data.blocks) {
+        if (block.type === 'metric') {
+            // Standalone metric — top-level item
+            html += `<div class="order-item" data-block-type="metric" data-block-id="${block.id}">`;
+            html += `<span class="drag-handle">⠿</span>`;
+            html += `<span class="order-item-info">`;
+            html += `<span class="order-item-name">${block.icon ? '<span class="metric-icon">' + _escapeHtml(block.icon) + '</span>' : ''}${_escapeHtml(block.label)}</span>`;
+            html += `</span></div>`;
+            continue;
+        }
+
+        // Block: checkpoint, interval, or category
+        const tagLabel = block.type === 'checkpoint' ? 'чекпоинт' : block.type === 'interval' ? 'интервал' : 'категория';
+        html += `<div class="order-block" data-block-type="${block.type}" data-block-id="${block.id}">`;
+        html += `<div class="order-block-header">`;
+        html += `<span class="drag-handle">⠿</span>`;
+        html += `<span class="order-block-label">${_escapeHtml(block.label)}</span>`;
+        html += `<span class="setting-bindings">${tagLabel}</span>`;
+        html += `<button class="order-block-toggle"><i data-lucide="chevron-down"></i></button>`;
+        html += `</div>`;
+
+        html += `<div class="order-block-content">`;
+        const items = block.items || [];
+        // Group items by category
+        const byCat = {};
+        const uncat = [];
+        for (const item of items) {
+            if (item.category_id && catById[item.category_id]) {
+                if (!byCat[item.category_id]) byCat[item.category_id] = [];
+                byCat[item.category_id].push(item);
+            } else {
+                uncat.push(item);
+            }
+        }
+        // Determine category order by first metric's sort_order
+        const catOrder = Object.keys(byCat).map(cid => ({
+            catId: parseInt(cid),
+            minSort: Math.min(...byCat[cid].map(i => i.sort_order)),
+        })).sort((a, b) => a.minSort - b.minSort);
+        const uncatMinSort = uncat.length > 0 ? Math.min(...uncat.map(i => i.sort_order)) : Infinity;
+
+        // Merge categories and uncategorized in sort order
+        const sections = [];
+        for (const co of catOrder) sections.push({ catId: co.catId, minSort: co.minSort });
+        if (uncat.length > 0) sections.push({ catId: null, minSort: uncatMinSort });
+        sections.sort((a, b) => a.minSort - b.minSort);
+
+        for (const sec of sections) {
+            const secItems = sec.catId ? byCat[sec.catId] : uncat;
+            if (sec.catId) {
+                const catName = catById[sec.catId]?.name || '';
+                html += `<div class="order-category" data-category-id="${sec.catId}">`;
+                html += `<div class="order-category-header"><span class="drag-handle order-cat-drag">⠿</span><span>${_escapeHtml(catName)}</span></div>`;
+            } else {
+                html += `<div class="order-category" data-category-id="">`;
+                html += `<div class="order-category-header"><span class="drag-handle order-cat-drag">⠿</span><span>Без категории</span></div>`;
+            }
+            for (const item of secItems) {
+                html += `<div class="order-metric" data-metric-id="${item.metric_id}">`;
+                html += `<span class="drag-handle">⠿</span>`;
+                html += `${item.icon ? '<span class="metric-icon">' + _escapeHtml(item.icon) + '</span>' : ''}`;
+                html += `<span class="order-metric-name">${_escapeHtml(item.name)}</span>`;
+                html += `</div>`;
+            }
+            html += `</div>`;
+        }
+        html += `</div></div>`;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+    lucide.createIcons();
+
+    // Back button
+    document.getElementById('order-back-btn').addEventListener('click', () => navigateTo('settings'));
+
+    // Collapse/expand
+    container.querySelectorAll('.order-block-toggle').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const content = btn.closest('.order-block').querySelector('.order-block-content');
+            content.classList.toggle('collapsed');
+            const icon = btn.querySelector('i');
+            if (icon) {
+                icon.setAttribute('data-lucide', content.classList.contains('collapsed') ? 'chevron-right' : 'chevron-down');
+                lucide.createIcons();
+            }
+        });
+    });
+
+    // --- Drag-and-drop ---
+    setupOrderDragDrop(container);
+}
+
+function setupOrderDragDrop(container) {
+    let dragEl = null;
+    let dragLevel = 0; // 1=block, 2=category, 3=metric
+    let dragScope = null;
     let clone = null;
     let startX = 0, startY = 0;
     let offsetX = 0, offsetY = 0;
     let isDragging = false;
-    const DRAG_THRESHOLD = 5;
+    const THRESHOLD = 5;
 
-    function getDropTarget(y) {
-        const rows = container.querySelectorAll('.setting-row[data-metric-id]:not(.dragging)');
-        let closest = null;
-        let closestDist = Infinity;
-        let insertBefore = true;
-        for (const row of rows) {
-            const rect = row.getBoundingClientRect();
+    function getSiblings() {
+        if (dragLevel === 1) {
+            return [...container.querySelectorAll('#orderList > .order-block:not(.order-dragging), #orderList > .order-item:not(.order-dragging)')];
+        } else if (dragLevel === 2) {
+            return [...dragScope.querySelectorAll(':scope > .order-category:not(.order-dragging)')];
+        } else {
+            return [...dragScope.querySelectorAll(':scope > .order-metric:not(.order-dragging)')];
+        }
+    }
+
+    function findClosest(y) {
+        const sibs = getSiblings();
+        let closest = null, closestDist = Infinity, before = true;
+        for (const s of sibs) {
+            const rect = s.getBoundingClientRect();
             const mid = rect.top + rect.height / 2;
             const dist = Math.abs(y - mid);
-            if (dist < closestDist) {
-                closestDist = dist;
-                closest = row;
-                insertBefore = y < mid;
-            }
+            if (dist < closestDist) { closestDist = dist; closest = s; before = y < mid; }
         }
-        return { target: closest, before: insertBefore };
+        return { target: closest, before };
     }
 
-    function clearIndicators() {
-        container.querySelectorAll('.drag-over-before, .drag-over-after').forEach(el => {
-            el.classList.remove('drag-over-before', 'drag-over-after');
-        });
+    // Drop indicator — real DOM element
+    const dropLine = document.createElement('div');
+    dropLine.className = 'drop-indicator';
+
+    function showIndicator(target, before) {
+        if (!target) { dropLine.remove(); return; }
+        if (before) target.before(dropLine);
+        else target.after(dropLine);
     }
 
-    function collectOrder() {
-        const items = [];
-        const rows = container.querySelectorAll('.setting-row[data-metric-id]');
-        rows.forEach((row, index) => {
-            const catDiv = row.closest('.category[data-category-id]');
-            const catIdStr = catDiv ? catDiv.dataset.categoryId : '';
-            const catId = catIdStr && !isNaN(parseInt(catIdStr)) ? parseInt(catIdStr) : null;
-            const metricId = parseInt(row.dataset.metricId);
-            const checkpointIdsAttr = row.dataset.checkpointIds;
-
-            if (checkpointIdsAttr) {
-                // Split metric — send per-checkpoint items
-                const checkpointIds = checkpointIdsAttr.split(',').map(Number);
-                for (const checkpointId of checkpointIds) {
-                    items.push({
-                        id: metricId,
-                        sort_order: index * 10,
-                        category_id: catId,
-                        checkpoint_id: checkpointId,
-                    });
-                }
-            } else {
-                items.push({
-                    id: metricId,
-                    sort_order: index * 10,
-                    category_id: catId,
-                });
-            }
-        });
-        return items;
-    }
+    function hideIndicator() { dropLine.remove(); }
 
     container.addEventListener('pointerdown', (e) => {
         const handle = e.target.closest('.drag-handle');
         if (!handle) return;
-        const row = handle.closest('.setting-row[data-metric-id]');
-        if (!row) return;
+
+        // Determine drag level
+        const metric = handle.closest('.order-metric');
+        const catHeader = handle.classList.contains('order-cat-drag') ? handle.closest('.order-category') : null;
+        const blockHeader = handle.closest('.order-block-header');
+        const item = handle.closest('.order-item');
+
+        if (metric && !catHeader) {
+            dragLevel = 3;
+            dragEl = metric;
+            dragScope = metric.closest('.order-category');
+        } else if (catHeader) {
+            dragLevel = 2;
+            dragEl = catHeader;
+            dragScope = catHeader.closest('.order-block-content');
+        } else if (blockHeader) {
+            dragLevel = 1;
+            dragEl = blockHeader.closest('.order-block');
+            dragScope = null;
+        } else if (item) {
+            dragLevel = 1;
+            dragEl = item;
+            dragScope = null;
+        } else {
+            return;
+        }
 
         e.preventDefault();
-        dragRow = row;
         startX = e.clientX;
         startY = e.clientY;
         isDragging = false;
-
         handle.setPointerCapture(e.pointerId);
     });
 
     container.addEventListener('pointermove', (e) => {
-        if (!dragRow) return;
+        if (!dragEl) return;
 
         if (!isDragging) {
-            const dx = e.clientX - startX;
-            const dy = e.clientY - startY;
-            if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+            if (Math.abs(e.clientX - startX) < THRESHOLD && Math.abs(e.clientY - startY) < THRESHOLD) return;
             isDragging = true;
-
-            // Create clone, remember cursor offset relative to element
-            const rect = dragRow.getBoundingClientRect();
+            const rect = dragEl.getBoundingClientRect();
             offsetX = startX - rect.left;
             offsetY = startY - rect.top;
-            clone = dragRow.cloneNode(true);
-            clone.className = 'setting-row drag-clone';
+            clone = dragEl.cloneNode(true);
+            clone.className = dragEl.className + ' drag-clone';
             clone.style.width = rect.width + 'px';
             clone.style.left = rect.left + 'px';
             clone.style.top = rect.top + 'px';
+            clone.style.position = 'fixed';
+            clone.style.zIndex = '9999';
+            clone.style.opacity = '0.85';
+            clone.style.pointerEvents = 'none';
             document.body.appendChild(clone);
-
-            dragRow.classList.add('dragging');
+            dragEl.classList.add('order-dragging');
         }
 
         if (clone) {
@@ -4317,77 +4447,72 @@ function setupMetricDragDrop(container) {
             clone.style.top = (e.clientY - offsetY) + 'px';
         }
 
-        clearIndicators();
-        const { target, before } = getDropTarget(e.clientY);
-        if (target) {
-            target.classList.add(before ? 'drag-over-before' : 'drag-over-after');
-        }
+        const { target, before } = findClosest(e.clientY);
+        showIndicator(target, before);
     });
 
-    container.addEventListener('pointerup', async (e) => {
-        if (!dragRow) return;
-
-        clearIndicators();
+    function endDrag(e) {
+        if (!dragEl) return;
+        hideIndicator();
 
         if (isDragging) {
-            const { target, before } = getDropTarget(e.clientY);
-
-            if (target && target !== dragRow) {
-                // Move DOM element to new position
-                const targetParent = target.parentElement;
-                if (before) {
-                    targetParent.insertBefore(dragRow, target);
-                } else {
-                    targetParent.insertBefore(dragRow, target.nextSibling);
+            if (e) {
+                const { target, before } = findClosest(e.clientY);
+                if (target && target !== dragEl) {
+                    if (before) target.before(dragEl);
+                    else target.after(dragEl);
                 }
             }
+            if (clone) { clone.remove(); clone = null; }
+            dragEl.classList.remove('order-dragging');
+            const el = dragEl;
+            dragEl = null; dragScope = null; isDragging = false;
+            _saveOrderFromDOM(container);
+        } else {
+            dragEl = null; dragScope = null; isDragging = false;
+        }
+    }
 
-            // Remove clone
-            if (clone) {
-                clone.remove();
-                clone = null;
-            }
-            dragRow.classList.remove('dragging');
+    // Listen on document to catch pointerup even if pointer leaves container
+    document.addEventListener('pointerup', endDrag);
+    document.addEventListener('pointercancel', () => endDrag(null));
+}
 
-            // Remove empty category divs and orphaned headers
-            container.querySelectorAll('.category[data-category-id]').forEach(catDiv => {
-                if (!catDiv.querySelector('.setting-row[data-metric-id]')) {
-                    const prev = catDiv.previousElementSibling;
-                    catDiv.remove();
-                    if (prev && prev.classList.contains('fill-time-header')) {
-                        const next = prev.nextElementSibling;
-                        if (!next || !next.classList.contains('category') || next.classList.contains('archive-section')) {
-                            prev.remove();
-                        }
-                    }
-                }
+async function _saveOrderFromDOM(container) {
+    // 1. Save top-level block order
+    const topItems = [];
+    const topEls = container.querySelectorAll('#orderList > .order-block, #orderList > .order-item');
+    topEls.forEach((el, i) => {
+        topItems.push({
+            block_type: el.dataset.blockType,
+            block_id: parseInt(el.dataset.blockId || el.dataset.metricId),
+            sort_order: i * 10,
+        });
+    });
+    try { await api.saveLayoutBlocks(topItems); } catch (err) { console.error('Save blocks failed:', err); }
+
+    // 2. Save inner order for each block
+    for (const block of container.querySelectorAll('#orderList > .order-block')) {
+        const blockType = block.dataset.blockType;
+        const blockId = parseInt(block.dataset.blockId);
+        const metrics = block.querySelectorAll('.order-metric[data-metric-id]');
+        const items = [];
+        metrics.forEach((m, i) => {
+            const catDiv = m.closest('.order-category[data-category-id]');
+            const catIdStr = catDiv ? catDiv.dataset.categoryId : '';
+            const catId = catIdStr && !isNaN(parseInt(catIdStr)) ? parseInt(catIdStr) : null;
+            items.push({
+                metric_id: parseInt(m.dataset.metricId),
+                sort_order: i * 10,
+                category_id: catId,
             });
-
-            // Save new order to server
-            const items = collectOrder();
+        });
+        if (items.length > 0) {
             try {
-                await api.reorderMetrics(items);
-            } catch (err) {
-                console.error('Reorder failed:', err);
-            }
+                await api.saveLayoutInner({ block_type: blockType, block_id: blockId, items });
+            } catch (err) { console.error('Save inner failed:', err); }
         }
-
-        dragRow = null;
-        isDragging = false;
-    });
-
-    container.addEventListener('pointercancel', () => {
-        if (clone) {
-            clone.remove();
-            clone = null;
-        }
-        if (dragRow) {
-            dragRow.classList.remove('dragging');
-        }
-        clearIndicators();
-        dragRow = null;
-        isDragging = false;
-    });
+    }
 }
 
 async function renderCategoryManager(container) {

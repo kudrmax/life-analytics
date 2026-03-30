@@ -705,6 +705,17 @@ MIGRATIONS = [
         -- Update interval_binding
         UPDATE metric_definitions SET interval_binding = 'by_interval' WHERE interval_binding = 'moment';
     """),
+    (25, "create_daily_layout", """
+        CREATE TABLE IF NOT EXISTS daily_layout (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            block_type VARCHAR(20) NOT NULL,
+            block_id INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(user_id, block_type, block_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_daily_layout_user ON daily_layout(user_id);
+    """),
 ]
 
 

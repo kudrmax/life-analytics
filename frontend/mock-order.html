@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Порядок метрик — мокап</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 16px;
+}
+h1 { font-size: 18px; margin-bottom: 16px; }
+
+/* === Top-level list === */
+.order-list { display: flex; flex-direction: column; gap: 6px; }
+
+/* === Block (checkpoint, interval, category) === */
+.order-block {
+    background: #16213e;
+    border: 1px solid #2a2a4a;
+    border-radius: 10px;
+    overflow: hidden;
+}
+.order-block.dragging-over { opacity: 0.4; }
+
+.block-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px;
+    font-weight: 600; font-size: 14px;
+    cursor: grab; user-select: none;
+}
+.block-header:active { cursor: grabbing; }
+.block-header .drag { color: #555; font-size: 16px; flex-shrink: 0; }
+.block-header .icon { font-size: 15px; flex-shrink: 0; }
+.block-header .label { flex: 1; }
+.block-header .tag {
+    font-size: 11px; color: #888;
+    background: #2a2a4a; border-radius: 4px;
+    padding: 1px 6px; font-weight: 400;
+}
+.block-toggle {
+    background: none; border: none; color: #888;
+    cursor: pointer; font-size: 14px; padding: 2px 4px;
+}
+
+.block-content { border-top: 1px solid #2a2a4a; }
+.block-content.collapsed { display: none; }
+
+/* Category sub-header inside block */
+.cat-sub {
+    font-size: 12px; color: #777;
+    padding: 6px 12px 2px 36px;
+    font-weight: 500;
+}
+
+/* Metric row inside block */
+.metric-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px 8px 36px;
+    font-size: 13px;
+    cursor: grab; user-select: none;
+    transition: background 0.1s;
+}
+.metric-row:hover { background: #1a2744; }
+.metric-row:active { cursor: grabbing; }
+.metric-row.dragging { opacity: 0.3; }
+.metric-row .drag { color: #555; font-size: 14px; flex-shrink: 0; }
+.metric-row .icon { font-size: 14px; flex-shrink: 0; }
+.metric-row .name { flex: 1; }
+
+/* === Top-level standalone metric (no category, no binding) === */
+.order-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px;
+    background: #16213e;
+    border: 1px solid #2a2a4a;
+    border-radius: 10px;
+    font-size: 14px;
+    cursor: grab; user-select: none;
+}
+.order-item:hover { background: #1a2744; }
+.order-item:active { cursor: grabbing; }
+.order-item.dragging-over { opacity: 0.4; }
+.order-item .drag { color: #555; font-size: 16px; flex-shrink: 0; }
+.order-item .icon { font-size: 15px; flex-shrink: 0; }
+.order-item .name { flex: 1; }
+.order-item .tag {
+    font-size: 11px; color: #888;
+    background: #2a2a4a; border-radius: 4px;
+    padding: 1px 6px;
+}
+
+/* Drag indicators */
+.drag-over-before { border-top: 2px solid #4a9eff !important; }
+.drag-over-after { border-bottom: 2px solid #4a9eff !important; }
+</style>
+</head>
+<body>
+
+<h1>Порядок метрик</h1>
+
+<div class="order-list" id="orderList">
+
+    <!-- Checkpoint: Утро -->
+    <div class="order-block" data-block-type="checkpoint" data-block-id="cp1">
+        <div class="block-header">
+            <span class="drag">⠿</span>
+            <span class="icon">☀️</span>
+            <span class="label">Утро</span>
+            <span class="tag">чекпоинт</span>
+            <button class="block-toggle">▾</button>
+        </div>
+        <div class="block-content">
+            <div class="cat-sub">😊 Самочувствие</div>
+            <div class="metric-row" data-metric-id="1">
+                <span class="drag">⠿</span>
+                <span class="icon">😊</span>
+                <span class="name">Настроение</span>
+            </div>
+            <div class="metric-row" data-metric-id="2">
+                <span class="drag">⠿</span>
+                <span class="icon">⚡</span>
+                <span class="name">Энергия</span>
+            </div>
+            <div class="metric-row" data-metric-id="3">
+                <span class="drag">⠿</span>
+                <span class="icon">😴</span>
+                <span class="name">Качество сна</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Interval: Утро → День -->
+    <div class="order-block" data-block-type="interval" data-block-id="iv1">
+        <div class="block-header">
+            <span class="drag">⠿</span>
+            <span class="icon">↔</span>
+            <span class="label">Утро → День</span>
+            <span class="tag">интервал</span>
+            <button class="block-toggle">▾</button>
+        </div>
+        <div class="block-content">
+            <div class="metric-row" data-metric-id="4">
+                <span class="drag">⠿</span>
+                <span class="icon">☕</span>
+                <span class="name">Кофе</span>
+            </div>
+            <div class="cat-sub">🍎 Питание</div>
+            <div class="metric-row" data-metric-id="6">
+                <span class="drag">⠿</span>
+                <span class="icon">🥗</span>
+                <span class="name">Здоровый завтрак</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Category block: Продуктивность (standalone metrics with category) -->
+    <div class="order-block" data-block-type="category" data-block-id="cat2">
+        <div class="block-header">
+            <span class="drag">⠿</span>
+            <span class="icon">📂</span>
+            <span class="label">Продуктивность</span>
+            <span class="tag">категория</span>
+            <button class="block-toggle">▾</button>
+        </div>
+        <div class="block-content">
+            <div class="metric-row" data-metric-id="7">
+                <span class="drag">⠿</span>
+                <span class="icon">💻</span>
+                <span class="name">Часы работы</span>
+            </div>
+            <div class="metric-row" data-metric-id="8">
+                <span class="drag">⠿</span>
+                <span class="icon">📋</span>
+                <span class="name">Задачи Todoist</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Standalone metric — top level, no category, no binding -->
+    <div class="order-item" data-block-type="metric" data-metric-id="5">
+        <span class="drag">⠿</span>
+        <span class="icon">🏃</span>
+        <span class="name">Спорт</span>
+    </div>
+
+    <!-- Checkpoint: День -->
+    <div class="order-block" data-block-type="checkpoint" data-block-id="cp2">
+        <div class="block-header">
+            <span class="drag">⠿</span>
+            <span class="icon">🌤️</span>
+            <span class="label">День</span>
+            <span class="tag">чекпоинт</span>
+            <button class="block-toggle">▾</button>
+        </div>
+        <div class="block-content">
+            <div class="cat-sub">😊 Самочувствие</div>
+            <div class="metric-row" data-metric-id="1">
+                <span class="drag">⠿</span>
+                <span class="icon">😊</span>
+                <span class="name">Настроение</span>
+            </div>
+            <div class="metric-row" data-metric-id="2">
+                <span class="drag">⠿</span>
+                <span class="icon">⚡</span>
+                <span class="name">Энергия</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Interval: День → Вечер -->
+    <div class="order-block" data-block-type="interval" data-block-id="iv2">
+        <div class="block-header">
+            <span class="drag">⠿</span>
+            <span class="icon">↔</span>
+            <span class="label">День → Вечер</span>
+            <span class="tag">интервал</span>
+            <button class="block-toggle">▾</button>
+        </div>
+        <div class="block-content">
+            <div class="metric-row" data-metric-id="9">
+                <span class="drag">⠿</span>
+                <span class="icon">💧</span>
+                <span class="name">Вода (стаканы)</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Standalone metric — top level -->
+    <div class="order-item" data-block-type="metric" data-metric-id="10">
+        <span class="drag">⠿</span>
+        <span class="icon">📝</span>
+        <span class="name">Дневник</span>
+    </div>
+
+    <!-- Checkpoint: Вечер -->
+    <div class="order-block" data-block-type="checkpoint" data-block-id="cp3">
+        <div class="block-header">
+            <span class="drag">⠿</span>
+            <span class="icon">🌙</span>
+            <span class="label">Вечер</span>
+            <span class="tag">чекпоинт</span>
+            <button class="block-toggle">▾</button>
+        </div>
+        <div class="block-content">
+            <div class="cat-sub">😊 Самочувствие</div>
+            <div class="metric-row" data-metric-id="1">
+                <span class="drag">⠿</span>
+                <span class="icon">😊</span>
+                <span class="name">Настроение</span>
+            </div>
+            <div class="metric-row" data-metric-id="2">
+                <span class="drag">⠿</span>
+                <span class="icon">⚡</span>
+                <span class="name">Энергия</span>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+// Collapse/expand
+document.querySelectorAll('.block-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const content = btn.closest('.order-block').querySelector('.block-content');
+        content.classList.toggle('collapsed');
+        btn.textContent = content.classList.contains('collapsed') ? '▸' : '▾';
+    });
+});
+
+// --- Top-level drag (blocks + standalone items) ---
+const orderList = document.getElementById('orderList');
+let dragTop = null;
+
+function topChildren() {
+    return [...orderList.children].filter(el => el !== dragTop);
+}
+
+orderList.addEventListener('pointerdown', (e) => {
+    // Only block-header .drag or order-item .drag (NOT metric-row .drag)
+    const handle = e.target.closest('.block-header > .drag, .order-item > .drag');
+    if (!handle) return;
+    const el = handle.closest('.order-block') || handle.closest('.order-item');
+    if (!el) return;
+    e.preventDefault();
+    dragTop = el;
+    el.classList.add('dragging-over');
+    handle.setPointerCapture(e.pointerId);
+});
+
+orderList.addEventListener('pointermove', (e) => {
+    if (!dragTop) return;
+    const siblings = topChildren();
+    siblings.forEach(s => s.classList.remove('drag-over-before', 'drag-over-after'));
+    let closest = null, closestDist = Infinity, before = true;
+    for (const s of siblings) {
+        const rect = s.getBoundingClientRect();
+        const mid = rect.top + rect.height / 2;
+        const dist = Math.abs(e.clientY - mid);
+        if (dist < closestDist) { closestDist = dist; closest = s; before = e.clientY < mid; }
+    }
+    if (closest) closest.classList.add(before ? 'drag-over-before' : 'drag-over-after');
+});
+
+orderList.addEventListener('pointerup', (e) => {
+    if (!dragTop) return;
+    const siblings = topChildren();
+    siblings.forEach(s => s.classList.remove('drag-over-before', 'drag-over-after'));
+    let closest = null, closestDist = Infinity, before = true;
+    for (const s of siblings) {
+        const rect = s.getBoundingClientRect();
+        const mid = rect.top + rect.height / 2;
+        const dist = Math.abs(e.clientY - mid);
+        if (dist < closestDist) { closestDist = dist; closest = s; before = e.clientY < mid; }
+    }
+    if (closest && closest !== dragTop) {
+        if (before) closest.before(dragTop);
+        else closest.after(dragTop);
+    }
+    dragTop.classList.remove('dragging-over');
+    dragTop = null;
+});
+
+// --- Inner drag (metrics within a block) ---
+let dragMetric = null;
+let dragScope = null;
+
+orderList.addEventListener('pointerdown', (e) => {
+    if (dragTop) return; // top-level drag takes priority
+    const handle = e.target.closest('.metric-row > .drag');
+    if (!handle) return;
+    const row = handle.closest('.metric-row');
+    const content = row.closest('.block-content');
+    if (!row || !content) return;
+    e.preventDefault();
+    dragMetric = row;
+    dragScope = content;
+    row.classList.add('dragging');
+    handle.setPointerCapture(e.pointerId);
+});
+
+orderList.addEventListener('pointermove', (e) => {
+    if (!dragMetric || !dragScope) return;
+    const rows = [...dragScope.querySelectorAll('.metric-row:not(.dragging)')];
+    rows.forEach(r => r.classList.remove('drag-over-before', 'drag-over-after'));
+    let closest = null, closestDist = Infinity, before = true;
+    for (const r of rows) {
+        const rect = r.getBoundingClientRect();
+        const mid = rect.top + rect.height / 2;
+        const dist = Math.abs(e.clientY - mid);
+        if (dist < closestDist) { closestDist = dist; closest = r; before = e.clientY < mid; }
+    }
+    if (closest) closest.classList.add(before ? 'drag-over-before' : 'drag-over-after');
+});
+
+orderList.addEventListener('pointerup', (e) => {
+    if (!dragMetric || !dragScope) return;
+    const rows = [...dragScope.querySelectorAll('.metric-row:not(.dragging)')];
+    rows.forEach(r => r.classList.remove('drag-over-before', 'drag-over-after'));
+    let closest = null, closestDist = Infinity, before = true;
+    for (const r of rows) {
+        const rect = r.getBoundingClientRect();
+        const mid = rect.top + rect.height / 2;
+        const dist = Math.abs(e.clientY - mid);
+        if (dist < closestDist) { closestDist = dist; closest = r; before = e.clientY < mid; }
+    }
+    if (closest && closest !== dragMetric) {
+        if (before) closest.before(dragMetric);
+        else closest.after(dragMetric);
+    }
+    dragMetric.classList.remove('dragging');
+    dragMetric = null;
+    dragScope = null;
+});
+</script>
+
+</body>
+</html>

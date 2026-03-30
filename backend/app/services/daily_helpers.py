@@ -201,12 +201,16 @@ def split_by_checkpoints(
     result: list[dict],
     all_user_checkpoints: list,
     active_intervals: list,
+    daily_layout: list | None = None,
 ) -> list[dict]:
     """Split metrics into per-checkpoint items for checkpoint-based page layout.
 
     Checkpoint metrics: each checkpoint sub-item becomes a separate card with checkpoint_section_id.
     Interval metrics: each interval sub-item placed after its start checkpoint.
     Daily metrics (no checkpoints/intervals) get checkpoint_section_id = None.
+
+    If daily_layout is provided, blocks are ordered according to the layout.
+    Otherwise, default order: checkpoints → intervals → daily metrics.
     """
     # Build interval_id → start_checkpoint_id mapping
     interval_start_cp: dict[int, int] = {}
@@ -216,7 +220,15 @@ def split_by_checkpoints(
     # Build checkpoint labels
     checkpoint_labels = {c["id"]: c["label"] for c in all_user_checkpoints}
 
-    final: list[dict] = []
+    # Split all items into buckets
+    # checkpoint_id → [split_items], interval_id → [split_items], daily → [items]
+    by_checkpoint: dict[int, list[dict]] = {}
+    by_interval: dict[int, list[dict]] = {}
+    daily_items: list[dict] = []
+    # Track standalone metric_ids for layout matching
+    standalone_by_cat: dict[int, list[dict]] = {}
+    standalone_no_cat: list[dict] = []
+
     for item in result:
         has_checkpoints = item.get("checkpoints")
         has_intervals = item.get("intervals")
@@ -224,10 +236,14 @@ def split_by_checkpoints(
         if not has_checkpoints and not has_intervals:
             item["checkpoint_section_id"] = None
             item["checkpoint_section_label"] = None
-            final.append(item)
+            cat_id = item.get("category_id")
+            if cat_id:
+                standalone_by_cat.setdefault(cat_id, []).append(item)
+            else:
+                standalone_no_cat.append(item)
+            daily_items.append(item)
             continue
 
-        # Split checkpoint sub-items
         if has_checkpoints:
             for cp in item["checkpoints"]:
                 cp_id = cp["checkpoint_id"]
@@ -239,9 +255,8 @@ def split_by_checkpoints(
                     "intervals": None,
                     "is_checkpoint_split": True,
                 }
-                final.append(split)
+                by_checkpoint.setdefault(cp_id, []).append(split)
 
-        # Split interval sub-items (placed after the start checkpoint)
         if has_intervals:
             for iv in item["intervals"]:
                 iv_id = iv["interval_id"]
@@ -254,6 +269,41 @@ def split_by_checkpoints(
                     "intervals": [iv],
                     "is_checkpoint_split": True,
                 }
-                final.append(split)
+                by_interval.setdefault(iv_id, []).append(split)
+
+    # If no layout, use default order: checkpoints → intervals → daily
+    if not daily_layout:
+        final: list[dict] = []
+        for cp in all_user_checkpoints:
+            final.extend(by_checkpoint.get(cp["id"], []))
+        for iv in active_intervals:
+            final.extend(by_interval.get(iv["id"], []))
+        final.extend(daily_items)
+        return final
+
+    # Apply layout ordering
+    final = []
+    used_daily_ids: set[int] = set()
+    for entry in daily_layout:
+        bt = entry["block_type"]
+        bid = entry["block_id"]
+        if bt == "checkpoint":
+            final.extend(by_checkpoint.get(bid, []))
+        elif bt == "interval":
+            final.extend(by_interval.get(bid, []))
+        elif bt == "category":
+            for item in standalone_by_cat.get(bid, []):
+                final.append(item)
+                used_daily_ids.add(item["metric_id"])
+        elif bt == "metric":
+            for item in standalone_no_cat:
+                if item["metric_id"] == bid and item["metric_id"] not in used_daily_ids:
+                    final.append(item)
+                    used_daily_ids.add(item["metric_id"])
+
+    # Append any daily items not covered by layout
+    for item in daily_items:
+        if item["metric_id"] not in used_daily_ids:
+            final.append(item)
 
     return final
