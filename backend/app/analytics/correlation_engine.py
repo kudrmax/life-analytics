@@ -91,6 +91,7 @@ class CorrelationEngine:
         self._aggregate_indices: dict[int, int] = {}
         self._computed_source_indices: dict[int, int] = {}
         self._checkpoint_source_indices_by_metric: dict[int, list[int]] = defaultdict(list)
+        self._interval_source_indices_by_metric: dict[int, list[int]] = defaultdict(list)
         self._low_var_sources: set[int] = set()
         self._binary_sources: set[int] = set()
         self._streak_sources: set[int] = set()
@@ -250,11 +251,10 @@ class CorrelationEngine:
                 self._aggregate_indices[mid] = indices[0]
 
         # Single-interval metrics: treat per-interval as aggregate for auto-source generation
-        interval_indices_by_metric: dict[int, list[int]] = defaultdict(list)
         for i, (sk, mt) in enumerate(self._sources):
             if sk.interval_id is not None and sk.metric_id is not None and not sk.is_auto:
-                interval_indices_by_metric[sk.metric_id].append(i)
-        for mid, indices in interval_indices_by_metric.items():
+                self._interval_source_indices_by_metric[sk.metric_id].append(i)
+        for mid, indices in self._interval_source_indices_by_metric.items():
             if len(indices) == 1 and mid not in self._aggregate_indices:
                 self._aggregate_indices[mid] = indices[0]
 
@@ -271,7 +271,8 @@ class CorrelationEngine:
                 continue
             if _auto.nonzero and m["type"] in (MetricType.number, MetricType.duration):
                 self._sources.append((SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=mid), MetricType.bool))
-            if m["type"] in self._CHECKPOINT_MINMAX_TYPES and mid in self._checkpoint_source_indices_by_metric:
+            has_per_binding_sources = mid in self._checkpoint_source_indices_by_metric or mid in self._interval_source_indices_by_metric
+            if m["type"] in self._CHECKPOINT_MINMAX_TYPES and has_per_binding_sources:
                 if _auto.checkpoint_max:
                     self._sources.append((SourceKey(auto_type=AutoSourceType.CHECKPOINT_MAX, auto_parent_metric_id=mid), m["type"]))
                 if _auto.checkpoint_min:
@@ -442,10 +443,13 @@ class CorrelationEngine:
         """Resolve checkpoint time-series data from engine cache for checkpoint_max/checkpoint_min."""
         if sk.auto_type not in (AutoSourceType.CHECKPOINT_MAX, AutoSourceType.CHECKPOINT_MIN):
             return None
-        checkpoint_indices = self._checkpoint_source_indices_by_metric.get(sk.auto_parent_metric_id, [])
-        if not checkpoint_indices:
+        binding_indices = (
+            self._checkpoint_source_indices_by_metric.get(sk.auto_parent_metric_id, [])
+            or self._interval_source_indices_by_metric.get(sk.auto_parent_metric_id, [])
+        )
+        if not binding_indices:
             return None
-        return [self._source_data.get(si, {}) for si in checkpoint_indices]
+        return [self._source_data.get(si, {}) for si in binding_indices]
 
     def _get_checkpoint_source_data(self, metric_id: int | None, checkpoint_id: int | None) -> dict[str, float]:
         """Find source_data for a specific checkpoint of a metric."""
