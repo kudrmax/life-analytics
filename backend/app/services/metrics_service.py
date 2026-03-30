@@ -13,6 +13,7 @@ from app.repositories.metric_config_repository import MetricConfigRepository
 from app.domain.enums import MetricType
 from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut
 from app.services.metric_conversion_service import MetricConversionService, ALLOWED_CONVERSIONS
+from app.repositories.layout_repository import LayoutRepository
 
 
 def _generate_slug(name: str) -> str:
@@ -73,6 +74,7 @@ class MetricsService:
         await self._create_checkpoint_configs(metric_id, data)
         await self._create_metric_intervals(metric_id, data.interval_binding, data.interval_ids)
         await self._create_condition(metric_id, data)
+        await self._update_layout_on_create(metric_id, cat_id, data)
         return await self.get_one(metric_id, privacy_mode)
 
     async def update(self, metric_id: int, data: MetricDefinitionUpdate, privacy_mode: bool) -> MetricDefinitionOut:
@@ -87,6 +89,7 @@ class MetricsService:
         return await self.get_one(metric_id, privacy_mode)
 
     async def delete(self, metric_id: int) -> None:
+        await self._update_layout_on_delete(metric_id)
         await self.repo.delete_metric(metric_id)
 
     def conversion_service(self) -> MetricConversionService:
@@ -413,6 +416,46 @@ class MetricsService:
         if cycle_check == metric_id:
             raise InvalidOperationError("Circular dependency detected")
         await self.cfg_repo.insert_or_update_condition(metric_id, dep_id, cond_type, cond_value)
+
+    def _layout_repo(self) -> LayoutRepository:
+        return LayoutRepository(self.conn, self.user_id)
+
+    async def _update_layout_on_create(self, metric_id: int, cat_id: int | None, data: MetricDefinitionCreate) -> None:
+        """Add metric to daily_layout if it's standalone."""
+        # Metrics bound to checkpoints/intervals don't need layout entries —
+        # their checkpoint/interval blocks already exist in layout.
+        is_bound = (data.is_checkpoint and data.checkpoint_configs and len(data.checkpoint_configs) >= 2) \
+            or data.interval_binding == "by_interval"
+        if is_bound:
+            return
+        layout = self._layout_repo()
+        if cat_id:
+            if not await layout.has_block("category", cat_id):
+                await layout.add_block("category", cat_id)
+        else:
+            await layout.add_block("metric", metric_id)
+
+    async def _update_layout_on_delete(self, metric_id: int) -> None:
+        """Remove metric from daily_layout if it's a standalone block."""
+        row = await self.repo.get_by_id(metric_id)
+        # Check if metric is bound to checkpoints/intervals
+        mc = await self.cfg_repo.get_metric_checkpoints(metric_id)
+        mi = await self.cfg_repo.get_metric_intervals(metric_id)
+        if mc or mi:
+            return  # Bound metric — no layout entry to remove
+        layout = self._layout_repo()
+        cat_id = row.get("category_id")
+        if cat_id:
+            # Check if this was the last metric in the category
+            count = await self.conn.fetchval(
+                "SELECT COUNT(*) FROM metric_definitions "
+                "WHERE user_id = $1 AND category_id = $2 AND enabled = TRUE AND id != $3",
+                self.user_id, cat_id, metric_id,
+            )
+            if count == 0:
+                await layout.remove_block("category", cat_id)
+        else:
+            await layout.remove_block("metric", metric_id)
 
     async def _validate_and_save_formula(self, metric_id: int, formula, result_type: str) -> None:
         if not formula:

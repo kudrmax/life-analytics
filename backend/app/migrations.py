@@ -716,6 +716,100 @@ MIGRATIONS = [
         );
         CREATE INDEX IF NOT EXISTS idx_daily_layout_user ON daily_layout(user_id);
     """),
+    (26, "seed_daily_layout", """
+        -- Seed daily_layout for all existing users
+        DO $seed_layout$
+        DECLARE
+            _user RECORD;
+            _cp RECORD;
+            _iv RECORD;
+            _cat_id INTEGER;
+            _metric RECORD;
+            _sort INTEGER;
+            _bound_ids INTEGER[];
+        BEGIN
+            FOR _user IN SELECT id FROM users LOOP
+                -- Skip if layout already exists
+                IF EXISTS (SELECT 1 FROM daily_layout WHERE user_id = _user.id) THEN
+                    CONTINUE;
+                END IF;
+
+                _sort := 0;
+
+                -- Collect bound metric IDs
+                SELECT ARRAY(
+                    SELECT DISTINCT metric_id FROM metric_checkpoints mc
+                    JOIN metric_definitions md ON md.id = mc.metric_id
+                    WHERE md.user_id = _user.id AND mc.enabled = TRUE AND md.enabled = TRUE
+                    UNION
+                    SELECT DISTINCT metric_id FROM metric_intervals mi
+                    JOIN metric_definitions md ON md.id = mi.metric_id
+                    WHERE md.user_id = _user.id AND mi.enabled = TRUE AND md.enabled = TRUE
+                ) INTO _bound_ids;
+
+                -- Checkpoint blocks + interval blocks after each checkpoint
+                FOR _cp IN
+                    SELECT id, sort_order FROM checkpoints
+                    WHERE user_id = _user.id AND deleted = FALSE
+                    ORDER BY sort_order
+                LOOP
+                    INSERT INTO daily_layout (user_id, block_type, block_id, sort_order)
+                    VALUES (_user.id, 'checkpoint', _cp.id, _sort)
+                    ON CONFLICT DO NOTHING;
+                    _sort := _sort + 10;
+
+                    -- Intervals starting at this checkpoint
+                    FOR _iv IN
+                        SELECT i.id FROM intervals i
+                        JOIN checkpoints cs ON cs.id = i.start_checkpoint_id
+                        JOIN checkpoints ce ON ce.id = i.end_checkpoint_id
+                        WHERE i.user_id = _user.id
+                          AND i.start_checkpoint_id = _cp.id
+                          AND cs.deleted = FALSE AND ce.deleted = FALSE
+                          AND NOT EXISTS (
+                              SELECT 1 FROM checkpoints cm
+                              WHERE cm.user_id = _user.id AND cm.deleted = FALSE
+                                AND cm.sort_order > cs.sort_order AND cm.sort_order < ce.sort_order
+                          )
+                        ORDER BY cs.sort_order
+                    LOOP
+                        INSERT INTO daily_layout (user_id, block_type, block_id, sort_order)
+                        VALUES (_user.id, 'interval', _iv.id, _sort)
+                        ON CONFLICT DO NOTHING;
+                        _sort := _sort + 10;
+                    END LOOP;
+                END LOOP;
+
+                -- Category blocks (standalone metrics with category)
+                FOR _cat_id IN
+                    SELECT DISTINCT md.category_id FROM metric_definitions md
+                    WHERE md.user_id = _user.id AND md.enabled = TRUE
+                      AND md.category_id IS NOT NULL
+                      AND md.id != ALL(_bound_ids)
+                    ORDER BY md.category_id
+                LOOP
+                    INSERT INTO daily_layout (user_id, block_type, block_id, sort_order)
+                    VALUES (_user.id, 'category', _cat_id, _sort)
+                    ON CONFLICT DO NOTHING;
+                    _sort := _sort + 10;
+                END LOOP;
+
+                -- Metric blocks (standalone without category)
+                FOR _metric IN
+                    SELECT md.id FROM metric_definitions md
+                    WHERE md.user_id = _user.id AND md.enabled = TRUE
+                      AND md.category_id IS NULL
+                      AND md.id != ALL(_bound_ids)
+                    ORDER BY md.sort_order, md.id
+                LOOP
+                    INSERT INTO daily_layout (user_id, block_type, block_id, sort_order)
+                    VALUES (_user.id, 'metric', _metric.id, _sort)
+                    ON CONFLICT DO NOTHING;
+                    _sort := _sort + 10;
+                END LOOP;
+            END LOOP;
+        END $seed_layout$;
+    """),
 ]
 
 

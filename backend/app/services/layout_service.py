@@ -78,12 +78,6 @@ class LayoutService:
             else:
                 standalone_no_cat.append(item)
 
-        # Ensure layout exists, auto-generate if empty
-        layout = await self._ensure_layout(
-            layout, checkpoints, intervals,
-            standalone_by_cat, standalone_no_cat,
-        )
-
         # Build response blocks in layout order
         blocks: list[dict] = []
         for entry in layout:

@@ -767,18 +767,15 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
     _todayCheckpoints = summary.checkpoints || [];
     window._todayIntervals = summary.intervals || [];
 
-    // Group metrics by checkpoint_section_id
+    // Group metrics by block_type:block_id (respects daily_layout ordering)
     const checkpoints = summary.checkpoints || [];
-    const metricsByCheckpoint = {};  // checkpoint_id → metrics[]
-    const dailyMetrics = [];        // checkpoint_section_id = null
+    const metricsByBlock = {};  // "block_type:block_id" → metrics[]
     for (const m of summary.metrics) {
-        const cpId = m.checkpoint_section_id;
-        if (cpId != null) {
-            if (!metricsByCheckpoint[cpId]) metricsByCheckpoint[cpId] = [];
-            metricsByCheckpoint[cpId].push(m);
-        } else {
-            dailyMetrics.push(m);
-        }
+        const bt = m.block_type || (m.checkpoint_section_id != null ? (m.is_checkpoint ? 'checkpoint' : 'interval') : 'daily');
+        const bid = m.block_id || m.checkpoint_section_id || 0;
+        const key = `${bt}:${bid}`;
+        if (!metricsByBlock[key]) metricsByBlock[key] = [];
+        metricsByBlock[key].push(m);
     }
 
     // Helper: render metrics grouped by category within a section
@@ -843,46 +840,35 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
         const orderedBlocks = [];
         const seenBlockKeys = new Set();
         for (const m of summary.metrics) {
-            const cpId = m.checkpoint_section_id;
-            // Block key: "cp:ID" for checkpoint assessments, "iv:ID" for interval facts, "daily" for standalone
-            let key;
-            if (cpId != null && m.is_checkpoint) key = `cp:${cpId}`;
-            else if (cpId != null && !m.is_checkpoint) key = `iv:${cpId}`;
-            else key = 'daily';
+            const bt = m.block_type || 'daily';
+            const bid = m.block_id || 0;
+            const key = `${bt}:${bid}`;
             if (!seenBlockKeys.has(key)) {
                 seenBlockKeys.add(key);
-                orderedBlocks.push({ key, cpId, isCheckpoint: cpId != null && m.is_checkpoint });
+                orderedBlocks.push({ key, blockType: bt, blockId: bid });
             }
         }
 
         for (const block of orderedBlocks) {
-            if (block.key === 'daily') {
-                if (checkpoints.length > 0 && dailyMetrics.length > 0) {
-                    html += `<h2 class="fill-time-header">Не привязаны к интервалам</h2>`;
-                }
-                html += renderSectionMetrics(dailyMetrics);
-            } else if (block.isCheckpoint) {
-                const cpMetrics = metricsByCheckpoint[block.cpId] || [];
-                const assessments = cpMetrics.filter(m => m.is_checkpoint);
-                const label = cpLabelById[block.cpId] || '';
+            const blockMetrics = metricsByBlock[block.key] || [];
+            if (blockMetrics.length === 0) continue;
+
+            if (block.blockType === 'checkpoint') {
+                const label = cpLabelById[block.blockId] || '';
                 html += `<div class="checkpoint-sandwich">`;
                 html += `<div class="checkpoint-sandwich-line">${_escapeHtml(label)}</div>`;
-                if (assessments.length > 0) {
-                    html += `<div class="checkpoint-sandwich-assessments">`;
-                    html += renderSectionMetrics(assessments);
-                    html += `</div>`;
-                }
+                html += `<div class="checkpoint-sandwich-assessments">`;
+                html += renderSectionMetrics(blockMetrics);
+                html += `</div>`;
                 html += `<div class="checkpoint-sandwich-line">${_escapeHtml(label)}</div>`;
                 html += `</div>`;
+            } else if (block.blockType === 'interval') {
+                html += `<div class="checkpoint-interval-facts">`;
+                html += renderSectionMetrics(blockMetrics);
+                html += `</div>`;
             } else {
-                // Interval facts block
-                const cpMetrics = metricsByCheckpoint[block.cpId] || [];
-                const facts = cpMetrics.filter(m => !m.is_checkpoint);
-                if (facts.length > 0) {
-                    html += `<div class="checkpoint-interval-facts">`;
-                    html += renderSectionMetrics(facts);
-                    html += `</div>`;
-                }
+                // category or metric block — standalone daily metrics
+                html += renderSectionMetrics(blockMetrics);
             }
         }
     }

@@ -2,12 +2,14 @@
 
 from app.domain.exceptions import InvalidOperationError, ConflictError
 from app.repositories.checkpoints_repository import CheckpointsRepository
+from app.repositories.layout_repository import LayoutRepository
 from app.schemas import CheckpointOut, CheckpointSettingsOut
 
 
 class CheckpointsService:
     def __init__(self, repo: CheckpointsRepository) -> None:
         self.repo = repo
+        self._layout = LayoutRepository(repo.conn, repo.user_id)
 
     async def list_all(self) -> list[CheckpointSettingsOut]:
         rows = await self.repo.get_all_with_usage()
@@ -21,6 +23,10 @@ class CheckpointsService:
         sort_order = await self.repo.get_next_sort_order()
         checkpoint_id = await self.repo.create(label, sort_order, description)
         await self.repo.recalculate_intervals()
+        # Add checkpoint block + new interval blocks to layout
+        await self._layout.add_block("checkpoint", checkpoint_id)
+        for iv in await self.repo.get_active_intervals():
+            await self._layout.add_block("interval", iv["id"])
         return CheckpointSettingsOut(id=checkpoint_id, label=label, sort_order=sort_order, description=description, usage_count=0, usage_metric_names=[])
 
     async def update(self, checkpoint_id: int, label: str | None, description: str | None = None) -> CheckpointSettingsOut:
@@ -45,9 +51,20 @@ class CheckpointsService:
             raise ConflictError(
                 f"Чекпоинт используется в метриках: {', '.join(names)}. Сначала отвяжите его.",
             )
+        # Remove checkpoint block + stale interval blocks from layout
+        await self._layout.remove_block("checkpoint", checkpoint_id)
+        # Get intervals before delete to know which to remove
+        old_intervals = {iv["id"] for iv in await self.repo.get_active_intervals()}
         await self.repo.delete_disabled_metric_checkpoints(checkpoint_id)
         await self.repo.delete(checkpoint_id)
         await self.repo.recalculate_intervals()
+        # Remove interval blocks that no longer exist
+        new_intervals = {iv["id"] for iv in await self.repo.get_active_intervals()}
+        for removed_iv_id in old_intervals - new_intervals:
+            await self._layout.remove_block("interval", removed_iv_id)
+        # Add new intervals that appeared
+        for new_iv_id in new_intervals - old_intervals:
+            await self._layout.add_block("interval", new_iv_id)
 
     async def merge(self, source_id: int, target_id: int) -> dict:
         if source_id == target_id:

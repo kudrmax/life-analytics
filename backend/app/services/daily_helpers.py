@@ -238,8 +238,12 @@ def split_by_checkpoints(
             item["checkpoint_section_label"] = None
             cat_id = item.get("category_id")
             if cat_id:
+                item["block_type"] = "category"
+                item["block_id"] = cat_id
                 standalone_by_cat.setdefault(cat_id, []).append(item)
             else:
+                item["block_type"] = "metric"
+                item["block_id"] = item["metric_id"]
                 standalone_no_cat.append(item)
             daily_items.append(item)
             continue
@@ -254,6 +258,8 @@ def split_by_checkpoints(
                     "checkpoints": [cp],
                     "intervals": None,
                     "is_checkpoint_split": True,
+                    "block_type": "checkpoint",
+                    "block_id": cp_id,
                 }
                 by_checkpoint.setdefault(cp_id, []).append(split)
 
@@ -268,6 +274,8 @@ def split_by_checkpoints(
                     "checkpoints": None,
                     "intervals": [iv],
                     "is_checkpoint_split": True,
+                    "block_type": "interval",
+                    "block_id": iv_id,
                 }
                 by_interval.setdefault(iv_id, []).append(split)
 

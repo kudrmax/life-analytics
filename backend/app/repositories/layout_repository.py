@@ -14,6 +14,32 @@ class LayoutRepository(BaseRepository):
             self.user_id,
         )
 
+    async def add_block(self, block_type: str, block_id: int) -> None:
+        """Add block to end of layout if not exists."""
+        max_order = await self.conn.fetchval(
+            "SELECT COALESCE(MAX(sort_order), -10) FROM daily_layout WHERE user_id = $1",
+            self.user_id,
+        )
+        await self.conn.execute(
+            "INSERT INTO daily_layout (user_id, block_type, block_id, sort_order) "
+            "VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, block_type, block_id) DO NOTHING",
+            self.user_id, block_type, block_id, (max_order or 0) + 10,
+        )
+
+    async def remove_block(self, block_type: str, block_id: int) -> None:
+        """Remove block from layout."""
+        await self.conn.execute(
+            "DELETE FROM daily_layout WHERE user_id = $1 AND block_type = $2 AND block_id = $3",
+            self.user_id, block_type, block_id,
+        )
+
+    async def has_block(self, block_type: str, block_id: int) -> bool:
+        """Check if block exists in layout."""
+        return await self.conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM daily_layout WHERE user_id = $1 AND block_type = $2 AND block_id = $3)",
+            self.user_id, block_type, block_id,
+        )
+
     async def save_layout(self, items: list[dict]) -> None:
         """Replace all layout entries for user with new ordering."""
         async with self.conn.transaction():
