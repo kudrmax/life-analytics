@@ -85,8 +85,6 @@ class MetricDefinitionCreate(BaseModel):
     is_checkpoint: bool = False
     interval_binding: str = "all_day"
     interval_ids: list[int] | None = None
-    all_checkpoints: bool = False
-    all_intervals: bool = False
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None
@@ -113,8 +111,6 @@ class MetricDefinitionUpdate(BaseModel):
     is_checkpoint: bool | None = None
     interval_binding: str | None = None
     interval_ids: list[int] | None = None
-    all_checkpoints: bool | None = None
-    all_intervals: bool | None = None
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None
@@ -152,8 +148,6 @@ class MetricDefinitionOut(BaseModel):
     hide_in_cards: bool = False
     is_checkpoint: bool = False
     interval_binding: str = "all_day"
-    all_checkpoints: bool = False
-    all_intervals: bool = False
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None

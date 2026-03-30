@@ -661,6 +661,50 @@ MIGRATIONS = [
             END LOOP;
         END $ensure_intervals$;
     """),
+    (23, "drop_all_checkpoints_all_intervals", """
+        ALTER TABLE metric_definitions DROP CONSTRAINT IF EXISTS md_all_checkpoints_role;
+        ALTER TABLE metric_definitions DROP CONSTRAINT IF EXISTS md_all_intervals_role;
+        ALTER TABLE metric_definitions DROP COLUMN IF EXISTS all_checkpoints;
+        ALTER TABLE metric_definitions DROP COLUMN IF EXISTS all_intervals;
+    """),
+    (24, "remove_moment_binding", """
+        -- Create metric_intervals for all active intervals of each moment metric
+        DO $migrate_moment$
+        DECLARE
+            _metric RECORD;
+            _interval RECORD;
+            _sort INTEGER;
+        BEGIN
+            FOR _metric IN
+                SELECT md.id AS metric_id, md.user_id
+                FROM metric_definitions md
+                WHERE md.interval_binding = 'moment'
+            LOOP
+                _sort := 0;
+                FOR _interval IN
+                    SELECT i.id
+                    FROM intervals i
+                    JOIN checkpoints cs ON cs.id = i.start_checkpoint_id AND cs.deleted = FALSE
+                    JOIN checkpoints ce ON ce.id = i.end_checkpoint_id AND ce.deleted = FALSE
+                    WHERE i.user_id = _metric.user_id
+                      AND NOT EXISTS (
+                          SELECT 1 FROM checkpoints cm
+                          WHERE cm.user_id = _metric.user_id AND cm.deleted = FALSE
+                            AND cm.sort_order > cs.sort_order AND cm.sort_order < ce.sort_order
+                      )
+                    ORDER BY cs.sort_order
+                LOOP
+                    INSERT INTO metric_intervals (metric_id, interval_id, sort_order, enabled)
+                    VALUES (_metric.metric_id, _interval.id, _sort, TRUE)
+                    ON CONFLICT (metric_id, interval_id) DO UPDATE SET enabled = TRUE;
+                    _sort := _sort + 1;
+                END LOOP;
+            END LOOP;
+        END $migrate_moment$;
+
+        -- Update interval_binding
+        UPDATE metric_definitions SET interval_binding = 'by_interval' WHERE interval_binding = 'moment';
+    """),
 ]
 
 

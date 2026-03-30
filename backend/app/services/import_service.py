@@ -11,7 +11,7 @@ from app.repositories.import_repository import ImportRepository
 from app.services.import_entries_service import EntryImporter
 
 
-_INTERVAL_BINDING_MAP = {"daily": "all_day", "fixed": "by_interval", "floating": "by_interval"}
+_INTERVAL_BINDING_MAP = {"daily": "all_day", "fixed": "by_interval", "floating": "by_interval", "moment": "by_interval"}
 
 
 def _normalize_interval_binding(raw: str) -> str:
@@ -227,8 +227,7 @@ class ImportService:
         if mt == MetricType.enum.value and p["enum_opts"]:
             await self.repo.upsert_enum_config(mid, p["multi"])
             await self._import_enum_options(mid, p["enum_opts"])
-        # Don't create metric_checkpoints for moment metrics (they use dynamic interval selection)
-        if checkpoint_configs and p.get("interval_binding") != "moment":
+        if checkpoint_configs:
             await self._import_checkpoints(mid, checkpoint_configs)
         if interval_configs:
             await self._import_intervals(mid, interval_configs)
@@ -246,8 +245,7 @@ class ImportService:
             await self.repo.upsert_enum_config(mid, p["multi"])
             for i, label in enumerate(p["enum_opts"]):
                 await self.repo.insert_enum_option(mid, i, label)
-        # Don't create metric_checkpoints for moment metrics (they use dynamic interval selection)
-        if checkpoint_configs and p.get("interval_binding") != "moment":
+        if checkpoint_configs:
             for i, cfg in enumerate(checkpoint_configs):
                 cp_id = await self.repo.find_or_create_checkpoint(cfg["label"])
                 await self.repo.insert_metric_checkpoint(mid, cp_id, i, cfg.get("category_id"))

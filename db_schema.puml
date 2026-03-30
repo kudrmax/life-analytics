@@ -54,8 +54,6 @@ entity "metric_definitions" as md {
     * hide_in_cards : BOOLEAN
     * is_checkpoint : BOOLEAN
     * interval_binding : VARCHAR(20)
-    * all_checkpoints : BOOLEAN
-    * all_intervals : BOOLEAN
     description : TEXT
     * created_at : TIMESTAMPTZ
     --

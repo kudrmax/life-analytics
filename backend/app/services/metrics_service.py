@@ -10,7 +10,6 @@ from app.integrations.activitywatch.registry import ACTIVITYWATCH_METRICS, ACTIV
 from app.services.metric_builder import build_metric_out
 from app.repositories.metric_repository import MetricRepository
 from app.repositories.metric_config_repository import MetricConfigRepository
-from app.repositories.checkpoints_repository import CheckpointsRepository
 from app.domain.enums import MetricType
 from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut
 from app.services.metric_conversion_service import MetricConversionService, ALLOWED_CONVERSIONS
@@ -72,8 +71,7 @@ class MetricsService:
         )
         await self._create_type_config(metric_id, data)
         await self._create_checkpoint_configs(metric_id, data)
-        await self._create_metric_intervals(metric_id, data.interval_binding, data.interval_ids,
-                                            data.all_intervals)
+        await self._create_metric_intervals(metric_id, data.interval_binding, data.interval_ids)
         await self._create_condition(metric_id, data)
         return await self.get_one(metric_id, privacy_mode)
 
@@ -215,11 +213,6 @@ class MetricsService:
     async def _create_checkpoint_configs(self, metric_id: int, data: MetricDefinitionCreate) -> None:
         if data.type in (MetricType.computed, MetricType.integration, MetricType.text):
             return
-        if data.all_checkpoints:
-            checkpoints = await self.repo.get_user_checkpoints_ordered()
-            for i, cp in enumerate(checkpoints):
-                await self.cfg_repo.insert_metric_checkpoint(metric_id, cp["id"], i, None)
-            return
         if not data.checkpoint_configs or len(data.checkpoint_configs) < 2:
             return
         for i, cfg in enumerate(data.checkpoint_configs):
@@ -238,7 +231,7 @@ class MetricsService:
     async def _apply_field_updates(self, metric_id: int, row, data: MetricDefinitionUpdate) -> None:
         updates = {}
         for field in ("name", "enabled", "sort_order", "private", "hide_in_cards", "is_checkpoint",
-                       "interval_binding", "all_checkpoints", "all_intervals"):
+                       "interval_binding"):
             val = getattr(data, field)
             if val is not None:
                 updates[field] = val
@@ -313,22 +306,6 @@ class MetricsService:
         return cat_id if exists else None
 
     async def _update_checkpoint_configs(self, metric_id: int, data: MetricDefinitionUpdate) -> None:
-        if data.all_checkpoints is True:
-            existing = await self.cfg_repo.get_metric_checkpoints(metric_id)
-            existing_cp_ids = {cp["checkpoint_id"] for cp in existing}
-            all_checkpoints = await self.repo.get_user_checkpoints_ordered()
-            for i, cp in enumerate(all_checkpoints):
-                if cp["id"] not in existing_cp_ids:
-                    await self.cfg_repo.insert_metric_checkpoint(metric_id, cp["id"], i, None)
-                else:
-                    await self.cfg_repo.upsert_metric_checkpoint(metric_id, cp["id"], None, i)
-            all_cp_ids = {cp["id"] for cp in all_checkpoints}
-            for cp in existing:
-                if cp["checkpoint_id"] not in all_cp_ids:
-                    await self.cfg_repo.disable_metric_checkpoint(metric_id, cp["checkpoint_id"])
-            if not existing and all_checkpoints:
-                await self.cfg_repo.migrate_null_checkpoint_entries(metric_id, all_checkpoints[0]["id"])
-            return
         if data.checkpoint_configs is None:
             return
         existing = await self.cfg_repo.get_metric_checkpoints(metric_id)
@@ -375,16 +352,10 @@ class MetricsService:
 
     async def _create_metric_intervals(
         self, metric_id: int, binding: str,
-        interval_ids: list[int] | None, all_intervals: bool = False,
+        interval_ids: list[int] | None,
     ) -> None:
         """Auto-create metric_intervals for interval-bound facts."""
-        if binding in ("all_day", "moment"):
-            return
-        if all_intervals:
-            cp_repo = CheckpointsRepository(self.conn, self.repo.user_id)
-            active_intervals = await cp_repo.get_active_intervals()
-            for i, iv in enumerate(active_intervals):
-                await self.cfg_repo.insert_metric_interval(metric_id, iv["id"], i, None)
+        if binding == "all_day":
             return
         if not interval_ids:
             raise InvalidOperationError("interval_ids is required for by_interval binding")
@@ -401,11 +372,11 @@ class MetricsService:
 
     async def _update_interval_binding(self, metric_id: int, row, data: MetricDefinitionUpdate) -> None:
         """Handle interval_binding changes — recreate metric_intervals."""
-        if data.interval_binding is None and data.interval_ids is None and data.all_intervals is None:
+        if data.interval_binding is None and data.interval_ids is None:
             return
         old_binding = row.get("interval_binding", "all_day")
         new_binding = data.interval_binding or old_binding
-        if new_binding == old_binding and data.interval_ids is None and not data.all_intervals:
+        if new_binding == old_binding and data.interval_ids is None:
             return
         # Remove old metric intervals
         if old_binding == "by_interval":
@@ -415,7 +386,6 @@ class MetricsService:
         # Create new metric intervals
         await self._create_metric_intervals(
             metric_id, new_binding, data.interval_ids,
-            data.all_intervals or False,
         )
         # Migrate null-interval entries to first interval so they stay visible.
         # Only needed when actually transitioning from non-by_interval → by_interval.

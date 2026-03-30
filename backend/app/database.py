@@ -287,12 +287,6 @@ async def _init_db_schema(conn):
     await conn.execute("""
         ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS interval_binding VARCHAR(20) NOT NULL DEFAULT 'all_day'
     """)
-    await conn.execute("""
-        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS all_checkpoints BOOLEAN NOT NULL DEFAULT FALSE
-    """)
-    await conn.execute("""
-        ALTER TABLE metric_definitions ADD COLUMN IF NOT EXISTS all_intervals BOOLEAN NOT NULL DEFAULT FALSE
-    """)
 
     # Add category_id column to metric_definitions (for existing DBs that had category/fill_time columns)
     await conn.execute("""

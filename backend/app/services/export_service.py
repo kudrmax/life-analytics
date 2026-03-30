@@ -75,19 +75,15 @@ class ExportService:
         ])
 
         for m in metrics:
-            # Don't export checkpoint_labels for moment metrics (their metric_checkpoints are disabled)
-            if m.get("interval_binding") == "moment":
-                checkpoint_labels = []
+            cp_data = checkpoints_by_metric.get(m["id"], [])
+            has_cp_cats = any(cpd["category_id"] is not None for cpd in cp_data)
+            if has_cp_cats:
+                checkpoint_labels = [
+                    {"label": cpd["label"], "category_path": _cat_path(cpd["category_id"])}
+                    for cpd in cp_data
+                ]
             else:
-                cp_data = checkpoints_by_metric.get(m["id"], [])
-                has_cp_cats = any(cpd["category_id"] is not None for cpd in cp_data)
-                if has_cp_cats:
-                    checkpoint_labels = [
-                        {"label": cpd["label"], "category_path": _cat_path(cpd["category_id"])}
-                        for cpd in cp_data
-                    ]
-                else:
-                    checkpoint_labels = [cpd["label"] for cpd in cp_data]
+                checkpoint_labels = [cpd["label"] for cpd in cp_data]
 
             iv_data = intervals_by_metric.get(m["id"], [])
             has_iv_cats = any(ivd.get("category_id") is not None for ivd in iv_data)

@@ -158,11 +158,7 @@ def calculate_progress(result: list[dict]) -> dict:
             if item.get("note_count", 0) > 0:
                 filled += 1
             continue
-        if item.get("interval_binding") == "moment":
-            total += 1
-            if item.get("intervals"):
-                filled += 1
-        elif item.get("checkpoints"):
+        if item.get("checkpoints"):
             for cp in item["checkpoints"]:
                 total += 1
                 if cp["entry"] is not None:
@@ -224,10 +220,8 @@ def split_by_checkpoints(
     for item in result:
         has_checkpoints = item.get("checkpoints")
         has_intervals = item.get("intervals")
-        is_moment = item.get("interval_binding") == "moment"
 
-        if is_moment or (not has_checkpoints and not has_intervals):
-            # Daily metric or moment-binding — no checkpoint section (single card)
+        if not has_checkpoints and not has_intervals:
             item["checkpoint_section_id"] = None
             item["checkpoint_section_label"] = None
             final.append(item)

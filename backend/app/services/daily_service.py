@@ -145,18 +145,15 @@ class DailyService:
                 item["note_count"] = 0 if m["type"] == MetricType.text else None
                 result.append(item); continue
 
-            is_moment = m.get("interval_binding") == "moment"
             cp_slots = data["enabled_checkpoints"].get(mid, [])
             cp_extra = data["disabled_checkpoints"].get(mid, [])
             iv_slots = data["enabled_intervals"].get(mid, [])
             iv_extra = data["disabled_intervals"].get(mid, [])
-            if is_moment:
-                self._fill_moment(item, m, data["entries_by_metric"].get(mid, []), data)
-            elif cp_slots or cp_extra:
+            if cp_slots or cp_extra:
                 self._fill_checkpoints(item, m, data["entries_by_metric"].get(mid, []), cp_slots, cp_extra, data)
             if iv_slots or iv_extra:
                 self._fill_intervals(item, m, data["entries_by_metric"].get(mid, []), iv_slots, iv_extra, data)
-            if not is_moment and not cp_slots and not cp_extra and not iv_slots and not iv_extra:
+            if not cp_slots and not cp_extra and not iv_slots and not iv_extra:
                 self._fill_single(item, m, data["entries_by_metric"].get(mid, []), data)
             result.append(item)
         return result
@@ -213,32 +210,3 @@ class DailyService:
             if sc:
                 item["scale_min"] = sc["scale_min"]; item["scale_max"] = sc["scale_max"]; item["scale_step"] = sc["scale_step"]
 
-    def _fill_moment(self, item: dict, m: dict, entries: list, data: dict) -> None:
-        """Fill moment-binding intervals from actual entries (no pre-configured metric_intervals)."""
-        mid = m["id"]
-        active_intervals = data.get("active_intervals", [])
-        interval_labels = {iv["id"]: iv["label"] for iv in active_intervals}
-        interval_items: list[dict] = []
-        for e in sorted(entries, key=lambda x: x["recorded_at"]):
-            if e.get("interval_id") is None:
-                continue
-            v = data["values_map"].get(e["id"])
-            entry_data: dict = {
-                "id": e["id"], "recorded_at": str(e["recorded_at"]), "value": v,
-                "display_value": format_display_value(
-                    v, m["type"], m.get("result_type"),
-                    data["enum_options_by_metric"].get(mid), scale_labels=item.get("scale_labels"),
-                ),
-            }
-            sc = data["scale_context_map"].get(e["id"])
-            if sc:
-                entry_data["scale_min"] = sc["scale_min"]
-                entry_data["scale_max"] = sc["scale_max"]
-                entry_data["scale_step"] = sc["scale_step"]
-            interval_items.append({
-                "interval_id": e["interval_id"],
-                "label": interval_labels.get(e["interval_id"], ""),
-                "category_id": None,
-                "entry": entry_data,
-            })
-        item["intervals"] = interval_items

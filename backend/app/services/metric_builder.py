@@ -57,8 +57,6 @@ async def build_metric_out(
         hide_in_cards=row.get("hide_in_cards", False),
         is_checkpoint=row.get("is_checkpoint", False),
         interval_binding=row.get("interval_binding", "all_day"),
-        all_checkpoints=row.get("all_checkpoints", False),
-        all_intervals=row.get("all_intervals", False),
         condition_metric_id=row.get("condition_metric_id"),
         condition_type=row.get("condition_type"),
         condition_value=json.loads(row["condition_value"]) if row.get("condition_value") is not None else None,
