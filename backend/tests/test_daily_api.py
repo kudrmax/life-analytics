@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_slot
+from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_checkpoint
 
 DATE = "2026-01-10"
 
@@ -331,79 +331,79 @@ class TestTextMetric:
 
 
 # ---------------------------------------------------------------------------
-# 10-11. Multi-slot metric
+# 10-11. Multi-checkpoint metric
 # ---------------------------------------------------------------------------
 
-class TestMultiSlot:
+class TestMultiCheckpoint:
 
-    async def test_slots_with_entries(
+    async def test_checkpoints_with_entries(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        slot_am = await create_slot(client, user_a["token"], "AM")
-        slot_pm = await create_slot(client, user_a["token"], "PM")
+        cp_am = await create_checkpoint(client, user_a["token"], "AM")
+        cp_pm = await create_checkpoint(client, user_a["token"], "PM")
         metric = await create_metric(
-            client, user_a["token"], name="SlotBool", metric_type="bool",
-            slot_configs=[{"slot_id": slot_am["id"]}, {"slot_id": slot_pm["id"]}],
+            client, user_a["token"], name="CpBool", metric_type="bool",
+            checkpoint_configs=[{"checkpoint_id": cp_am["id"]}, {"checkpoint_id": cp_pm["id"]}],
         )
-        slots = metric["slots"]
-        assert len(slots) == 2
+        checkpoints = metric["checkpoints"]
+        assert len(checkpoints) == 2
 
-        # Create entries for each slot
+        # Create entries for each checkpoint
         await create_entry(
             client, user_a["token"], metric["id"], DATE, True,
-            slot_id=slots[0]["id"],
+            checkpoint_id=checkpoints[0]["id"],
         )
         await create_entry(
             client, user_a["token"], metric["id"], DATE, False,
-            slot_id=slots[1]["id"],
+            checkpoint_id=checkpoints[1]["id"],
         )
 
         daily = await _get_daily(client, user_a["token"])
 
-        # Multi-slot metrics are now split into per-checkpoint items
+        # Multi-checkpoint metrics are split into per-checkpoint items
         items = [m for m in daily["metrics"] if m["metric_id"] == metric["id"]]
         assert len(items) == 2
 
         for item in items:
-            assert item["is_slot_split"] is True
+            assert item["is_checkpoint_split"] is True
             assert item["checkpoint_section_id"] is not None
-            assert len(item["slots"]) == 1
+            assert len(item["checkpoints"]) == 1
 
-        am_item = next(i for i in items if i["slots"][0]["label"] == "AM")
-        pm_item = next(i for i in items if i["slots"][0]["label"] == "PM")
+        am_item = next(i for i in items if i["checkpoints"][0]["label"] == "AM")
+        pm_item = next(i for i in items if i["checkpoints"][0]["label"] == "PM")
 
-        assert am_item["slots"][0]["entry"] is not None
-        assert am_item["slots"][0]["entry"]["value"] is True
+        assert am_item["checkpoints"][0]["entry"] is not None
+        assert am_item["checkpoints"][0]["entry"]["value"] is True
 
-        assert pm_item["slots"][0]["entry"] is not None
-        assert pm_item["slots"][0]["entry"]["value"] is False
+        assert pm_item["checkpoints"][0]["entry"] is not None
+        assert pm_item["checkpoints"][0]["entry"]["value"] is False
 
-    async def test_slots_structure(
+    async def test_checkpoints_structure(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Multi-slot metric splits into per-checkpoint items, main entry is null."""
-        slot_m = await create_slot(client, user_a["token"], "Morning")
-        slot_e = await create_slot(client, user_a["token"], "Evening")
+        """Multi-checkpoint metric splits into per-checkpoint items, main entry is null."""
+        cp_m = await create_checkpoint(client, user_a["token"], "Morning")
+        cp_e = await create_checkpoint(client, user_a["token"], "Evening")
         metric = await create_metric(
-            client, user_a["token"], name="SlotNum", metric_type="number",
-            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
+            client, user_a["token"], name="CpNum", metric_type="number",
+            checkpoint_configs=[{"checkpoint_id": cp_m["id"]}, {"checkpoint_id": cp_e["id"]}],
         )
         daily = await _get_daily(client, user_a["token"])
 
-        # Multi-slot metrics are split into per-checkpoint items
+        # Multi-checkpoint metrics are split into per-checkpoint items
         items = [m for m in daily["metrics"] if m["metric_id"] == metric["id"]]
         assert len(items) == 2
 
         for item in items:
             assert item["entry"] is None
-            assert item["is_slot_split"] is True
+            assert item["is_checkpoint_split"] is True
             assert item["checkpoint_section_id"] is not None
             assert item["checkpoint_section_label"] is not None
-            assert len(item["slots"]) == 1
-            s = item["slots"][0]
-            assert s["entry"] is None
-            assert "label" in s
-            assert "slot_id" in s
+            assert len(item["checkpoints"]) == 1
+            cp = item["checkpoints"][0]
+            assert cp["entry"] is None
+            assert "label" in cp
+            assert "checkpoint_id" in cp
 
 
 # ---------------------------------------------------------------------------
@@ -806,26 +806,26 @@ class TestConditionEqualsEnum:
 
 
 # ---------------------------------------------------------------------------
-# 25. Slot category split
+# 25. Checkpoint category split
 # ---------------------------------------------------------------------------
 
-class TestSlotCategorySplit:
+class TestCheckpointCategorySplit:
 
     async def test_split_by_checkpoints(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Metric with 2 slots splits into 2 per-checkpoint items."""
-        # Create global slots, then metric with slot_configs
-        slot_m = await create_slot(client, user_a["token"], "Morning")
-        slot_e = await create_slot(client, user_a["token"], "Evening")
+        """Metric with 2 checkpoints splits into 2 per-checkpoint items."""
+        # Create global checkpoints, then metric with checkpoint_configs
+        cp_m = await create_checkpoint(client, user_a["token"], "Morning")
+        cp_e = await create_checkpoint(client, user_a["token"], "Evening")
         resp = await client.post(
             "/api/metrics",
             json={
-                "name": "SplitSlots",
+                "name": "SplitCheckpoints",
                 "type": "bool",
-                "slot_configs": [
-                    {"slot_id": slot_m["id"]},
-                    {"slot_id": slot_e["id"]},
+                "checkpoint_configs": [
+                    {"checkpoint_id": cp_m["id"]},
+                    {"checkpoint_id": cp_e["id"]},
                 ],
             },
             headers=auth_headers(user_a["token"]),
@@ -843,46 +843,46 @@ class TestSlotCategorySplit:
 
         assert len(items) == 2
 
-        # Each item has a checkpoint_section_id matching the slot_id
+        # Each item has a checkpoint_section_id matching the checkpoint_id
         checkpoint_ids = {item["checkpoint_section_id"] for item in items}
-        assert checkpoint_ids == {slot_m["id"], slot_e["id"]}
+        assert checkpoint_ids == {cp_m["id"], cp_e["id"]}
 
         for item in items:
-            assert item["is_slot_split"] is True
+            assert item["is_checkpoint_split"] is True
             assert item["checkpoint_section_label"] is not None
-            assert len(item["slots"]) == 1
+            assert len(item["checkpoints"]) == 1
 
 
 # ---------------------------------------------------------------------------
-# 26. Slot dep value extraction (filled condition on multi-slot metric)
+# 26. Checkpoint dep value extraction (filled condition on multi-checkpoint metric)
 # ---------------------------------------------------------------------------
 
-class TestSlotDepValueExtraction:
+class TestCheckpointDepValueExtraction:
 
-    async def test_filled_condition_with_slotted_dep(
+    async def test_filled_condition_with_checkpoint_dep(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Multi-slot dep with one slot filled -> condition 'filled' is met."""
-        slot_m = await create_slot(client, user_a["token"], "Morning")
-        slot_e = await create_slot(client, user_a["token"], "Evening")
+        """Multi-checkpoint dep with one checkpoint filled -> condition 'filled' is met."""
+        cp_m = await create_checkpoint(client, user_a["token"], "Morning")
+        cp_e = await create_checkpoint(client, user_a["token"], "Evening")
         dep = await create_metric(
-            client, user_a["token"], name="SlotDep", metric_type="bool",
-            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
+            client, user_a["token"], name="CpDep", metric_type="bool",
+            checkpoint_configs=[{"checkpoint_id": cp_m["id"]}, {"checkpoint_id": cp_e["id"]}],
         )
-        slots = dep["slots"]
-        assert len(slots) == 2
+        checkpoints = dep["checkpoints"]
+        assert len(checkpoints) == 2
 
         metric_b = await _create_metric_with_condition(
             client, user_a["token"],
-            name="DepOnSlot", metric_type="number",
+            name="DepOnCp", metric_type="number",
             condition_metric_id=dep["id"],
             condition_type="filled",
         )
 
-        # Fill only one slot of the dependency
+        # Fill only one checkpoint of the dependency
         await create_entry(
             client, user_a["token"], dep["id"], DATE, True,
-            slot_id=slots[0]["id"],
+            checkpoint_id=checkpoints[0]["id"],
         )
 
         daily = await _get_daily(client, user_a["token"])
@@ -891,19 +891,19 @@ class TestSlotDepValueExtraction:
         assert item_b is not None
         assert item_b["condition_met"] is True
 
-    async def test_filled_condition_with_slotted_dep_empty(
+    async def test_filled_condition_with_checkpoint_dep_empty(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Multi-slot dep with no slots filled -> condition 'filled' not met."""
-        slot_m = await create_slot(client, user_a["token"], "Morning")
-        slot_e = await create_slot(client, user_a["token"], "Evening")
+        """Multi-checkpoint dep with no checkpoints filled -> condition 'filled' not met."""
+        cp_m = await create_checkpoint(client, user_a["token"], "Morning")
+        cp_e = await create_checkpoint(client, user_a["token"], "Evening")
         dep = await create_metric(
-            client, user_a["token"], name="SlotDep2", metric_type="bool",
-            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
+            client, user_a["token"], name="CpDep2", metric_type="bool",
+            checkpoint_configs=[{"checkpoint_id": cp_m["id"]}, {"checkpoint_id": cp_e["id"]}],
         )
         metric_b = await _create_metric_with_condition(
             client, user_a["token"],
-            name="DepOnSlot2", metric_type="number",
+            name="DepOnCp2", metric_type="number",
             condition_metric_id=dep["id"],
             condition_type="filled",
         )
@@ -921,7 +921,7 @@ class TestSlotDepValueExtraction:
 
 
 class TestDailyScaleLabels:
-    """GET /api/daily — scale_labels field and display_value with labels."""
+    """GET /api/daily -- scale_labels field and display_value with labels."""
 
     async def test_scale_labels_returned_in_daily(
         self, client: AsyncClient, user_a: dict,

@@ -24,14 +24,14 @@ def should_skip_pair(
     """Check if a correlation pair should be skipped.
 
     Rules:
-    - Same metric (different slots) — skip
+    - Same metric (different checkpoints/intervals) — skip
     - Same metric enum sources with different options — DON'T skip (independent data)
       EXCEPT single-select enums where options are mutually exclusive — skip
     - Auto metric and its parent — skip
     - Two auto metrics from the same parent — skip
     - Incompatible auto-type pairs (see _SKIP_AUTO_PAIRS) — skip
     """
-    # Same metric (different slots)
+    # Same metric (different checkpoints/intervals)
     if a.metric_id is not None and a.metric_id == b.metric_id and not a.is_auto and not b.is_auto:
         # Exception: enum option sources from the same metric with different option_ids
         if a.enum_option_id is not None and b.enum_option_id is not None:

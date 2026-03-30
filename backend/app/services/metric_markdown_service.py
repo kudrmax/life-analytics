@@ -37,10 +37,10 @@ def build_markdown_table(metrics: list[MetricDefinitionOut], cat_rows: list) -> 
         desc = _esc_md(m.description or "")
         type_label = _esc_md(_TYPE_LABELS.get(m.type, m.type))
         cat = _esc_md(_get_cat_path(m.category_id, cat_by_id))
-        slots = _esc_md(", ".join(s.label for s in (m.slots or [])))
+        checkpoints = _esc_md(", ".join(s.label for s in (m.checkpoints or [])))
         details = _esc_md(_get_details(m, metric_name_by_id))
         status = "" if m.enabled else "❌ архив"
-        lines.append(f"| {icon} | {name} | {desc} | {type_label} | {cat} | {slots} | {details} | {status} |")
+        lines.append(f"| {icon} | {name} | {desc} | {type_label} | {cat} | {checkpoints} | {details} | {status} |")
 
     return "\n".join(lines)
 

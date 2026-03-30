@@ -10,13 +10,13 @@ description = "Бинарный источник: значение > 0 (для n
 enabled = true
 description = "Количество заметок за день (для текстовых метрик)"
 
-[prod.auto_sources.slot_max]
+[prod.auto_sources.checkpoint_max]
 enabled = true
-description = "Максимум по слотам за день (для number/scale/duration/time)"
+description = "Максимум по чекпоинтам за день (для number/scale/duration/time)"
 
-[prod.auto_sources.slot_min]
+[prod.auto_sources.checkpoint_min]
 enabled = true
-description = "Минимум по слотам за день (для number/scale/duration/time)"
+description = "Минимум по чекпоинтам за день (для number/scale/duration/time)"
 
 [prod.auto_sources.rolling_avg]
 enabled = true

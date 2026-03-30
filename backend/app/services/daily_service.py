@@ -11,7 +11,7 @@ from app.analytics.value_converter import ValueConverter
 from app.repositories.daily_repository import DailyRepository
 from app.services.daily_helpers import (
     evaluate_visibility, compute_formulas, build_auto_metrics,
-    calculate_progress, split_by_checkpoints, build_interval_label_map,
+    calculate_progress, split_by_checkpoints,
 )
 from app.timing import QueryTimer
 
@@ -32,11 +32,14 @@ class DailyService:
         compute_formulas(result, data["metrics_by_id"])
         auto_metrics = build_auto_metrics(result, data["metrics_by_id"], data["notes_count_map"], d)
         progress = calculate_progress(result)
-        all_user_slots = data.get("all_user_slots", [])
-        result = split_by_checkpoints(result, all_user_slots)
+        all_user_checkpoints = data.get("all_user_checkpoints", [])
+        active_intervals = data.get("active_intervals", [])
+        result = split_by_checkpoints(result, all_user_checkpoints, active_intervals)
         qt.mark("build"); qt.log()
-        checkpoints = [{"id": s["id"], "label": s["label"]} for s in all_user_slots]
-        return {"date": date_str, "metrics": result, "checkpoints": checkpoints, "auto_metrics": auto_metrics, "progress": progress}
+        checkpoints = [{"id": c["id"], "label": c["label"]} for c in all_user_checkpoints]
+        intervals = [{"id": iv["id"], "start_checkpoint_id": iv["start_checkpoint_id"],
+                       "end_checkpoint_id": iv["end_checkpoint_id"], "label": iv["label"]} for iv in active_intervals]
+        return {"date": date_str, "metrics": result, "checkpoints": checkpoints, "intervals": intervals, "auto_metrics": auto_metrics, "progress": progress}
 
     async def _load_daily_data(self, d: date_type, qt: QueryTimer) -> dict:
         metrics = await self.repo.get_enabled_metrics_with_config()
@@ -45,17 +48,31 @@ class DailyService:
         qt.mark("entries")
         metric_ids = [m["id"] for m in metrics]
 
-        enabled_slots_rows = await self.repo.get_enabled_slots(metric_ids)
-        qt.mark("slots")
-        enabled_slots: dict[int, list] = defaultdict(list)
-        for r in enabled_slots_rows:
-            enabled_slots[r["metric_id"]].append(r)
+        # Load checkpoint bindings
+        enabled_cp_rows = await self.repo.get_enabled_checkpoints(metric_ids)
+        qt.mark("checkpoints")
+        enabled_checkpoints: dict[int, list] = defaultdict(list)
+        for r in enabled_cp_rows:
+            enabled_checkpoints[r["metric_id"]].append(r)
 
-        disabled_rows = await self.repo.get_disabled_slots_with_entries(metric_ids, d)
-        qt.mark("disabled_slots")
-        disabled_with_entries: dict[int, list] = defaultdict(list)
-        for r in disabled_rows:
-            disabled_with_entries[r["metric_id"]].append(r)
+        disabled_cp_rows = await self.repo.get_disabled_checkpoints_with_entries(metric_ids, d)
+        qt.mark("disabled_checkpoints")
+        disabled_checkpoints: dict[int, list] = defaultdict(list)
+        for r in disabled_cp_rows:
+            disabled_checkpoints[r["metric_id"]].append(r)
+
+        # Load interval bindings
+        enabled_iv_rows = await self.repo.get_enabled_intervals(metric_ids)
+        qt.mark("intervals")
+        enabled_intervals: dict[int, list] = defaultdict(list)
+        for r in enabled_iv_rows:
+            enabled_intervals[r["metric_id"]].append(r)
+
+        disabled_iv_rows = await self.repo.get_disabled_intervals_with_entries(metric_ids, d)
+        qt.mark("disabled_intervals")
+        disabled_intervals: dict[int, list] = defaultdict(list)
+        for r in disabled_iv_rows:
+            disabled_intervals[r["metric_id"]].append(r)
 
         entries_by_metric: dict[int, list] = defaultdict(list)
         for e in entries:
@@ -75,19 +92,20 @@ class DailyService:
         text_ids = [m["id"] for m in metrics if m["type"] == MetricType.text]
         notes_count, notes_by = await self.repo.get_notes_for_date(text_ids, d)
 
-        # Load all user slots for interval label mapping
-        all_user_slots = await self.repo.get_all_user_slots()
-        interval_label_map = self._build_interval_label_map(all_user_slots)
+        # Load all user checkpoints and active intervals for layout
+        all_user_checkpoints = await self.repo.get_all_user_checkpoints()
+        active_intervals = await self.repo.get_active_intervals()
 
         return {
             "metrics": metrics, "metrics_by_id": {m["id"]: m for m in metrics},
-            "enabled_slots": enabled_slots, "disabled_with_entries": disabled_with_entries,
+            "enabled_checkpoints": enabled_checkpoints, "disabled_checkpoints": disabled_checkpoints,
+            "enabled_intervals": enabled_intervals, "disabled_intervals": disabled_intervals,
             "entries_by_metric": entries_by_metric,
             "values_map": values_map, "scale_context_map": scale_ctx,
             "enum_options_by_metric": enum_opts,
             "notes_count_map": notes_count, "notes_by_metric": notes_by,
-            "interval_label_map": interval_label_map,
-            "all_user_slots": all_user_slots,
+            "all_user_checkpoints": all_user_checkpoints,
+            "active_intervals": active_intervals,
         }
 
     def _build_metric_responses(self, data: dict, d: date_type, privacy_mode: bool) -> list[dict]:
@@ -108,7 +126,7 @@ class DailyService:
                 "private": m_private, "hide_in_cards": m.get("hide_in_cards", False),
                 "is_checkpoint": m.get("is_checkpoint", False),
                 "interval_binding": m.get("interval_binding", "all_day"),
-                "entry": None, "slots": None,
+                "entry": None, "checkpoints": None, "intervals": None,
                 "formula": _parse_formula(m.get("formula")) or None,
                 "result_type": m.get("result_type"), "provider": m.get("provider"),
                 "metric_key": m.get("metric_key"), "value_type": m.get("value_type"),
@@ -128,32 +146,30 @@ class DailyService:
                 result.append(item); continue
 
             is_moment = m.get("interval_binding") == "moment"
-            slots = data["enabled_slots"].get(mid, [])
-            extra = data["disabled_with_entries"].get(mid, [])
+            cp_slots = data["enabled_checkpoints"].get(mid, [])
+            cp_extra = data["disabled_checkpoints"].get(mid, [])
+            iv_slots = data["enabled_intervals"].get(mid, [])
+            iv_extra = data["disabled_intervals"].get(mid, [])
             if is_moment:
                 self._fill_moment(item, m, data["entries_by_metric"].get(mid, []), data)
-            elif slots or extra:
-                self._fill_slots(item, m, data["entries_by_metric"].get(mid, []), slots, extra, data)
-            else:
+            elif cp_slots or cp_extra:
+                self._fill_checkpoints(item, m, data["entries_by_metric"].get(mid, []), cp_slots, cp_extra, data)
+            if iv_slots or iv_extra:
+                self._fill_intervals(item, m, data["entries_by_metric"].get(mid, []), iv_slots, iv_extra, data)
+            if not is_moment and not cp_slots and not cp_extra and not iv_slots and not iv_extra:
                 self._fill_single(item, m, data["entries_by_metric"].get(mid, []), data)
             result.append(item)
         return result
 
-    @staticmethod
-    def _build_interval_label_map(all_user_slots: list) -> dict[int, str]:
-        return build_interval_label_map(all_user_slots)
-
-    def _fill_slots(self, item, m, entries, slots, extra, data) -> None:
+    def _fill_checkpoints(self, item: dict, m: dict, entries: list, checkpoints: list, extra: list, data: dict) -> None:
+        """Fill checkpoint sub-items for checkpoint metrics (is_checkpoint=True)."""
         mid = m["id"]
-        all_vis = sorted(list(slots) + list(extra), key=lambda s: s["sort_order"])
-        by_slot = {e["slot_id"]: e for e in entries if e["slot_id"] is not None}
-        interval_labels = data.get("interval_label_map", {})
-        is_interval = m.get("interval_binding", "all_day") == "by_interval"
-        items = []
-        for s in all_vis:
-            label = interval_labels.get(s["id"], s["label"]) if is_interval else s["label"]
-            si: dict = {"slot_id": s["id"], "label": label, "category_id": s.get("category_id"), "entry": None}
-            e = by_slot.get(s["id"])
+        all_cp = sorted(list(checkpoints) + list(extra), key=lambda s: s["sort_order"])
+        by_checkpoint = {e["checkpoint_id"]: e for e in entries if e.get("checkpoint_id") is not None}
+        items: list[dict] = []
+        for cp in all_cp:
+            si: dict = {"checkpoint_id": cp["id"], "label": cp["label"], "category_id": cp.get("category_id"), "entry": None}
+            e = by_checkpoint.get(cp["id"])
             if e:
                 v = data["values_map"].get(e["id"])
                 si["entry"] = {"id": e["id"], "recorded_at": str(e["recorded_at"]), "value": v,
@@ -163,11 +179,31 @@ class DailyService:
                 if sc:
                     si["entry"]["scale_min"] = sc["scale_min"]; si["entry"]["scale_max"] = sc["scale_max"]; si["entry"]["scale_step"] = sc["scale_step"]
             items.append(si)
-        item["slots"] = items
+        item["checkpoints"] = items
 
-    def _fill_single(self, item, m, entries, data) -> None:
+    def _fill_intervals(self, item: dict, m: dict, entries: list, intervals: list, extra: list, data: dict) -> None:
+        """Fill interval sub-items for interval metrics (interval_binding=by_interval)."""
         mid = m["id"]
-        e = next((e for e in entries if e["slot_id"] is None), None)
+        all_iv = sorted(list(intervals) + list(extra), key=lambda s: s["start_sort_order"])
+        by_interval = {e["interval_id"]: e for e in entries if e.get("interval_id") is not None}
+        items: list[dict] = []
+        for iv in all_iv:
+            si: dict = {"interval_id": iv["id"], "label": iv["label"], "category_id": iv.get("category_id"), "entry": None}
+            e = by_interval.get(iv["id"])
+            if e:
+                v = data["values_map"].get(e["id"])
+                si["entry"] = {"id": e["id"], "recorded_at": str(e["recorded_at"]), "value": v,
+                               "display_value": format_display_value(v, m["type"], m.get("result_type"),
+                                                                     data["enum_options_by_metric"].get(mid), scale_labels=item.get("scale_labels"))}
+                sc = data["scale_context_map"].get(e["id"])
+                if sc:
+                    si["entry"]["scale_min"] = sc["scale_min"]; si["entry"]["scale_max"] = sc["scale_max"]; si["entry"]["scale_step"] = sc["scale_step"]
+            items.append(si)
+        item["intervals"] = items
+
+    def _fill_single(self, item: dict, m: dict, entries: list, data: dict) -> None:
+        mid = m["id"]
+        e = next((e for e in entries if e.get("checkpoint_id") is None and e.get("interval_id") is None), None)
         if e:
             v = data["values_map"].get(e["id"])
             item["entry"] = {"id": e["id"], "recorded_at": str(e["recorded_at"]), "value": v,
@@ -177,13 +213,14 @@ class DailyService:
             if sc:
                 item["scale_min"] = sc["scale_min"]; item["scale_max"] = sc["scale_max"]; item["scale_step"] = sc["scale_step"]
 
-    def _fill_moment(self, item, m, entries, data) -> None:
-        """Fill moment-binding slots from actual entries (no pre-configured metric_slots)."""
+    def _fill_moment(self, item: dict, m: dict, entries: list, data: dict) -> None:
+        """Fill moment-binding intervals from actual entries (no pre-configured metric_intervals)."""
         mid = m["id"]
-        interval_labels = data.get("interval_label_map", {})
-        slot_items = []
+        active_intervals = data.get("active_intervals", [])
+        interval_labels = {iv["id"]: iv["label"] for iv in active_intervals}
+        interval_items: list[dict] = []
         for e in sorted(entries, key=lambda x: x["recorded_at"]):
-            if e["slot_id"] is None:
+            if e.get("interval_id") is None:
                 continue
             v = data["values_map"].get(e["id"])
             entry_data: dict = {
@@ -198,10 +235,10 @@ class DailyService:
                 entry_data["scale_min"] = sc["scale_min"]
                 entry_data["scale_max"] = sc["scale_max"]
                 entry_data["scale_step"] = sc["scale_step"]
-            slot_items.append({
-                "slot_id": e["slot_id"],
-                "label": interval_labels.get(e["slot_id"], ""),
+            interval_items.append({
+                "interval_id": e["interval_id"],
+                "label": interval_labels.get(e["interval_id"], ""),
                 "category_id": None,
                 "entry": entry_data,
             })
-        item["slots"] = slot_items
+        item["intervals"] = interval_items

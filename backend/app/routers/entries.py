@@ -25,7 +25,7 @@ async def list_entries(
 
 @router.post("", response_model=EntryOut, status_code=201)
 async def create_entry(data: EntryCreate, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return await _service(db, current_user).create(data.metric_id, data.date, data.value, data.slot_id)
+    return await _service(db, current_user).create(data.metric_id, data.date, data.value, data.checkpoint_id, data.interval_id)
 
 
 @router.put("/{entry_id}", response_model=EntryOut)

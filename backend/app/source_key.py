@@ -1,23 +1,25 @@
 """Deterministic source keys for correlation pairs.
 
 SourceKey encodes which data source a correlation side refers to:
-- metric:{id}                                    — plain metric (aggregate)
-- metric:{id}:slot:{slot_id}                     — metric with slot
-- metric:{id}:enum_opt:{opt_id}                  — enum option (aggregate)
-- metric:{id}:enum_opt:{opt_id}:slot:{slot_id}   — enum option with slot
-- auto:nonzero:metric:{id}                       — nonzero for a metric
-- auto:note_count:metric:{id}                    — note count for text metric
-- auto:slot_max:metric:{id}                      — max across slots for a metric
-- auto:slot_min:metric:{id}                      — min across slots for a metric
-- auto:rolling_avg:metric:{id}:opt:{window}      — rolling average (window = days)
-- auto:streak_true:metric:{id}                   — streak (consecutive True days)
-- auto:streak_false:metric:{id}                  — streak (consecutive False days)
-- auto:streak_true:metric:{id}:opt:{oid}         — streak for enum option (True)
-- auto:streak_false:metric:{id}:opt:{oid}        — streak for enum option (False)
-- auto:day_of_week:opt:{N}                       — calendar (enum-like boolean per option)
+- metric:{id}                                           — plain metric (aggregate)
+- metric:{id}:checkpoint:{cp_id}                        — metric at checkpoint
+- metric:{id}:interval:{iv_id}                          — metric for interval
+- metric:{id}:enum_opt:{opt_id}                         — enum option (aggregate)
+- metric:{id}:enum_opt:{opt_id}:checkpoint:{cp_id}      — enum option at checkpoint
+- metric:{id}:enum_opt:{opt_id}:interval:{iv_id}        — enum option for interval
+- auto:nonzero:metric:{id}                              — nonzero for a metric
+- auto:note_count:metric:{id}                           — note count for text metric
+- auto:checkpoint_max:metric:{id}                       — max across checkpoints for a metric
+- auto:checkpoint_min:metric:{id}                       — min across checkpoints for a metric
+- auto:rolling_avg:metric:{id}:opt:{window}             — rolling average (window = days)
+- auto:streak_true:metric:{id}                          — streak (consecutive True days)
+- auto:streak_false:metric:{id}                         — streak (consecutive False days)
+- auto:streak_true:metric:{id}:opt:{oid}                — streak for enum option (True)
+- auto:streak_false:metric:{id}:opt:{oid}               — streak for enum option (False)
+- auto:day_of_week:opt:{N}                              — calendar (enum-like boolean per option)
 - auto:month:opt:{N}
 - auto:is_workday:opt:{N}
-- auto:aw_active                                 — ActivityWatch active screen time
+- auto:aw_active                                        — ActivityWatch active screen time
 """
 
 from __future__ import annotations
@@ -31,8 +33,8 @@ class AutoSourceType(str, Enum):
     NOTE_COUNT = "note_count"
     DAY_OF_WEEK = "day_of_week"
     MONTH = "month"
-    SLOT_MAX = "slot_max"
-    SLOT_MIN = "slot_min"
+    CHECKPOINT_MAX = "checkpoint_max"
+    CHECKPOINT_MIN = "checkpoint_min"
     ROLLING_AVG = "rolling_avg"
     STREAK_TRUE = "streak_true"
     STREAK_FALSE = "streak_false"
@@ -93,11 +95,18 @@ _DELTA_TYPES: frozenset[AutoSourceType] = frozenset({
     AutoSourceType.RANGE,
 })
 
+# Legacy auto source type values for backward compat parsing
+_LEGACY_AUTO_TYPE_MAP: dict[str, str] = {
+    "slot_max": "checkpoint_max",
+    "slot_min": "checkpoint_min",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class SourceKey:
     metric_id: int | None = None
-    slot_id: int | None = None
+    checkpoint_id: int | None = None
+    interval_id: int | None = None
     enum_option_id: int | None = None
     auto_type: AutoSourceType | None = None
     auto_parent_metric_id: int | None = None
@@ -121,8 +130,10 @@ class SourceKey:
         parts: list[str] = [f"metric:{self.metric_id}"]
         if self.enum_option_id is not None:
             parts.append(f"enum_opt:{self.enum_option_id}")
-        if self.slot_id is not None:
-            parts.append(f"slot:{self.slot_id}")
+        if self.checkpoint_id is not None:
+            parts.append(f"checkpoint:{self.checkpoint_id}")
+        if self.interval_id is not None:
+            parts.append(f"interval:{self.interval_id}")
         return ":".join(parts)
 
     @staticmethod
@@ -137,17 +148,23 @@ class SourceKey:
             # auto:{type}:metric:{id} or auto:{type}
             if ":metric:" in rest:
                 type_str, _, mid_str = rest.partition(":metric:")
+                # Backward compat: slot_max → checkpoint_max
+                type_str = _LEGACY_AUTO_TYPE_MAP.get(type_str, type_str)
                 return SourceKey(
                     auto_type=AutoSourceType(type_str),
                     auto_parent_metric_id=int(mid_str),
                     auto_option_id=auto_option_id,
                 )
-            return SourceKey(auto_type=AutoSourceType(rest), auto_option_id=auto_option_id)
+            type_str = rest
+            type_str = _LEGACY_AUTO_TYPE_MAP.get(type_str, type_str)
+            return SourceKey(auto_type=AutoSourceType(type_str), auto_option_id=auto_option_id)
 
-        # metric:{id}[:enum_opt:{oid}][:slot:{sid}]
+        # metric:{id}[:enum_opt:{oid}][:checkpoint:{cpid}][:interval:{ivid}]
+        # Legacy: metric:{id}[:enum_opt:{oid}][:slot:{sid}]
         tokens = key.split(":")
         metric_id: int | None = None
-        slot_id: int | None = None
+        checkpoint_id: int | None = None
+        interval_id: int | None = None
         enum_option_id: int | None = None
 
         i = 0
@@ -156,8 +173,15 @@ class SourceKey:
             if tok == "metric" and i + 1 < len(tokens):
                 metric_id = int(tokens[i + 1])
                 i += 2
+            elif tok == "checkpoint" and i + 1 < len(tokens):
+                checkpoint_id = int(tokens[i + 1])
+                i += 2
+            elif tok == "interval" and i + 1 < len(tokens):
+                interval_id = int(tokens[i + 1])
+                i += 2
             elif tok == "slot" and i + 1 < len(tokens):
-                slot_id = int(tokens[i + 1])
+                # Legacy: treat slot as checkpoint
+                checkpoint_id = int(tokens[i + 1])
                 i += 2
             elif tok == "enum_opt" and i + 1 < len(tokens):
                 enum_option_id = int(tokens[i + 1])
@@ -167,6 +191,7 @@ class SourceKey:
 
         return SourceKey(
             metric_id=metric_id,
-            slot_id=slot_id,
+            checkpoint_id=checkpoint_id,
+            interval_id=interval_id,
             enum_option_id=enum_option_id,
         )

@@ -1,47 +1,47 @@
-"""Unit tests for TimeSeriesTransform.slot_agg and shift_dates."""
+"""Unit tests for TimeSeriesTransform.checkpoint_agg and shift_dates."""
 
 import unittest
 
 from app.analytics.time_series import TimeSeriesTransform
 
-slot_agg = TimeSeriesTransform.slot_agg
+checkpoint_agg = TimeSeriesTransform.checkpoint_agg
 shift_dates = TimeSeriesTransform.shift_dates
 
 
-# ── slot_agg ─────────────────────────────────────────────────────────
+# ── checkpoint_agg ───────────────────────────────────────────────────
 
 
-class TestSlotAggMax(unittest.TestCase):
-    """Max aggregation across multiple slots."""
+class TestCheckpointAggMax(unittest.TestCase):
+    """Max aggregation across multiple checkpoints."""
 
-    def test_max_from_three_slots(self) -> None:
+    def test_max_from_three_checkpoints(self) -> None:
         source: dict[int, dict[str, float]] = {
             0: {"2025-01-01": 5, "2025-01-02": 3},
             1: {"2025-01-01": 8, "2025-01-02": 1},
             2: {"2025-01-01": 2, "2025-01-02": 9},
         }
-        result = slot_agg([0, 1, 2], source, max)
+        result = checkpoint_agg([0, 1, 2], source, max)
         self.assertEqual(result, {"2025-01-01": 8, "2025-01-02": 9})
 
-    def test_min_from_three_slots(self) -> None:
+    def test_min_from_three_checkpoints(self) -> None:
         source: dict[int, dict[str, float]] = {
             0: {"2025-01-01": 5, "2025-01-02": 3},
             1: {"2025-01-01": 8, "2025-01-02": 1},
             2: {"2025-01-01": 2, "2025-01-02": 9},
         }
-        result = slot_agg([0, 1, 2], source, min)
+        result = checkpoint_agg([0, 1, 2], source, min)
         self.assertEqual(result, {"2025-01-01": 2, "2025-01-02": 1})
 
 
-class TestSlotAggGaps(unittest.TestCase):
-    """Slots with non-overlapping dates."""
+class TestCheckpointAggGaps(unittest.TestCase):
+    """Checkpoints with non-overlapping dates."""
 
-    def test_slots_with_disjoint_dates(self) -> None:
+    def test_checkpoints_with_disjoint_dates(self) -> None:
         source: dict[int, dict[str, float]] = {
             0: {"2025-01-01": 10.0},
             1: {"2025-01-02": 20.0},
         }
-        result = slot_agg([0, 1], source, max)
+        result = checkpoint_agg([0, 1], source, max)
         self.assertEqual(result, {"2025-01-01": 10.0, "2025-01-02": 20.0})
 
     def test_partial_overlap(self) -> None:
@@ -49,7 +49,7 @@ class TestSlotAggGaps(unittest.TestCase):
             0: {"2025-01-01": 3.0, "2025-01-02": 7.0},
             1: {"2025-01-02": 4.0, "2025-01-03": 9.0},
         }
-        result = slot_agg([0, 1], source, max)
+        result = checkpoint_agg([0, 1], source, max)
         self.assertEqual(result, {
             "2025-01-01": 3.0,
             "2025-01-02": 7.0,
@@ -57,32 +57,32 @@ class TestSlotAggGaps(unittest.TestCase):
         })
 
 
-class TestSlotAggSingleSlot(unittest.TestCase):
-    """Single slot returns its own data."""
+class TestCheckpointAggSingleSlot(unittest.TestCase):
+    """Single checkpoint returns its own data."""
 
-    def test_single_slot_max(self) -> None:
+    def test_single_checkpoint_max(self) -> None:
         source: dict[int, dict[str, float]] = {
             0: {"2025-01-01": 5.0, "2025-01-02": 3.0},
         }
-        result = slot_agg([0], source, max)
+        result = checkpoint_agg([0], source, max)
         self.assertEqual(result, {"2025-01-01": 5.0, "2025-01-02": 3.0})
 
-    def test_single_slot_min(self) -> None:
+    def test_single_checkpoint_min(self) -> None:
         source: dict[int, dict[str, float]] = {
             0: {"2025-01-01": 5.0, "2025-01-02": 3.0},
         }
-        result = slot_agg([0], source, min)
+        result = checkpoint_agg([0], source, min)
         self.assertEqual(result, {"2025-01-01": 5.0, "2025-01-02": 3.0})
 
 
-class TestSlotAggEmpty(unittest.TestCase):
+class TestCheckpointAggEmpty(unittest.TestCase):
     """Edge cases with empty inputs."""
 
-    def test_empty_slot_indices(self) -> None:
+    def test_empty_checkpoint_indices(self) -> None:
         source: dict[int, dict[str, float]] = {
             0: {"2025-01-01": 5.0},
         }
-        result = slot_agg([], source, max)
+        result = checkpoint_agg([], source, max)
         self.assertEqual(result, {})
 
     def test_missing_index_in_source(self) -> None:
@@ -90,20 +90,20 @@ class TestSlotAggEmpty(unittest.TestCase):
             0: {"2025-01-01": 5.0},
         }
         # Index 1 is not in source_data — should be skipped gracefully
-        result = slot_agg([0, 1], source, max)
+        result = checkpoint_agg([0, 1], source, max)
         self.assertEqual(result, {"2025-01-01": 5.0})
 
     def test_all_indices_missing(self) -> None:
         source: dict[int, dict[str, float]] = {}
-        result = slot_agg([0, 1, 2], source, max)
+        result = checkpoint_agg([0, 1, 2], source, max)
         self.assertEqual(result, {})
 
     def test_empty_source_and_indices(self) -> None:
-        result = slot_agg([], {}, max)
+        result = checkpoint_agg([], {}, max)
         self.assertEqual(result, {})
 
 
-class TestSlotAggNegativeValues(unittest.TestCase):
+class TestCheckpointAggNegativeValues(unittest.TestCase):
     """Negative and zero values."""
 
     def test_negative_values_max(self) -> None:
@@ -112,7 +112,7 @@ class TestSlotAggNegativeValues(unittest.TestCase):
             1: {"2025-01-01": -2.0},
             2: {"2025-01-01": -8.0},
         }
-        result = slot_agg([0, 1, 2], source, max)
+        result = checkpoint_agg([0, 1, 2], source, max)
         self.assertEqual(result, {"2025-01-01": -2.0})
 
     def test_negative_values_min(self) -> None:
@@ -121,7 +121,7 @@ class TestSlotAggNegativeValues(unittest.TestCase):
             1: {"2025-01-01": -2.0},
             2: {"2025-01-01": -8.0},
         }
-        result = slot_agg([0, 1, 2], source, min)
+        result = checkpoint_agg([0, 1, 2], source, min)
         self.assertEqual(result, {"2025-01-01": -8.0})
 
 

@@ -8,6 +8,20 @@ from app.domain.enums import MetricType
 from app.domain.exceptions import EntityNotFoundError
 from app.repositories.base import BaseRepository
 
+# SQL fragment: JOIN checkpoints + intervals with labels
+_BINDING_JOINS = """
+    LEFT JOIN checkpoints cp ON cp.id = e.checkpoint_id
+    LEFT JOIN intervals iv ON iv.id = e.interval_id
+    LEFT JOIN checkpoints iv_start ON iv_start.id = iv.start_checkpoint_id
+    LEFT JOIN checkpoints iv_end ON iv_end.id = iv.end_checkpoint_id
+"""
+
+# SQL fragment: binding columns
+_BINDING_COLUMNS = (
+    "cp.label AS checkpoint_label, "
+    "iv_start.label || ' → ' || iv_end.label AS interval_label"
+)
+
 
 class EntryRepository(BaseRepository):
     """Data access for entries and values_* tables."""
@@ -17,16 +31,16 @@ class EntryRepository(BaseRepository):
     ) -> list[asyncpg.Record]:
         if metric_id:
             return await self.conn.fetch(
-                """SELECT e.*, ms.label AS slot_label
+                f"""SELECT e.*, {_BINDING_COLUMNS}
                    FROM entries e
-                   LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
+                   {_BINDING_JOINS}
                    WHERE e.date = $1 AND e.metric_id = $2 AND e.user_id = $3""",
                 d, metric_id, self.user_id,
             )
         return await self.conn.fetch(
-            """SELECT e.*, ms.label AS slot_label
+            f"""SELECT e.*, {_BINDING_COLUMNS}
                FROM entries e
-               LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
+               {_BINDING_JOINS}
                WHERE e.date = $1 AND e.user_id = $2
                ORDER BY e.metric_id""",
             d, self.user_id,
@@ -50,31 +64,51 @@ class EntryRepository(BaseRepository):
         return row
 
     async def check_duplicate(
-        self, metric_id: int, d: date_type, slot_id: int | None,
+        self,
+        metric_id: int,
+        d: date_type,
+        checkpoint_id: int | None = None,
+        interval_id: int | None = None,
     ) -> bool:
-        if slot_id is not None:
+        if checkpoint_id is not None:
             existing = await self.conn.fetchval(
-                "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND slot_id = $4",
-                metric_id, self.user_id, d, slot_id,
+                "SELECT id FROM entries "
+                "WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND checkpoint_id = $4",
+                metric_id, self.user_id, d, checkpoint_id,
+            )
+        elif interval_id is not None:
+            existing = await self.conn.fetchval(
+                "SELECT id FROM entries "
+                "WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND interval_id = $4",
+                metric_id, self.user_id, d, interval_id,
             )
         else:
             existing = await self.conn.fetchval(
-                "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND slot_id IS NULL",
+                "SELECT id FROM entries "
+                "WHERE metric_id = $1 AND user_id = $2 AND date = $3 "
+                "AND checkpoint_id IS NULL AND interval_id IS NULL",
                 metric_id, self.user_id, d,
             )
         return existing is not None
 
-    async def create(self, metric_id: int, d: date_type, slot_id: int | None) -> int:
+    async def create(
+        self,
+        metric_id: int,
+        d: date_type,
+        checkpoint_id: int | None = None,
+        interval_id: int | None = None,
+    ) -> int:
         return await self.conn.fetchval(
-            "INSERT INTO entries (metric_id, user_id, date, slot_id) VALUES ($1, $2, $3, $4) RETURNING id",
-            metric_id, self.user_id, d, slot_id,
+            "INSERT INTO entries (metric_id, user_id, date, checkpoint_id, interval_id) "
+            "VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            metric_id, self.user_id, d, checkpoint_id, interval_id,
         )
 
-    async def get_with_slot(self, entry_id: int) -> asyncpg.Record:
+    async def get_with_binding(self, entry_id: int) -> asyncpg.Record:
         row = await self.conn.fetchrow(
-            """SELECT e.*, ms.label AS slot_label
+            f"""SELECT e.*, {_BINDING_COLUMNS}
                FROM entries e
-               LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
+               {_BINDING_JOINS}
                WHERE e.id = $1""",
             entry_id,
         )
@@ -82,11 +116,11 @@ class EntryRepository(BaseRepository):
             raise EntityNotFoundError("entries", entry_id)
         return row
 
-    async def get_owned_with_slot(self, entry_id: int) -> asyncpg.Record:
+    async def get_owned_with_binding(self, entry_id: int) -> asyncpg.Record:
         row = await self.conn.fetchrow(
-            """SELECT e.*, ms.label AS slot_label
+            f"""SELECT e.*, {_BINDING_COLUMNS}
                FROM entries e
-               LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
+               {_BINDING_JOINS}
                WHERE e.id = $1 AND e.user_id = $2""",
             entry_id, self.user_id,
         )

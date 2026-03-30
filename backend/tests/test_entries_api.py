@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_slot
+from tests.conftest import auth_headers, register_user, create_metric, create_entry, create_checkpoint
 
 
 # ---------------------------------------------------------------------------
@@ -101,23 +101,23 @@ class TestCreateEntry:
         )
         assert entry["value"] == [option_id]
 
-    async def test_create_entry_with_slot(
+    async def test_create_entry_with_checkpoint(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        slot_m = await create_slot(client, user_a["token"], "Morning")
-        slot_e = await create_slot(client, user_a["token"], "Evening")
+        cp_m = await create_checkpoint(client, user_a["token"], "Morning")
+        cp_e = await create_checkpoint(client, user_a["token"], "Evening")
         metric = await create_metric(
-            client, user_a["token"], name="Mood Slots", metric_type="bool",
-            slot_configs=[{"slot_id": slot_m["id"]}, {"slot_id": slot_e["id"]}],
+            client, user_a["token"], name="Mood Checkpoints", metric_type="bool",
+            checkpoint_configs=[{"checkpoint_id": cp_m["id"]}, {"checkpoint_id": cp_e["id"]}],
         )
-        slots = metric["slots"]
-        assert len(slots) == 2
+        checkpoints = metric["checkpoints"]
+        assert len(checkpoints) == 2
 
         entry = await create_entry(
             client, user_a["token"], metric["id"], "2026-03-01", True,
-            slot_id=slots[0]["id"],
+            checkpoint_id=checkpoints[0]["id"],
         )
-        assert entry["slot_id"] == slots[0]["id"]
+        assert entry["checkpoint_id"] == checkpoints[0]["id"]
         assert entry["value"] is True
 
     async def test_duplicate_entry_conflict(
@@ -342,3 +342,33 @@ class TestDataIsolation:
         assert resp2.status_code == 200
         ids = [e["id"] for e in resp2.json()]
         assert entry["id"] in ids
+
+
+import pytest
+
+
+@pytest.mark.anyio
+class TestEntryExclusiveConstraint:
+    """Entry не может иметь одновременно checkpoint_id и interval_id."""
+
+    async def test_entry_with_both_checkpoint_and_interval_rejected(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        """Попытка создать entry с обоими binding даёт ошибку."""
+        cp_a = await create_checkpoint(client, user_a["token"], "Утро")
+        cp_b = await create_checkpoint(client, user_a["token"], "Вечер")
+        # Get interval
+        iv_resp = await client.get("/api/checkpoints/intervals", headers=auth_headers(user_a["token"]))
+        iv = iv_resp.json()[0]
+
+        metric = await create_metric(
+            client, user_a["token"], name="Test", metric_type="number",
+            checkpoint_configs=[{"checkpoint_id": cp_a["id"]}, {"checkpoint_id": cp_b["id"]}],
+        )
+        resp = await client.post(
+            "/api/entries",
+            json={"metric_id": metric["id"], "date": "2026-03-01", "value": 42,
+                  "checkpoint_id": cp_a["id"], "interval_id": iv["id"]},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code in (400, 422), f"Expected 400/422, got {resp.status_code}"

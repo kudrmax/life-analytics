@@ -1,4 +1,4 @@
-"""Repository for metric config tables — scale, enum, computed, integration, slots, conditions."""
+"""Repository for metric config tables — scale, enum, computed, integration, checkpoints, intervals, conditions."""
 
 import json
 from typing import Any
@@ -9,7 +9,7 @@ from app.repositories.base import BaseRepository
 
 
 class MetricConfigRepository(BaseRepository):
-    """Data access for metric type-specific config, slots, conditions, enum options."""
+    """Data access for metric type-specific config, checkpoints, intervals, conditions, enum options."""
 
     # ── Inline category ────────────────────────────────────────────────
 
@@ -156,12 +156,28 @@ class MetricConfigRepository(BaseRepository):
         else:
             await self.insert_computed_config(metric_id, formula, result_type)
 
-    # ── Slot junction ──────────────────────────────────────────────────
+    # ── Checkpoint / interval ownership ────────────────────────────────
 
-    async def check_slot_ownership(self, slot_id: int) -> bool:
+    async def check_checkpoint_ownership(self, checkpoint_id: int) -> bool:
         return bool(await self.conn.fetchval(
-            "SELECT 1 FROM measurement_slots WHERE id = $1 AND user_id = $2 AND deleted = FALSE",
-            slot_id, self.user_id,
+            "SELECT 1 FROM checkpoints WHERE id = $1 AND user_id = $2 AND deleted = FALSE",
+            checkpoint_id, self.user_id,
+        ))
+
+    async def check_interval_ownership(self, interval_id: int) -> bool:
+        return bool(await self.conn.fetchval(
+            "SELECT 1 FROM intervals WHERE id = $1 AND user_id = $2",
+            interval_id, self.user_id,
+        ))
+
+    async def check_interval_active(self, interval_id: int) -> bool:
+        """Check that both checkpoints of the interval are not deleted."""
+        return bool(await self.conn.fetchval(
+            """SELECT 1 FROM intervals i
+               JOIN checkpoints cs ON cs.id = i.start_checkpoint_id
+               JOIN checkpoints ce ON ce.id = i.end_checkpoint_id
+               WHERE i.id = $1 AND cs.deleted = FALSE AND ce.deleted = FALSE""",
+            interval_id,
         ))
 
     async def check_category_ownership(self, cat_id: int) -> bool:
@@ -170,56 +186,126 @@ class MetricConfigRepository(BaseRepository):
             cat_id, self.user_id,
         ))
 
-    async def insert_metric_slot(
-        self, metric_id: int, slot_id: int, sort_order: int, category_id: int | None,
+    # ── Metric checkpoints ─────────────────────────────────────────────
+
+    async def insert_metric_checkpoint(
+        self, metric_id: int, checkpoint_id: int, sort_order: int, category_id: int | None,
     ) -> None:
         await self.conn.execute(
-            """INSERT INTO metric_slots (metric_id, slot_id, sort_order, category_id, enabled)
+            """INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order, category_id, enabled)
                VALUES ($1, $2, $3, $4, TRUE)
-               ON CONFLICT (metric_id, slot_id)
+               ON CONFLICT (metric_id, checkpoint_id)
                DO UPDATE SET sort_order = $3, category_id = $4, enabled = TRUE""",
-            metric_id, slot_id, sort_order, category_id,
+            metric_id, checkpoint_id, sort_order, category_id,
         )
 
-    async def clear_metric_category(self, metric_id: int) -> None:
-        await self.conn.execute(
-            "UPDATE metric_definitions SET category_id = NULL WHERE id = $1", metric_id,
-        )
-
-    async def get_metric_slots(self, metric_id: int) -> list[asyncpg.Record]:
+    async def get_metric_checkpoints(self, metric_id: int) -> list[asyncpg.Record]:
         return await self.conn.fetch(
-            "SELECT * FROM metric_slots WHERE metric_id = $1 ORDER BY sort_order",
+            """SELECT mc.*, c.label, c.description
+               FROM metric_checkpoints mc
+               JOIN checkpoints c ON c.id = mc.checkpoint_id
+               WHERE mc.metric_id = $1
+               ORDER BY mc.sort_order""",
             metric_id,
         )
 
-    async def update_metric_slot(
-        self, metric_id: int, slot_id: int, category_id: int | None, sort_order: int,
+    async def disable_metric_checkpoint(self, metric_id: int, checkpoint_id: int) -> None:
+        await self.conn.execute(
+            "UPDATE metric_checkpoints SET enabled = FALSE WHERE metric_id = $1 AND checkpoint_id = $2",
+            metric_id, checkpoint_id,
+        )
+
+    async def upsert_metric_checkpoint(
+        self, metric_id: int, checkpoint_id: int, category_id: int | None, sort_order: int,
     ) -> None:
         await self.conn.execute(
-            "UPDATE metric_slots SET enabled = TRUE, category_id = $1, sort_order = $2 WHERE metric_id = $3 AND slot_id = $4",
-            category_id, sort_order, metric_id, slot_id,
+            """INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order, category_id, enabled)
+               VALUES ($1, $2, $3, $4, TRUE)
+               ON CONFLICT (metric_id, checkpoint_id)
+               DO UPDATE SET sort_order = $3, category_id = $4, enabled = TRUE""",
+            metric_id, checkpoint_id, sort_order, category_id,
         )
 
-    async def disable_metric_slot(self, metric_id: int, slot_id: int) -> None:
-        await self.conn.execute(
-            "UPDATE metric_slots SET enabled = FALSE WHERE metric_id = $1 AND slot_id = $2",
-            metric_id, slot_id,
-        )
-
-    async def migrate_null_slot_entries(self, metric_id: int, target_slot_id: int) -> None:
+    async def migrate_null_checkpoint_entries(self, metric_id: int, target_checkpoint_id: int) -> None:
         await self.conn.execute(
             """
-            UPDATE entries SET slot_id = $1
-            WHERE metric_id = $2 AND slot_id IS NULL
+            UPDATE entries SET checkpoint_id = $1
+            WHERE metric_id = $2 AND checkpoint_id IS NULL
               AND NOT EXISTS (
                 SELECT 1 FROM entries e2
                 WHERE e2.metric_id = entries.metric_id
                   AND e2.user_id = entries.user_id
                   AND e2.date = entries.date
-                  AND e2.slot_id = $1
+                  AND e2.checkpoint_id = $1
               )
             """,
-            target_slot_id, metric_id,
+            target_checkpoint_id, metric_id,
+        )
+
+    # ── Metric intervals ───────────────────────────────────────────────
+
+    async def insert_metric_interval(
+        self, metric_id: int, interval_id: int, sort_order: int, category_id: int | None,
+    ) -> None:
+        await self.conn.execute(
+            """INSERT INTO metric_intervals (metric_id, interval_id, sort_order, category_id, enabled)
+               VALUES ($1, $2, $3, $4, TRUE)
+               ON CONFLICT (metric_id, interval_id)
+               DO UPDATE SET sort_order = $3, category_id = $4, enabled = TRUE""",
+            metric_id, interval_id, sort_order, category_id,
+        )
+
+    async def get_metric_intervals(self, metric_id: int) -> list[asyncpg.Record]:
+        return await self.conn.fetch(
+            """SELECT mi.*, i.start_checkpoint_id, i.end_checkpoint_id,
+                      cs.description AS start_label, ce.description AS end_label
+               FROM metric_intervals mi
+               JOIN intervals i ON i.id = mi.interval_id
+               JOIN checkpoints cs ON cs.id = i.start_checkpoint_id
+               JOIN checkpoints ce ON ce.id = i.end_checkpoint_id
+               WHERE mi.metric_id = $1
+               ORDER BY mi.sort_order""",
+            metric_id,
+        )
+
+    async def disable_metric_interval(self, metric_id: int, interval_id: int) -> None:
+        await self.conn.execute(
+            "UPDATE metric_intervals SET enabled = FALSE WHERE metric_id = $1 AND interval_id = $2",
+            metric_id, interval_id,
+        )
+
+    async def upsert_metric_interval(
+        self, metric_id: int, interval_id: int, category_id: int | None, sort_order: int,
+    ) -> None:
+        await self.conn.execute(
+            """INSERT INTO metric_intervals (metric_id, interval_id, sort_order, category_id, enabled)
+               VALUES ($1, $2, $3, $4, TRUE)
+               ON CONFLICT (metric_id, interval_id)
+               DO UPDATE SET sort_order = $3, category_id = $4, enabled = TRUE""",
+            metric_id, interval_id, sort_order, category_id,
+        )
+
+    async def migrate_null_interval_entries(self, metric_id: int, target_interval_id: int) -> None:
+        await self.conn.execute(
+            """
+            UPDATE entries SET interval_id = $1
+            WHERE metric_id = $2 AND interval_id IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM entries e2
+                WHERE e2.metric_id = entries.metric_id
+                  AND e2.user_id = entries.user_id
+                  AND e2.date = entries.date
+                  AND e2.interval_id = $1
+              )
+            """,
+            target_interval_id, metric_id,
+        )
+
+    # ── Misc ───────────────────────────────────────────────────────────
+
+    async def clear_metric_category(self, metric_id: int) -> None:
+        await self.conn.execute(
+            "UPDATE metric_definitions SET category_id = NULL WHERE id = $1", metric_id,
         )
 
     # ── Condition ──────────────────────────────────────────────────────

@@ -54,7 +54,8 @@ entity "metric_definitions" as md {
     * hide_in_cards : BOOLEAN
     * is_checkpoint : BOOLEAN
     * interval_binding : VARCHAR(20)
-    interval_start_slot_id : INTEGER <<FK>>
+    * all_checkpoints : BOOLEAN
+    * all_intervals : BOOLEAN
     description : TEXT
     * created_at : TIMESTAMPTZ
     --
@@ -68,16 +69,20 @@ entity "entries" as entries {
     * user_id : INTEGER <<FK>>
     * date : DATE
     * recorded_at : TIMESTAMPTZ
-    slot_id : INTEGER <<FK>>
+    checkpoint_id : INTEGER <<FK>>
+    interval_id : INTEGER <<FK>>
     --
     <<UNIQUE INDEX>> (metric_id, user_id, date)
-    WHERE slot_id IS NULL
+    WHERE checkpoint_id IS NULL AND interval_id IS NULL
     --
-    <<UNIQUE INDEX>> (metric_id, user_id, date, slot_id)
-    WHERE slot_id IS NOT NULL
+    <<UNIQUE INDEX>> (metric_id, user_id, date, checkpoint_id)
+    WHERE checkpoint_id IS NOT NULL
+    --
+    <<UNIQUE INDEX>> (metric_id, user_id, date, interval_id)
+    WHERE interval_id IS NOT NULL
 }
 
-entity "measurement_slots" as slots {
+entity "checkpoints" as checkpoints {
     * **id** : SERIAL <<PK>>
     --
     * user_id : INTEGER <<FK>>
@@ -88,16 +93,36 @@ entity "measurement_slots" as slots {
     <<UNIQUE INDEX>> (user_id, LOWER(label))
 }
 
-entity "metric_slots" as mslots {
+entity "intervals" as intervals {
+    * **id** : SERIAL <<PK>>
+    --
+    * user_id : INTEGER <<FK>>
+    * start_checkpoint_id : INTEGER <<FK>>
+    * end_checkpoint_id : INTEGER <<FK>>
+}
+
+entity "metric_checkpoints" as mcheckpoints {
     * **id** : SERIAL <<PK>>
     --
     * metric_id : INTEGER <<FK>>
-    * slot_id : INTEGER <<FK>>
+    * checkpoint_id : INTEGER <<FK>>
     * sort_order : INTEGER
     * enabled : BOOLEAN
     category_id : INTEGER <<FK>>
     --
-    <<UNIQUE>> (metric_id, slot_id)
+    <<UNIQUE>> (metric_id, checkpoint_id)
+}
+
+entity "metric_intervals" as mintervals {
+    * **id** : SERIAL <<PK>>
+    --
+    * metric_id : INTEGER <<FK>>
+    * interval_id : INTEGER <<FK>>
+    * sort_order : INTEGER
+    * enabled : BOOLEAN
+    category_id : INTEGER <<FK>>
+    --
+    <<UNIQUE>> (metric_id, interval_id)
 }
 
 entity "values_bool" as vb {
@@ -160,8 +185,10 @@ entity "correlation_pairs" as cp {
     * report_id : INTEGER <<FK>>
     metric_a_id : INTEGER
     metric_b_id : INTEGER
-    slot_a_id : INTEGER
-    slot_b_id : INTEGER
+    checkpoint_a_id : INTEGER
+    checkpoint_b_id : INTEGER
+    interval_a_id : INTEGER
+    interval_b_id : INTEGER
     * source_key_a : VARCHAR(100)
     * source_key_b : VARCHAR(100)
     * type_a : VARCHAR(20)
@@ -360,12 +387,15 @@ users ||--o{ ins : "user_id"
 
 cat ||--o{ cat : "parent_id"
 cat ||--o{ md : "category_id"
-cat ||--o{ mslots : "category_id"
+cat ||--o{ mcheckpoints : "category_id"
+cat ||--o{ mintervals : "category_id"
 
-users ||--o{ slots : "user_id"
+users ||--o{ checkpoints : "user_id"
+users ||--o{ intervals : "user_id"
 
 md ||--o{ entries : "metric_id"
-md ||--o{ mslots : "metric_id"
+md ||--o{ mcheckpoints : "metric_id"
+md ||--o{ mintervals : "metric_id"
 md ||--o| sc : "metric_id"
 md ||--o| cc : "metric_id"
 md ||--o| ic : "metric_id"
@@ -379,8 +409,13 @@ md ||--o{ notes : "metric_id"
 md ||--o| mcond : "metric_id"
 md ||--o{ mcond : "depends_on_metric_id"
 
-slots ||--o{ entries : "slot_id"
-slots ||--o{ mslots : "slot_id"
+checkpoints ||--o{ entries : "checkpoint_id"
+checkpoints ||--o{ mcheckpoints : "checkpoint_id"
+checkpoints ||--o{ intervals : "start_checkpoint_id"
+checkpoints ||--o{ intervals : "end_checkpoint_id"
+
+intervals ||--o{ entries : "interval_id"
+intervals ||--o{ mintervals : "interval_id"
 
 entries ||--o| vb : "entry_id"
 entries ||--o| vt : "entry_id"

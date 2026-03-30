@@ -1,15 +1,15 @@
-"""API tests for checkpoint feature: slot description and metric is_checkpoint."""
+"""API tests for checkpoint feature: checkpoint description and metric is_checkpoint."""
 
 import pytest
 
-from tests.conftest import auth_headers, create_metric, create_slot
+from tests.conftest import auth_headers, create_metric, create_checkpoint
 
 
 @pytest.mark.anyio
-class TestSlotDescription:
+class TestCheckpointDescription:
     async def test_create_with_description(self, client, user_a):
         resp = await client.post(
-            "/api/slots",
+            "/api/checkpoints",
             json={"label": "Утро", "description": "Сразу после пробуждения"},
             headers=auth_headers(user_a["token"]),
         )
@@ -19,7 +19,7 @@ class TestSlotDescription:
 
     async def test_create_without_description(self, client, user_a):
         resp = await client.post(
-            "/api/slots",
+            "/api/checkpoints",
             json={"label": "Утро"},
             headers=auth_headers(user_a["token"]),
         )
@@ -27,9 +27,9 @@ class TestSlotDescription:
         assert resp.json()["description"] is None
 
     async def test_update_description(self, client, user_a):
-        slot = await create_slot(client, user_a["token"], "Утро")
+        cp = await create_checkpoint(client, user_a["token"], "Утро")
         resp = await client.patch(
-            f"/api/slots/{slot['id']}",
+            f"/api/checkpoints/{cp['id']}",
             json={"description": "После завтрака"},
             headers=auth_headers(user_a["token"]),
         )
@@ -38,13 +38,13 @@ class TestSlotDescription:
 
     async def test_clear_description(self, client, user_a):
         resp = await client.post(
-            "/api/slots",
+            "/api/checkpoints",
             json={"label": "Утро", "description": "Начало дня"},
             headers=auth_headers(user_a["token"]),
         )
-        slot_id = resp.json()["id"]
+        cp_id = resp.json()["id"]
         resp = await client.patch(
-            f"/api/slots/{slot_id}",
+            f"/api/checkpoints/{cp_id}",
             json={"description": ""},
             headers=auth_headers(user_a["token"]),
         )
@@ -53,14 +53,14 @@ class TestSlotDescription:
 
     async def test_list_includes_description(self, client, user_a):
         await client.post(
-            "/api/slots",
+            "/api/checkpoints",
             json={"label": "Утро", "description": "Описание 1"},
             headers=auth_headers(user_a["token"]),
         )
-        resp = await client.get("/api/slots", headers=auth_headers(user_a["token"]))
+        resp = await client.get("/api/checkpoints", headers=auth_headers(user_a["token"]))
         assert resp.status_code == 200
-        slots = resp.json()
-        assert any(s["description"] == "Описание 1" for s in slots)
+        checkpoints = resp.json()
+        assert any(cp["description"] == "Описание 1" for cp in checkpoints)
 
 
 @pytest.mark.anyio

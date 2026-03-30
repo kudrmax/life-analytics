@@ -195,7 +195,7 @@ class IntegrationsRepository(BaseRepository):
 
     async def get_entry_by_metric_date(self, metric_id: int, for_date: date_type) -> asyncpg.Record | None:
         return await self.conn.fetchrow(
-            "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND slot_id IS NULL",
+            "SELECT id FROM entries WHERE metric_id = $1 AND user_id = $2 AND date = $3 AND checkpoint_id IS NULL AND interval_id IS NULL",
             metric_id, self.user_id, for_date,
         )
 

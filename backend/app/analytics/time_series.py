@@ -4,7 +4,7 @@ from datetime import date as date_type, timedelta
 
 
 class TimeSeriesTransform:
-    """Производные временные ряды: скользящее среднее, стрики, агрегация слотов."""
+    """Производные временные ряды: скользящее среднее, стрики, агрегация чекпоинтов."""
 
     @staticmethod
     def rolling_avg(data: dict[str, float], window: int) -> dict[str, float]:
@@ -52,18 +52,18 @@ class TimeSeriesTransform:
         return result
 
     @staticmethod
-    def slot_agg(
-        slot_indices: list[int],
+    def checkpoint_agg(
+        checkpoint_indices: list[int],
         source_data: dict[int, dict[str, float]],
         agg_fn: type[max] | type[min],
     ) -> dict[str, float]:
-        """Compute max or min across slot sources per date."""
+        """Compute max or min across checkpoint sources per date."""
         all_dates: set[str] = set()
-        for si in slot_indices:
-            all_dates.update(source_data.get(si, {}).keys())
+        for ci in checkpoint_indices:
+            all_dates.update(source_data.get(ci, {}).keys())
         result: dict[str, float] = {}
         for d in all_dates:
-            vals = [source_data[si][d] for si in slot_indices if d in source_data.get(si, {})]
+            vals = [source_data[ci][d] for ci in checkpoint_indices if d in source_data.get(ci, {})]
             if vals:
                 result[d] = agg_fn(vals)
         return result

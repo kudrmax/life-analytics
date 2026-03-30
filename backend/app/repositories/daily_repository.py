@@ -26,37 +26,115 @@ class DailyRepository(BaseRepository):
             d, self.user_id,
         )
 
-    async def get_all_user_slots(self) -> list[asyncpg.Record]:
-        """Return all user's measurement_slots sorted by sort_order."""
+    async def get_all_user_checkpoints(self) -> list[asyncpg.Record]:
+        """Return all user's checkpoints sorted by sort_order."""
         return await self.conn.fetch(
-            "SELECT id, label, sort_order FROM measurement_slots WHERE user_id = $1 AND deleted = FALSE ORDER BY sort_order",
+            "SELECT id, label, sort_order FROM checkpoints "
+            "WHERE user_id = $1 AND deleted = FALSE ORDER BY sort_order",
             self.user_id,
         )
 
-    async def get_enabled_slots(self, metric_ids: list[int]) -> list[asyncpg.Record]:
+    async def get_active_intervals(self) -> list[asyncpg.Record]:
+        """Get intervals where both checkpoints are not deleted AND consecutive.
+
+        Consecutive means there is no other non-deleted checkpoint
+        with sort_order strictly between the start and end checkpoint sort_orders.
+        Returns id, start_checkpoint_id, end_checkpoint_id, label (start → end).
+        """
+        return await self.conn.fetch(
+            """SELECT i.id,
+                      i.start_checkpoint_id,
+                      i.end_checkpoint_id,
+                      cs.label || ' \u2192 ' || ce.label AS label,
+                      cs.sort_order AS start_sort_order,
+                      ce.sort_order AS end_sort_order
+               FROM intervals i
+               JOIN checkpoints cs ON cs.id = i.start_checkpoint_id
+               JOIN checkpoints ce ON ce.id = i.end_checkpoint_id
+               WHERE i.user_id = $1
+                 AND cs.deleted = FALSE
+                 AND ce.deleted = FALSE
+                 AND NOT EXISTS (
+                     SELECT 1 FROM checkpoints cm
+                     WHERE cm.user_id = $1
+                       AND cm.deleted = FALSE
+                       AND cm.sort_order > cs.sort_order
+                       AND cm.sort_order < ce.sort_order
+                 )
+               ORDER BY cs.sort_order""",
+            self.user_id,
+        )
+
+    async def get_enabled_checkpoints(
+        self, metric_ids: list[int],
+    ) -> list[asyncpg.Record]:
+        """Get enabled metric_checkpoints joined with checkpoints."""
         if not metric_ids:
             return []
         return await self.conn.fetch(
-            """SELECT ms.id, msl.metric_id, ms.label, ms.sort_order, msl.category_id
-               FROM metric_slots msl
-               JOIN measurement_slots ms ON ms.id = msl.slot_id
-               WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE AND ms.deleted = FALSE
-               ORDER BY msl.metric_id, ms.sort_order""",
+            """SELECT c.id, mc.metric_id, c.label, c.sort_order, mc.category_id
+               FROM metric_checkpoints mc
+               JOIN checkpoints c ON c.id = mc.checkpoint_id
+               WHERE mc.metric_id = ANY($1) AND mc.enabled = TRUE AND c.deleted = FALSE
+               ORDER BY mc.metric_id, c.sort_order""",
             metric_ids,
         )
 
-    async def get_disabled_slots_with_entries(
-        self, metric_ids: list[int], d: date_type,
+    async def get_enabled_intervals(
+        self, metric_ids: list[int],
     ) -> list[asyncpg.Record]:
+        """Get enabled metric_intervals joined with intervals and checkpoints."""
         if not metric_ids:
             return []
         return await self.conn.fetch(
-            """SELECT DISTINCT ms.id, msl.metric_id, ms.label, ms.sort_order, msl.category_id
-               FROM metric_slots msl
-               JOIN measurement_slots ms ON ms.id = msl.slot_id
-               JOIN entries e ON e.slot_id = ms.id AND e.date = $1 AND e.user_id = $2
-               WHERE msl.metric_id = ANY($3) AND msl.enabled = FALSE
-               ORDER BY msl.metric_id, ms.sort_order""",
+            """SELECT i.id, mi.metric_id,
+                      cs.label || ' \u2192 ' || ce.label AS label,
+                      cs.sort_order AS start_sort_order,
+                      mi.category_id
+               FROM metric_intervals mi
+               JOIN intervals i ON i.id = mi.interval_id
+               JOIN checkpoints cs ON cs.id = i.start_checkpoint_id
+               JOIN checkpoints ce ON ce.id = i.end_checkpoint_id
+               WHERE mi.metric_id = ANY($1) AND mi.enabled = TRUE
+                 AND cs.deleted = FALSE AND ce.deleted = FALSE
+               ORDER BY mi.metric_id, cs.sort_order""",
+            metric_ids,
+        )
+
+    async def get_disabled_checkpoints_with_entries(
+        self, metric_ids: list[int], d: date_type,
+    ) -> list[asyncpg.Record]:
+        """Disabled metric_checkpoints that have entries on the given date."""
+        if not metric_ids:
+            return []
+        return await self.conn.fetch(
+            """SELECT DISTINCT c.id, mc.metric_id, c.label, c.sort_order, mc.category_id
+               FROM metric_checkpoints mc
+               JOIN checkpoints c ON c.id = mc.checkpoint_id
+               JOIN entries e ON e.checkpoint_id = c.id AND e.date = $1 AND e.user_id = $2
+               WHERE mc.metric_id = ANY($3) AND mc.enabled = FALSE
+               ORDER BY mc.metric_id, c.sort_order""",
+            d, self.user_id, metric_ids,
+        )
+
+    async def get_disabled_intervals_with_entries(
+        self, metric_ids: list[int], d: date_type,
+    ) -> list[asyncpg.Record]:
+        """Disabled metric_intervals that have entries on the given date."""
+        if not metric_ids:
+            return []
+        return await self.conn.fetch(
+            """SELECT DISTINCT i.id, mi.metric_id,
+                      cs.label || ' \u2192 ' || ce.label AS label,
+                      cs.sort_order AS start_sort_order,
+                      mi.category_id
+               FROM metric_intervals mi
+               JOIN intervals i ON i.id = mi.interval_id
+               JOIN checkpoints cs ON cs.id = i.start_checkpoint_id
+               JOIN checkpoints ce ON ce.id = i.end_checkpoint_id
+               JOIN entries e ON e.interval_id = i.id AND e.date = $1 AND e.user_id = $2
+               WHERE mi.metric_id = ANY($3) AND mi.enabled = FALSE
+               ORDER BY mi.metric_id, cs.sort_order""",
             d, self.user_id, metric_ids,
         )
 

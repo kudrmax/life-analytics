@@ -19,19 +19,35 @@ class ValueFetcher:
     def __init__(self, repo: AnalyticsRepository) -> None:
         self._repo = repo
 
-    async def values_by_date_for_slot(
+    async def values_by_date_for_checkpoint(
         self,
         metric_id: int,
         metric_type: str,
         start_date: date_type,
         end_date: date_type,
         user_id: int,
-        slot_id: int | None = None,
+        checkpoint_id: int | None = None,
     ) -> dict[str, float]:
-        """Get values by date for a metric, optionally filtered by slot."""
+        """Get values by date for a metric, optionally filtered by checkpoint."""
         value_table, extra_cols = ValueConverter.get_value_table(metric_type)
-        rows = await self._repo.fetch_entries_values_with_slot(
-            metric_id, value_table, extra_cols, start_date, end_date, slot_id,
+        rows = await self._repo.fetch_entries_values_with_checkpoint(
+            metric_id, value_table, extra_cols, start_date, end_date, checkpoint_id,
+        )
+        return ValueConverter.aggregate_by_date(rows, metric_type)
+
+    async def values_by_date_for_interval(
+        self,
+        metric_id: int,
+        metric_type: str,
+        start_date: date_type,
+        end_date: date_type,
+        user_id: int,
+        interval_id: int | None = None,
+    ) -> dict[str, float]:
+        """Get values by date for a metric, optionally filtered by interval."""
+        value_table, extra_cols = ValueConverter.get_value_table(metric_type)
+        rows = await self._repo.fetch_entries_values_with_interval(
+            metric_id, value_table, extra_cols, start_date, end_date, interval_id,
         )
         return ValueConverter.aggregate_by_date(rows, metric_type)
 
@@ -50,7 +66,7 @@ class ValueFetcher:
         if metric_type == MetricType.scale:
             scale_min, scale_max = await self._repo.get_scale_config_bounds(metric_id)
 
-        rows = await self._repo.fetch_entries_values_with_slot(
+        rows = await self._repo.fetch_entries_values_with_checkpoint(
             metric_id, value_table, extra_cols, start_date, end_date,
         )
 
@@ -138,11 +154,34 @@ class ValueFetcher:
         start_date: date_type,
         end_date: date_type,
         user_id: int,
-        slot_id: int | None = None,
+        checkpoint_id: int | None = None,
     ) -> dict[str, float]:
         """For a single enum option, return 1.0 if selected, 0.0 if entry exists but not selected."""
-        rows = await self._repo.fetch_enum_entries_with_slot(
-            metric_id, start_date, end_date, slot_id,
+        rows = await self._repo.fetch_enum_entries_with_checkpoint(
+            metric_id, start_date, end_date, checkpoint_id,
+        )
+
+        day_values: dict[str, list[bool]] = defaultdict(list)
+        for r in rows:
+            day_values[str(r["date"])].append(option_id in r["selected_option_ids"])
+
+        result: dict[str, float] = {}
+        for d, bools in day_values.items():
+            result[d] = 1.0 if any(bools) else 0.0
+        return result
+
+    async def values_by_date_for_enum_option_interval(
+        self,
+        metric_id: int,
+        option_id: int,
+        start_date: date_type,
+        end_date: date_type,
+        user_id: int,
+        interval_id: int | None = None,
+    ) -> dict[str, float]:
+        """For a single enum option with interval, return 1.0 if selected, 0.0 otherwise."""
+        rows = await self._repo.fetch_enum_entries_with_interval(
+            metric_id, start_date, end_date, interval_id,
         )
 
         day_values: dict[str, list[bool]] = defaultdict(list)

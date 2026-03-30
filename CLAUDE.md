@@ -57,7 +57,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 ### Structure
 
 - Tests live in `backend/tests/`
-- `conftest.py`: session-scoped DB pool, autouse cleanup, helpers (`register_user`, `create_metric`, `create_slot`, `create_entry`, `auth_headers`)
+- `conftest.py`: session-scoped DB pool, autouse cleanup, helpers (`register_user`, `create_metric`, `create_checkpoint`, `create_entry`, `auth_headers`)
 - Naming: `test_{module}_{type}.py` (e.g. `test_auth_api.py`, `test_auth_unit.py`)
 
 ### Test types
@@ -118,12 +118,12 @@ analytics/        → Computation engine (correlation_math, time_series, value_c
 - `daily_helpers.py` — pure helpers: `build_interval_label_map`, `split_by_checkpoints`, `evaluate_visibility`, `compute_formulas`, `build_auto_metrics`, `calculate_progress`.
 - `metric_builder.py` — mapping DB row → MetricDefinitionOut.
 
-**routers/** — thin HTTP controllers (all under `/api/`): auth, metrics, entries, daily, analytics, export_import, integrations, categories, slots, notes, insights.
+**routers/** — thin HTTP controllers (all under `/api/`): auth, metrics, entries, daily, analytics, export_import, integrations, categories, checkpoints, notes, insights.
 - Each endpoint: create repo → create service → call method → return. Max 10-15 lines.
 
 **analytics/** — correlation engine and pure computation modules.
 - Pure (no DB): correlation_math, time_series, value_converter, quality.
-- pair_formatter — display label/icon resolution, uses slot_labels for interval labels.
+- pair_formatter — display label/icon resolution, uses checkpoint_labels for interval labels.
 - value_fetcher — loads values for correlation sources.
 - Engine: correlation_engine (orchestrates computation, receives dependencies from correlation_service).
 
@@ -174,7 +174,7 @@ class ExampleService:
 
 **Metric type enum:** `'bool' | 'enum' | 'time' | 'number' | 'duration' | 'scale' | 'computed' | 'integration' | 'text'`
 
-**Key tables:** users, categories, metric_definitions, measurement_slots, metric_slots, entries, values_{bool,time,number,scale,duration,enum}, scale_config, enum_config, enum_options, computed_config, notes, metric_condition, insights, insight_metrics, correlation_reports, correlation_pairs, user_integrations, integration_config, integration_filter_config, integration_query_config, activitywatch_settings, activitywatch_daily_summary, activitywatch_app_usage, activitywatch_categories, activitywatch_app_category_map, integration_app_config, integration_category_config.
+**Key tables:** users, categories, metric_definitions, checkpoints, intervals, metric_checkpoints, metric_intervals, entries, values_{bool,time,number,scale,duration,enum}, scale_config, enum_config, enum_options, computed_config, notes, metric_condition, insights, insight_metrics, correlation_reports, correlation_pairs, user_integrations, integration_config, integration_filter_config, integration_query_config, activitywatch_settings, activitywatch_daily_summary, activitywatch_app_usage, activitywatch_categories, activitywatch_app_category_map, integration_app_config, integration_category_config.
 
 Full DDL is in `database.py` `init_db()`. Read it for column details.
 
@@ -186,13 +186,13 @@ Full DDL is in `database.py` `init_db()`. Read it for column details.
 
 **Value storage:** Separate typed table per metric type (not JSON). Entry creation: INSERT entries → INSERT values_{type}, within transaction. Handled by `entry_repository.py`.
 
-**Entry uniqueness (partial indexes):** Without slots: `UNIQUE(metric_id, user_id, date) WHERE slot_id IS NULL`. With slots: `UNIQUE(metric_id, user_id, date, slot_id) WHERE slot_id IS NOT NULL`.
+**Entry uniqueness (partial indexes):** Without checkpoints/intervals: `UNIQUE(metric_id, user_id, date) WHERE checkpoint_id IS NULL AND interval_id IS NULL`. With checkpoint: `UNIQUE(metric_id, user_id, date, checkpoint_id) WHERE checkpoint_id IS NOT NULL`. With interval: `UNIQUE(metric_id, user_id, date, interval_id) WHERE interval_id IS NOT NULL`. Columns `checkpoint_id` and `interval_id` are mutually exclusive (CHECK constraint).
 
 **Scale context:** `scale_config` = current rendering config. `values_scale` = config at time of entry. Display uses per-entry context so old entries render correctly after config changes. Analytics normalizes to percentages using per-entry context.
 
-**Multi-slot:** `measurement_slots` = global per-user slot definitions. `metric_slots` = junction table linking metrics to slots. `entries.slot_id` links entry to slot. `metric_slots.slot_id` FK uses `ON DELETE CASCADE`.
+**Multi-checkpoint / Intervals:** `checkpoints` = глобальные per-user контрольные точки дня (renamed from measurement_slots), поле `description` — описание, soft-delete через `deleted` флаг. `intervals` = пары чекпоинтов (start_checkpoint_id + end_checkpoint_id), описывающие промежутки между контрольными точками. `metric_checkpoints` = junction table, связывает метрики с чекпоинтами. `metric_intervals` = junction table, связывает метрики с интервалами. `entries.checkpoint_id` — привязка записи к чекпоинту. `entries.interval_id` — привязка записи к интервалу. `checkpoint_id` и `interval_id` взаимоисключающие (CHECK constraint). `metric_definitions.all_checkpoints` — метрика привязана ко всем чекпоинтам. `metric_definitions.all_intervals` — метрика привязана ко всем интервалам. FK на `metric_checkpoints` и `metric_intervals` используют `ON DELETE CASCADE`.
 
-**Checkpoints and Intervals:** `measurement_slots` = чекпоинты (контрольные точки дня), поле `description` — описание, soft-delete через `deleted` флаг. `metric_definitions.is_checkpoint` — true = оценка (замеряется В чекпоинтах), false = факт. `metric_definitions.interval_binding` — привязка факта к времени: `all_day` (весь день, без слотов), `by_interval` (выбранные интервалы между чекпоинтами, 1..N-1 слотов). Слоты хранятся в `metric_slots`, создаются через `interval_slot_ids` массив в API. Daily page: `split_by_checkpoints()` разбивает метрики по чекпоинтам (sandwich layout). `build_interval_label_map()` в `daily_helpers.py` строит лейблы "X → Y" для интервалов.
+**Checkpoints and Intervals:** `checkpoints` = чекпоинты (контрольные точки дня). `intervals` = промежутки между чекпоинтами (start_checkpoint_id → end_checkpoint_id). `metric_definitions.is_checkpoint` — true = оценка (замеряется В чекпоинтах), false = факт. `metric_definitions.interval_binding` — привязка факта к времени: `all_day` (весь день, без привязки), `by_interval` (выбранные интервалы между чекпоинтами), `moment` (одноразовый замер). Привязки к интервалам хранятся в `metric_intervals`, к чекпоинтам — в `metric_checkpoints`. Daily page: `split_by_checkpoints()` разбивает метрики по чекпоинтам (sandwich layout). `build_interval_label_map()` в `daily_helpers.py` строит лейблы "X → Y" для интервалов.
 
 **Enum:** Options in `enum_options`, single/multi controlled by `enum_config.multi_select`. Values stored as `INTEGER[]` of option IDs. Options support soft-delete via `enabled`. In correlations: each option → separate boolean source.
 
@@ -250,7 +250,8 @@ Requires changes in:
 - Data: `repositories/analytics_repository.py` + `repositories/correlation_repository.py`
 - Computation: analytics/ pure modules (correlation_math, quality, value_converter, time_series)
 - Results: saved via correlation_repository
-- Auto-sources: nonzero, note_count, slot_max, slot_min, rolling_avg, streak, day_of_week, month, is_workday, aw_active, delta, trend, range (delta/trend/range — only for checkpoint metrics with is_checkpoint=true)
+- Auto-sources: nonzero, note_count, checkpoint_max, checkpoint_min, rolling_avg, streak, day_of_week, month, is_workday, aw_active, delta, trend, range (delta/trend/range — only for checkpoint metrics with is_checkpoint=true)
+- Source key format: `metric:{id}:checkpoint:{cpid}` for checkpoint-bound values, `metric:{id}:interval:{ivid}` for interval-bound values
 - Lag: computes lag=0 + lag=1 (both directions) for each pair
 - Blacklist: `correlation_blacklist.py` — filters trivial pairs
 - Quality issues: see `docs/correlation-quality.md`

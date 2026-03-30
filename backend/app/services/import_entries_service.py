@@ -25,8 +25,8 @@ class EntryImporter:
         errors: list[str] = []
 
         all_metric_ids = list(slug_to_id.values())
-        slot_lookup = await self.repo.get_slot_lookup(all_metric_ids)
-        global_label_lookup = await self.repo.get_global_slot_label_lookup()
+        checkpoint_lookup = await self.repo.get_checkpoint_lookup(all_metric_ids)
+        global_label_lookup = await self.repo.get_global_checkpoint_label_lookup()
 
         text = zip_file.read('entries.csv').decode('utf-8')
         reader = csv.DictReader(StringIO(text))
@@ -40,21 +40,35 @@ class EntryImporter:
                     continue
 
                 d = date_type.fromisoformat(row['date'])
-                slot_id = self._resolve_slot_id(row, metric_id, slot_lookup, global_label_lookup)
-                if slot_id is None and row.get('slot_sort_order', '') not in ('', None):
+                checkpoint_id, interval_id = self._resolve_entry_binding(
+                    row, metric_id, checkpoint_lookup, global_label_lookup)
+
+                # Backward compat: old format with slot_sort_order
+                if checkpoint_id is None and interval_id is None:
+                    csv_so = row.get('slot_sort_order', '')
+                    if csv_so not in ('', None):
+                        try:
+                            so = int(csv_so)
+                            label = row.get('slot_label', '') or row.get('checkpoint_label', '') or f'Checkpoint {so}'
+                            # Create checkpoint as deleted (not in metric's checkpoint_labels = was deleted)
+                            new_cp_id = await self.repo.find_or_create_checkpoint(label, deleted=True)
+                            checkpoint_lookup[metric_id][so] = new_cp_id
+                            global_label_lookup[label] = new_cp_id
+                            checkpoint_id = new_cp_id
+                        except (ValueError, TypeError):
+                            pass
+
+                # Handle new checkpoint_id from CSV that isn't in lookup
+                if checkpoint_id is None and row.get('checkpoint_id', '') not in ('', None):
                     try:
-                        so = int(row['slot_sort_order'])
-                        label = row.get('slot_label', '') or f'Slot {so}'
-                        # Create slot as deleted (it wasn't in metric's slot_labels = was deleted on source)
-                        # Don't create metric_slot junction — entry just references the slot directly
-                        new_sid = await self.repo.find_or_create_slot(label, deleted=True)
-                        slot_lookup[metric_id][so] = new_sid
-                        global_label_lookup[label] = new_sid
-                        slot_id = new_sid
+                        raw_cp_id = int(row['checkpoint_id'])
+                        label = row.get('checkpoint_label', '') or f'Checkpoint {raw_cp_id}'
+                        new_cp_id = await self.repo.find_or_create_checkpoint(label)
+                        checkpoint_id = new_cp_id
                     except (ValueError, TypeError):
                         pass
 
-                if await self.repo.check_entry_duplicate(metric_id, d, slot_id):
+                if await self.repo.check_entry_duplicate(metric_id, d, checkpoint_id, interval_id):
                     skipped += 1
                     continue
 
@@ -66,7 +80,7 @@ class EntryImporter:
                     continue
 
                 async with self.repo.transaction():
-                    entry_id = await self.repo.create_entry(metric_id, d, slot_id)
+                    entry_id = await self.repo.create_entry(metric_id, d, checkpoint_id, interval_id)
                     await self.entry_repo.insert_value(entry_id, value, mt, entry_date=d, metric_id=metric_id)
                 imported += 1
             except Exception as e:
@@ -101,23 +115,50 @@ class EntryImporter:
                 await self.repo.insert_note(mid, d, note_text)
 
     @staticmethod
-    def _resolve_slot_id(row: dict, metric_id: int, slot_lookup: dict,
-                         global_label_lookup: dict | None = None) -> int | None:
+    def _resolve_entry_binding(
+        row: dict, metric_id: int, checkpoint_lookup: dict,
+        global_label_lookup: dict | None = None,
+    ) -> tuple[int | None, int | None]:
+        """Resolve checkpoint_id and interval_id from CSV row.
+
+        Returns (checkpoint_id, interval_id) tuple.
+        Supports both new format (checkpoint_id/interval_id columns)
+        and old format (slot_sort_order column) for backward compatibility.
+        """
+        # New format: explicit checkpoint_id
+        csv_cp = row.get('checkpoint_id', '')
+        if csv_cp not in ('', None):
+            try:
+                return int(csv_cp), None
+            except (ValueError, TypeError):
+                pass
+
+        # New format: explicit interval_id
+        csv_iv = row.get('interval_id', '')
+        if csv_iv not in ('', None):
+            try:
+                return None, int(csv_iv)
+            except (ValueError, TypeError):
+                pass
+
+        # Old format: slot_sort_order → checkpoint lookup
         csv_so = row.get('slot_sort_order', '')
         if csv_so in ('', None):
-            return None
+            return None, None
+
         # Try by label first (more reliable — labels are stable across export/import)
-        label = row.get('slot_label', '')
+        label = row.get('slot_label', '') or row.get('checkpoint_label', '')
         if label and global_label_lookup and label in global_label_lookup:
-            return global_label_lookup[label]
-        # Fallback: try by sort_order in metric_slots
+            return global_label_lookup[label], None
+
+        # Fallback: try by sort_order
         try:
             so = int(csv_so)
-            if metric_id in slot_lookup and so in slot_lookup[metric_id]:
-                return slot_lookup[metric_id][so]
+            if metric_id in checkpoint_lookup and so in checkpoint_lookup[metric_id]:
+                return checkpoint_lookup[metric_id][so], None
         except (ValueError, TypeError):
             pass
-        return None
+        return None, None
 
     async def _coerce_value(self, value, mt: str, metric_id: int):
         if mt == MetricType.enum:

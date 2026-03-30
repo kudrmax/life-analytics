@@ -46,7 +46,7 @@ class ValueConverter:
 
     @staticmethod
     def aggregate_by_date(rows: Any, metric_type: str) -> dict[str, float]:
-        """Group rows by date, aggregate multiple entries per day (multi-slot).
+        """Group rows by date, aggregate multiple entries per day (multi-checkpoint).
 
         For number/scale/time: mean of values per day.
         For bool: 1.0 if any True, else 0.0.

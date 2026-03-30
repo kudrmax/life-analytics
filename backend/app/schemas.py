@@ -3,30 +3,37 @@ from pydantic import BaseModel
 from app.domain.enums import MetricType
 
 
-class MeasurementSlotOut(BaseModel):
+class CheckpointOut(BaseModel):
     id: int
     label: str
     sort_order: int
     category_id: int | None = None
 
 
-class SlotCreate(BaseModel):
+class CheckpointCreate(BaseModel):
     label: str
     description: str | None = None
 
 
-class SlotUpdate(BaseModel):
+class CheckpointUpdate(BaseModel):
     label: str | None = None
     description: str | None = None
 
 
-class SlotOut(BaseModel):
+class CheckpointSettingsOut(BaseModel):
     id: int
     label: str
     sort_order: int
     description: str | None = None
     usage_count: int = 0
     usage_metric_names: list[str] = []
+
+
+class IntervalOut(BaseModel):
+    id: int
+    start_checkpoint_id: int
+    end_checkpoint_id: int
+    label: str = ""
 
 
 class CategoryCreate(BaseModel):
@@ -62,7 +69,7 @@ class MetricDefinitionCreate(BaseModel):
     scale_max: int | None = None
     scale_step: int | None = None
     scale_labels: dict[str, str] | None = None
-    slot_configs: list[dict] | None = None  # [{slot_id: int, category_id: int | None}]
+    checkpoint_configs: list[dict] | None = None  # [{checkpoint_id: int, category_id: int | None}]
     formula: list[dict] | None = None
     result_type: str | None = None
     provider: str | None = None
@@ -77,7 +84,9 @@ class MetricDefinitionCreate(BaseModel):
     hide_in_cards: bool = False
     is_checkpoint: bool = False
     interval_binding: str = "all_day"
-    interval_slot_ids: list[int] | None = None
+    interval_ids: list[int] | None = None
+    all_checkpoints: bool = False
+    all_intervals: bool = False
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None
@@ -94,7 +103,7 @@ class MetricDefinitionUpdate(BaseModel):
     scale_max: int | None = None
     scale_step: int | None = None
     scale_labels: dict[str, str] | None = None
-    slot_configs: list[dict] | None = None  # [{slot_id: int, category_id: int | None}]
+    checkpoint_configs: list[dict] | None = None  # [{checkpoint_id: int, category_id: int | None}]
     formula: list[dict] | None = None
     result_type: str | None = None
     enum_options: list[dict] | None = None  # [{id?: int, label: str}]
@@ -103,7 +112,9 @@ class MetricDefinitionUpdate(BaseModel):
     hide_in_cards: bool | None = None
     is_checkpoint: bool | None = None
     interval_binding: str | None = None
-    interval_slot_ids: list[int] | None = None
+    interval_ids: list[int] | None = None
+    all_checkpoints: bool | None = None
+    all_intervals: bool | None = None
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None
@@ -124,7 +135,8 @@ class MetricDefinitionOut(BaseModel):
     scale_max: int | None = None
     scale_step: int | None = None
     scale_labels: dict[str, str] | None = None
-    slots: list[MeasurementSlotOut] = []
+    checkpoints: list[CheckpointOut] = []
+    intervals: list[IntervalOut] = []
     formula: list[dict] | None = None
     result_type: str | None = None
     provider: str | None = None
@@ -140,7 +152,8 @@ class MetricDefinitionOut(BaseModel):
     hide_in_cards: bool = False
     is_checkpoint: bool = False
     interval_binding: str = "all_day"
-    interval_slot_ids: list[int] | None = None
+    all_checkpoints: bool = False
+    all_intervals: bool = False
     condition_metric_id: int | None = None
     condition_type: str | None = None
     condition_value: bool | int | list[int] | None = None
@@ -150,7 +163,8 @@ class EntryCreate(BaseModel):
     metric_id: int
     date: str  # YYYY-MM-DD
     value: bool | str | int | list[int]  # list[int] for enum option IDs
-    slot_id: int | None = None
+    checkpoint_id: int | None = None
+    interval_id: int | None = None
 
 
 class EntryUpdate(BaseModel):
@@ -163,8 +177,10 @@ class EntryOut(BaseModel):
     date: str
     recorded_at: str
     value: bool | str | int | list[int] | None
-    slot_id: int | None = None
-    slot_label: str = ""
+    checkpoint_id: int | None = None
+    checkpoint_label: str = ""
+    interval_id: int | None = None
+    interval_label: str = ""
 
 
 # Auth schemas

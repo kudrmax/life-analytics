@@ -58,7 +58,7 @@ class MetricSpec:
     scale_step: int | None = None
     enum_options: list[str] | None = None
     multi_select: bool | None = None
-    slot_labels: list[str] | None = None
+    checkpoint_labels: list[str] | None = None
     formula: list[dict[str, Any]] | None = None
     result_type: str | None = None
 
@@ -85,7 +85,7 @@ METRICS: list[MetricSpec] = [
     MetricSpec(
         name="Энергия", icon="⚡", type="scale",
         scale_min=ENERGY_SCALE_MIN, scale_max=ENERGY_SCALE_MAX, scale_step=1,
-        slot_labels=["Утро", "День", "Вечер"],
+        checkpoint_labels=["Утро", "День", "Вечер"],
     ),
     MetricSpec(name="Дневник", icon="📝", type="text"),
 ]
@@ -231,8 +231,8 @@ class Seeder:
             body["enum_options"] = spec.enum_options
         if spec.multi_select is not None:
             body["multi_select"] = spec.multi_select
-        if spec.slot_labels is not None:
-            body["slot_labels"] = spec.slot_labels
+        if spec.checkpoint_labels is not None:
+            body["checkpoint_labels"] = spec.checkpoint_labels
         if spec.formula is not None:
             body["formula"] = spec.formula
         if spec.result_type is not None:
@@ -286,11 +286,11 @@ class Seeder:
                 if mt == "text" or mt == "computed" or mt == "integration":
                     continue
 
-                slots = metric.get("slots") or []
-                if slots:
-                    for slot in slots:
+                checkpoints = metric.get("checkpoints") or []
+                if checkpoints:
+                    for cp in checkpoints:
                         value = self._generate_value(metric)
-                        ok = self._post_entry(mid, date_str, value, slot["id"])
+                        ok = self._post_entry(mid, date_str, value, cp["id"])
                         if ok:
                             filled += 1
                         else:
@@ -331,14 +331,14 @@ class Seeder:
             return self._gen.enum_single(option_ids)
         return None
 
-    def _post_entry(self, metric_id: int, date_str: str, value: Any, slot_id: int | None) -> bool:
+    def _post_entry(self, metric_id: int, date_str: str, value: Any, checkpoint_id: int | None) -> bool:
         body: dict[str, Any] = {
             "metric_id": metric_id,
             "date": date_str,
             "value": value,
         }
-        if slot_id is not None:
-            body["slot_id"] = slot_id
+        if checkpoint_id is not None:
+            body["checkpoint_id"] = checkpoint_id
         try:
             self._api.post("/api/entries", body)
             return True

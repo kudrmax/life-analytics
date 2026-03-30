@@ -4,12 +4,13 @@ import json
 from typing import Any, Mapping
 
 from app.domain.privacy import mask_name, mask_icon
-from app.schemas import MetricDefinitionOut, MeasurementSlotOut
+from app.schemas import MetricDefinitionOut, CheckpointOut, IntervalOut
 
 
 async def build_metric_out(
     row: Mapping[str, Any],
-    slots: list | None = None,
+    checkpoints: list[dict] | None = None,
+    intervals: list[dict] | None = None,
     enum_opts: list | None = None,
     privacy_mode: bool = False,
 ) -> MetricDefinitionOut:
@@ -31,7 +32,16 @@ async def build_metric_out(
         scale_max=row.get("scale_max"),
         scale_step=row.get("scale_step"),
         scale_labels=json.loads(row["scale_labels"]) if row.get("scale_labels") is not None else None,
-        slots=[MeasurementSlotOut(**s) for s in slots] if slots else [],
+        checkpoints=[CheckpointOut(**cp) for cp in checkpoints] if checkpoints else [],
+        intervals=[
+            IntervalOut(
+                id=iv.get("id", 0),
+                start_checkpoint_id=iv.get("start_checkpoint_id", 0),
+                end_checkpoint_id=iv.get("end_checkpoint_id", 0),
+                label=iv.get("label", ""),
+            )
+            for iv in intervals
+        ] if intervals else [],
         formula=formula_raw,
         result_type=row.get("result_type"),
         provider=row.get("provider"),
@@ -47,7 +57,8 @@ async def build_metric_out(
         hide_in_cards=row.get("hide_in_cards", False),
         is_checkpoint=row.get("is_checkpoint", False),
         interval_binding=row.get("interval_binding", "all_day"),
-        interval_slot_ids=None,
+        all_checkpoints=row.get("all_checkpoints", False),
+        all_intervals=row.get("all_intervals", False),
         condition_metric_id=row.get("condition_metric_id"),
         condition_type=row.get("condition_type"),
         condition_value=json.loads(row["condition_value"]) if row.get("condition_value") is not None else None,

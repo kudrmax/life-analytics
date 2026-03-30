@@ -82,7 +82,8 @@ class TestEntryCreate:
     def test_with_bool_value(self) -> None:
         e = EntryCreate(metric_id=1, date="2026-03-17", value=True)
         assert e.value is True
-        assert e.slot_id is None
+        assert e.checkpoint_id is None
+        assert e.interval_id is None
 
     def test_with_string_value_for_time(self) -> None:
         e = EntryCreate(metric_id=2, date="2026-03-17", value="14:30")

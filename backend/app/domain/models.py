@@ -30,6 +30,24 @@ class Metric:
 
 
 @dataclass(frozen=True)
+class Checkpoint:
+    """A time point in the day (e.g. Morning, Afternoon, Evening)."""
+    id: int
+    label: str
+    sort_order: int
+    description: str | None = None
+
+
+@dataclass(frozen=True)
+class Interval:
+    """A period between two consecutive checkpoints."""
+    id: int
+    start_checkpoint_id: int
+    end_checkpoint_id: int
+    label: str = ""
+
+
+@dataclass(frozen=True)
 class Entry:
     """A single metric entry for a specific date."""
     id: int
@@ -38,8 +56,10 @@ class Entry:
     date: date
     recorded_at: datetime
     value: bool | str | int | list[int] | float | None = None
-    slot_id: int | None = None
-    slot_label: str = ""
+    checkpoint_id: int | None = None
+    checkpoint_label: str = ""
+    interval_id: int | None = None
+    interval_label: str = ""
 
 
 @dataclass(frozen=True)

@@ -9,14 +9,14 @@ from app.source_key import AutoSourceType, SourceKey
 class TestShouldSkipPair(unittest.TestCase):
     """Tests for should_skip_pair blacklist rules."""
 
-    # ---- Same metric, different slots -> skip ----
+    # ---- Same metric, different checkpoints -> skip ----
 
-    def test_same_metric_different_slots_skipped(self) -> None:
-        a = SourceKey(metric_id=1, slot_id=10)
-        b = SourceKey(metric_id=1, slot_id=20)
+    def test_same_metric_different_checkpoints_skipped(self) -> None:
+        a = SourceKey(metric_id=1, checkpoint_id=10)
+        b = SourceKey(metric_id=1, checkpoint_id=20)
         self.assertTrue(should_skip_pair(a, b))
 
-    def test_same_metric_no_slots_skipped(self) -> None:
+    def test_same_metric_no_checkpoints_skipped(self) -> None:
         a = SourceKey(metric_id=1)
         b = SourceKey(metric_id=1)
         self.assertTrue(should_skip_pair(a, b))
@@ -122,31 +122,31 @@ class TestShouldSkipPair(unittest.TestCase):
         b = SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=2)
         self.assertFalse(should_skip_pair(a, b))
 
-    # ---- SLOT_MAX / SLOT_MIN blacklist coverage ----
+    # ---- CHECKPOINT_MAX / CHECKPOINT_MIN blacklist coverage ----
 
-    def test_slot_max_with_parent_metric_skipped(self) -> None:
-        auto = SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=3)
+    def test_checkpoint_max_with_parent_metric_skipped(self) -> None:
+        auto = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MAX, auto_parent_metric_id=3)
         regular = SourceKey(metric_id=3)
         self.assertTrue(should_skip_pair(auto, regular))
 
-    def test_slot_min_with_parent_metric_skipped(self) -> None:
-        auto = SourceKey(auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=3)
+    def test_checkpoint_min_with_parent_metric_skipped(self) -> None:
+        auto = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MIN, auto_parent_metric_id=3)
         regular = SourceKey(metric_id=3)
         self.assertTrue(should_skip_pair(auto, regular))
 
-    def test_slot_max_and_slot_min_same_parent_skipped(self) -> None:
-        a = SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=5)
-        b = SourceKey(auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=5)
+    def test_checkpoint_max_and_checkpoint_min_same_parent_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MAX, auto_parent_metric_id=5)
+        b = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MIN, auto_parent_metric_id=5)
         self.assertTrue(should_skip_pair(a, b))
 
-    def test_slot_max_with_unrelated_metric_not_skipped(self) -> None:
-        auto = SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=3)
+    def test_checkpoint_max_with_unrelated_metric_not_skipped(self) -> None:
+        auto = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MAX, auto_parent_metric_id=3)
         regular = SourceKey(metric_id=99)
         self.assertFalse(should_skip_pair(auto, regular))
 
-    def test_slot_max_and_slot_min_different_parents_not_skipped(self) -> None:
-        a = SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=1)
-        b = SourceKey(auto_type=AutoSourceType.SLOT_MIN, auto_parent_metric_id=2)
+    def test_checkpoint_max_and_checkpoint_min_different_parents_not_skipped(self) -> None:
+        a = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MAX, auto_parent_metric_id=1)
+        b = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MIN, auto_parent_metric_id=2)
         self.assertFalse(should_skip_pair(a, b))
 
     # ---- ROLLING_AVG blacklist coverage ----
@@ -171,9 +171,9 @@ class TestShouldSkipPair(unittest.TestCase):
         b = SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=5)
         self.assertTrue(should_skip_pair(a, b))
 
-    def test_rolling_avg_and_slot_max_same_parent_skipped(self) -> None:
+    def test_rolling_avg_and_checkpoint_max_same_parent_skipped(self) -> None:
         a = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=5, auto_option_id=7)
-        b = SourceKey(auto_type=AutoSourceType.SLOT_MAX, auto_parent_metric_id=5)
+        b = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MAX, auto_parent_metric_id=5)
         self.assertTrue(should_skip_pair(a, b))
 
     def test_rolling_avg_different_parents_not_skipped(self) -> None:

@@ -26,15 +26,31 @@ class ExportRepository(BaseRepository):
             self.user_id,
         )
 
-    async def get_slots_for_export(self, metric_ids: list[int]) -> list[asyncpg.Record]:
+    async def get_checkpoints_for_export(self, metric_ids: list[int]) -> list[asyncpg.Record]:
         if not metric_ids:
             return []
         return await self.conn.fetch(
-            """SELECT msl.metric_id, ms.label, ms.sort_order, msl.category_id
-               FROM metric_slots msl
-               JOIN measurement_slots ms ON ms.id = msl.slot_id
-               WHERE msl.metric_id = ANY($1) AND msl.enabled = TRUE AND ms.deleted = FALSE
-               ORDER BY msl.metric_id, ms.sort_order""",
+            """SELECT mc.metric_id, cp.label, cp.sort_order, mc.category_id
+               FROM metric_checkpoints mc
+               JOIN checkpoints cp ON cp.id = mc.checkpoint_id
+               WHERE mc.metric_id = ANY($1) AND mc.enabled = TRUE AND cp.deleted = FALSE
+               ORDER BY mc.metric_id, cp.sort_order""",
+            metric_ids,
+        )
+
+    async def get_intervals_for_export(self, metric_ids: list[int]) -> list[asyncpg.Record]:
+        if not metric_ids:
+            return []
+        return await self.conn.fetch(
+            """SELECT mi.metric_id, iv.id AS interval_id,
+                      cp_start.label AS start_label, cp_end.label AS end_label,
+                      cp_start.sort_order, mi.category_id
+               FROM metric_intervals mi
+               JOIN intervals iv ON iv.id = mi.interval_id
+               JOIN checkpoints cp_start ON cp_start.id = iv.start_checkpoint_id
+               JOIN checkpoints cp_end ON cp_end.id = iv.end_checkpoint_id
+               WHERE mi.metric_id = ANY($1) AND mi.enabled = TRUE
+               ORDER BY mi.metric_id, cp_start.sort_order""",
             metric_ids,
         )
 
@@ -93,9 +109,15 @@ class ExportRepository(BaseRepository):
 
     async def get_entries_for_export(self) -> list[asyncpg.Record]:
         return await self.conn.fetch(
-            """SELECT e.*, ms.sort_order AS slot_sort_order, ms.label AS slot_label
+            """SELECT e.*,
+                      e.checkpoint_id, cp.label AS checkpoint_label,
+                      e.interval_id, iv_start.label AS interval_start_label,
+                      iv_end.label AS interval_end_label
                FROM entries e
-               LEFT JOIN measurement_slots ms ON ms.id = e.slot_id
+               LEFT JOIN checkpoints cp ON cp.id = e.checkpoint_id
+               LEFT JOIN intervals iv ON iv.id = e.interval_id
+               LEFT JOIN checkpoints iv_start ON iv_start.id = iv.start_checkpoint_id
+               LEFT JOIN checkpoints iv_end ON iv_end.id = iv.end_checkpoint_id
                WHERE e.user_id = $1 ORDER BY e.date DESC, e.metric_id""",
             self.user_id,
         )

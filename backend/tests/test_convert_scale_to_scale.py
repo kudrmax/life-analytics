@@ -8,7 +8,7 @@ from tests.conftest import (
     auth_headers,
     create_entry,
     create_metric,
-    create_slot,
+    create_checkpoint,
 )
 
 
@@ -512,25 +512,25 @@ class TestScaleToScaleEdgeCases:
         )
         assert status == 400
 
-    async def test_scale_metric_with_slots(
+    async def test_scale_metric_with_checkpoints(
         self, client: AsyncClient, user_a: dict, db_pool,
     ):
-        """Scale metric with measurement slots — slot_id preserved after convert."""
+        """Scale metric with checkpoints — checkpoint_id preserved after convert."""
         token = user_a["token"]
-        slot_u = await create_slot(client, token, "Утро")
-        slot_v = await create_slot(client, token, "Вечер")
+        cp_u = await create_checkpoint(client, token, "Утро")
+        cp_v = await create_checkpoint(client, token, "Вечер")
         metric = await create_metric(
             client, token,
-            name="Scale Slots", metric_type="scale",
+            name="Scale CPs", metric_type="scale",
             scale_min=1, scale_max=5, scale_step=1,
-            slot_configs=[{"slot_id": slot_u["id"]}, {"slot_id": slot_v["id"]}],
+            checkpoint_configs=[{"checkpoint_id": cp_u["id"]}, {"checkpoint_id": cp_v["id"]}],
         )
         mid = metric["id"]
-        slots = metric["slots"]
-        assert len(slots) == 2
+        checkpoints = metric["checkpoints"]
+        assert len(checkpoints) == 2
 
-        await create_entry(client, token, mid, "2026-02-10", 3, slot_id=slots[0]["id"])
-        await create_entry(client, token, mid, "2026-02-10", 4, slot_id=slots[1]["id"])
+        await create_entry(client, token, mid, "2026-02-10", 3, checkpoint_id=checkpoints[0]["id"])
+        await create_entry(client, token, mid, "2026-02-10", 4, checkpoint_id=checkpoints[1]["id"])
 
         status, body = await _do_convert(
             client, token, mid,
@@ -542,10 +542,10 @@ class TestScaleToScaleEdgeCases:
 
         async with db_pool.acquire() as conn:
             entries = await conn.fetch(
-                "SELECT slot_id FROM entries WHERE metric_id = $1 ORDER BY slot_id", mid,
+                "SELECT checkpoint_id FROM entries WHERE metric_id = $1 ORDER BY checkpoint_id", mid,
             )
-            slot_ids = {r["slot_id"] for r in entries}
-            assert slot_ids == {slots[0]["id"], slots[1]["id"]}
+            cp_ids = {r["checkpoint_id"] for r in entries}
+            assert cp_ids == {checkpoints[0]["id"], checkpoints[1]["id"]}
 
     async def test_large_number_of_entries(
         self, client: AsyncClient, user_a: dict,
