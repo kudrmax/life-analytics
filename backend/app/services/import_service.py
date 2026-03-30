@@ -203,7 +203,8 @@ class ImportService:
         if mt == MetricType.enum.value and p["enum_opts"]:
             await self.repo.upsert_enum_config(mid, p["multi"])
             await self._import_enum_options(mid, p["enum_opts"])
-        if len(slot_configs) >= 2:
+        # Don't create metric_slots for moment metrics (they use dynamic interval selection)
+        if slot_configs and p.get("interval_binding") != "moment":
             await self._import_slots(mid, slot_configs)
 
     async def _create_configs(self, mid, mt, row, p, slot_configs) -> None:
@@ -219,7 +220,8 @@ class ImportService:
             await self.repo.upsert_enum_config(mid, p["multi"])
             for i, label in enumerate(p["enum_opts"]):
                 await self.repo.insert_enum_option(mid, i, label)
-        if len(slot_configs) >= 2:
+        # Don't create metric_slots for moment metrics (they use dynamic interval selection)
+        if slot_configs and p.get("interval_binding") != "moment":
             for i, cfg in enumerate(slot_configs):
                 sid = await self.repo.find_or_create_slot(cfg["label"])
                 await self.repo.insert_metric_slot(mid, sid, i, cfg.get("category_id"))

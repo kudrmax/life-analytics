@@ -64,12 +64,16 @@ class ExportService:
         ])
 
         for m in metrics:
-            slot_data = slots_by_metric.get(m["id"], [])
-            has_slot_cats = any(sd["category_id"] is not None for sd in slot_data)
-            if has_slot_cats:
-                slot_labels = [{"label": sd["label"], "category_path": _cat_path(sd["category_id"])} for sd in slot_data]
+            # Don't export slot_labels for moment metrics (their metric_slots are disabled)
+            if m.get("interval_binding") == "moment":
+                slot_labels = []
             else:
-                slot_labels = [sd["label"] for sd in slot_data]
+                slot_data = slots_by_metric.get(m["id"], [])
+                has_slot_cats = any(sd["category_id"] is not None for sd in slot_data)
+                if has_slot_cats:
+                    slot_labels = [{"label": sd["label"], "category_path": _cat_path(sd["category_id"])} for sd in slot_data]
+                else:
+                    slot_labels = [sd["label"] for sd in slot_data]
 
             cc = computed_cfgs.get(m["id"])
             formula_export = ''

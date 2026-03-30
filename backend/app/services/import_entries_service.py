@@ -45,8 +45,9 @@ class EntryImporter:
                     try:
                         so = int(row['slot_sort_order'])
                         label = row.get('slot_label', '') or f'Slot {so}'
-                        new_sid = await self.repo.find_or_create_slot(label)
-                        await self.repo.insert_metric_slot_on_fly(metric_id, new_sid, so)
+                        # Create slot as deleted (it wasn't in metric's slot_labels = was deleted on source)
+                        # Don't create metric_slot junction — entry just references the slot directly
+                        new_sid = await self.repo.find_or_create_slot(label, deleted=True)
                         slot_lookup[metric_id][so] = new_sid
                         global_label_lookup[label] = new_sid
                         slot_id = new_sid

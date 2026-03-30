@@ -128,17 +128,18 @@ class ImportRepository(BaseRepository):
     async def disable_enum_option(self, opt_id: int) -> None:
         await self.conn.execute("UPDATE enum_options SET enabled=FALSE WHERE id=$1", opt_id)
 
-    async def find_or_create_slot(self, label: str) -> int:
+    async def find_or_create_slot(self, label: str, deleted: bool = False) -> int:
+        # Find existing (active or deleted) — reuse for old entries
         existing = await self.conn.fetchrow(
-            "SELECT id FROM measurement_slots WHERE user_id=$1 AND LOWER(label)=LOWER($2) AND deleted = FALSE",
+            "SELECT id FROM measurement_slots WHERE user_id=$1 AND LOWER(label)=LOWER($2)",
             self.user_id, label.strip())
         if existing:
             return existing["id"]
         max_order = await self.conn.fetchval(
             "SELECT COALESCE(MAX(sort_order),-1) FROM measurement_slots WHERE user_id=$1", self.user_id)
         return await self.conn.fetchval(
-            "INSERT INTO measurement_slots (user_id, label, sort_order) VALUES ($1,$2,$3) RETURNING id",
-            self.user_id, label.strip(), max_order + 1)
+            "INSERT INTO measurement_slots (user_id, label, sort_order, deleted) VALUES ($1,$2,$3,$4) RETURNING id",
+            self.user_id, label.strip(), max_order + 1, deleted)
 
     async def insert_metric_slot(
         self, metric_id: int, slot_id: int, sort_order: int, category_id: int | None = None,
@@ -212,9 +213,9 @@ class ImportRepository(BaseRepository):
         return result
 
     async def get_global_slot_label_lookup(self) -> dict[str, int]:
-        """Lookup: label → slot_id for ALL user's slots. For label-based entry import."""
+        """Lookup: label → slot_id for ALL user's slots (including deleted). For label-based entry import."""
         rows = await self.conn.fetch(
-            "SELECT id, label FROM measurement_slots WHERE user_id = $1 AND deleted = FALSE",
+            "SELECT id, label FROM measurement_slots WHERE user_id = $1",
             self.user_id)
         return {r["label"]: r["id"] for r in rows}
 
