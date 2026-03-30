@@ -109,7 +109,7 @@ class TestLayoutOnDelete:
 
         # Delete cp1 (no metrics attached)
         resp = await client.delete(f"/api/checkpoints/{cp1['id']}", headers=auth_headers(user_a["token"]))
-        assert resp.status_code == 200
+        assert resp.status_code == 204
 
         data_after = await _get_layout(client, user_a["token"])
         assert not any(b["id"] == cp1["id"] and b["type"] == "checkpoint" for b in data_after["blocks"])
@@ -165,6 +165,99 @@ class TestLayoutDailyPageRespected:
         for m in metrics:
             assert "block_type" in m
             assert "block_id" in m
+
+
+@pytest.mark.anyio
+class TestLayoutInnerOrderPreservesCategory:
+    """Saving inner order must not lose category_id on standalone metrics.
+
+    Regression: standalone items in category blocks were returned without
+    category_id, so a round-trip (GET layout → save inner) wiped the category.
+    """
+
+    async def test_category_block_items_include_category_id(self, client, user_a):
+        """GET /api/layout must return category_id in items of category blocks."""
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Вес", "type": "number", "new_category_name": "Здоровье"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        metric = resp.json()
+        cat_id = metric["category_id"]
+
+        data = await _get_layout(client, user_a["token"])
+        cat_block = next(b for b in data["blocks"] if b["type"] == "category" and b["id"] == cat_id)
+        items = cat_block["items"]
+        assert len(items) >= 1
+        item = next(i for i in items if i["metric_id"] == metric["id"])
+        assert item["category_id"] == cat_id
+
+    async def test_save_inner_order_preserves_category(self, client, user_a):
+        """Round-trip: GET layout → POST inner → metric keeps its category_id."""
+        # Create two metrics in same category
+        resp1 = await client.post(
+            "/api/metrics",
+            json={"name": "Вес", "type": "number", "new_category_name": "Здоровье"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp1.status_code == 201
+        m1 = resp1.json()
+        cat_id = m1["category_id"]
+
+        resp2 = await client.post(
+            "/api/metrics",
+            json={"name": "Калории", "type": "number", "category_id": cat_id},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp2.status_code == 201
+        m2 = resp2.json()
+
+        # Get layout — find category block
+        data = await _get_layout(client, user_a["token"])
+        cat_block = next(b for b in data["blocks"] if b["type"] == "category" and b["id"] == cat_id)
+
+        # Simulate frontend: save inner order (reversed) with category_id from response
+        items = cat_block["items"]
+        save_items = [
+            {"metric_id": it["metric_id"], "sort_order": i * 10, "category_id": it["category_id"]}
+            for i, it in enumerate(reversed(items))
+        ]
+        resp = await client.post(
+            "/api/layout/inner",
+            json={"block_type": "category", "block_id": cat_id, "items": save_items},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+
+        # Verify category_id is preserved on metrics
+        for mid in [m1["id"], m2["id"]]:
+            r = await client.get(f"/api/metrics/{mid}", headers=auth_headers(user_a["token"]))
+            assert r.status_code == 200
+            assert r.json()["category_id"] == cat_id, f"metric {mid} lost its category_id"
+
+    async def test_save_inner_without_category_clears_it(self, client, user_a):
+        """If inner save sends category_id=null, metric loses its category."""
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Вес", "type": "number", "new_category_name": "Здоровье"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        metric = resp.json()
+        assert metric["category_id"] is not None
+
+        # Save inner order with category_id=null (reproduces the original bug)
+        resp = await client.post(
+            "/api/layout/inner",
+            json={"block_type": "category", "block_id": metric["category_id"],
+                  "items": [{"metric_id": metric["id"], "sort_order": 0, "category_id": None}]},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+
+        r = await client.get(f"/api/metrics/{metric['id']}", headers=auth_headers(user_a["token"]))
+        assert r.json()["category_id"] is None
 
 
 @pytest.mark.anyio

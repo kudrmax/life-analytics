@@ -69,7 +69,7 @@ class LayoutService:
         standalone_by_cat: dict[int, list[dict]] = {}
         standalone_no_cat: list[dict] = []
         for m in standalone:
-            item = {"metric_id": m["id"], "name": m["name"], "icon": m.get("icon", ""), "sort_order": m["sort_order"]}
+            item = {"metric_id": m["id"], "name": m["name"], "icon": m.get("icon", ""), "sort_order": m["sort_order"], "category_id": m["category_id"]}
             if m["category_id"] and m["category_id"] in cat_by_id:
                 cat_id = m["category_id"]
                 if cat_id not in standalone_by_cat:
