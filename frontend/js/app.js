@@ -4370,11 +4370,17 @@ function setupOrderDragDrop(container) {
         return { target: closest, before };
     }
 
-    function clearIndicators() {
-        container.querySelectorAll('.drag-over-before, .drag-over-after').forEach(el => {
-            el.classList.remove('drag-over-before', 'drag-over-after');
-        });
+    // Drop indicator — real DOM element
+    const dropLine = document.createElement('div');
+    dropLine.className = 'drop-indicator';
+
+    function showIndicator(target, before) {
+        if (!target) { dropLine.remove(); return; }
+        if (before) target.before(dropLine);
+        else target.after(dropLine);
     }
+
+    function hideIndicator() { dropLine.remove(); }
 
     container.addEventListener('pointerdown', (e) => {
         const handle = e.target.closest('.drag-handle');
@@ -4440,36 +4446,35 @@ function setupOrderDragDrop(container) {
             clone.style.top = (e.clientY - offsetY) + 'px';
         }
 
-        clearIndicators();
         const { target, before } = findClosest(e.clientY);
-        if (target) target.classList.add(before ? 'drag-over-before' : 'drag-over-after');
+        showIndicator(target, before);
     });
 
-    container.addEventListener('pointerup', async (e) => {
+    function endDrag(e) {
         if (!dragEl) return;
-        clearIndicators();
+        hideIndicator();
 
         if (isDragging) {
-            const { target, before } = findClosest(e.clientY);
-            if (target && target !== dragEl) {
-                if (before) target.before(dragEl);
-                else target.after(dragEl);
+            if (e) {
+                const { target, before } = findClosest(e.clientY);
+                if (target && target !== dragEl) {
+                    if (before) target.before(dragEl);
+                    else target.after(dragEl);
+                }
             }
             if (clone) { clone.remove(); clone = null; }
             dragEl.classList.remove('order-dragging');
-
-            // Save to server
-            await _saveOrderFromDOM(container);
+            const el = dragEl;
+            dragEl = null; dragScope = null; isDragging = false;
+            _saveOrderFromDOM(container);
+        } else {
+            dragEl = null; dragScope = null; isDragging = false;
         }
-        dragEl = null; dragScope = null; isDragging = false;
-    });
+    }
 
-    container.addEventListener('pointercancel', () => {
-        if (clone) { clone.remove(); clone = null; }
-        if (dragEl) dragEl.classList.remove('order-dragging');
-        clearIndicators();
-        dragEl = null; dragScope = null; isDragging = false;
-    });
+    // Listen on document to catch pointerup even if pointer leaves container
+    document.addEventListener('pointerup', endDrag);
+    document.addEventListener('pointercancel', () => endDrag(null));
 }
 
 async function _saveOrderFromDOM(container) {

@@ -3958,3 +3958,11 @@ body.card-mode-active {
 .order-dragging { opacity: 0.3; }
 .drag-clone { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); }
 
+/* Drop indicator — real DOM element inserted at drop position */
+.drop-indicator {
+    height: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+    margin: 2px 4px;
+}
+
