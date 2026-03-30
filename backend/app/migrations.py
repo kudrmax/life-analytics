@@ -549,6 +549,26 @@ MIGRATIONS = [
                   AND i.start_checkpoint_id = e.slot_id
                   AND i.user_id = e.user_id;
 
+                -- Fallback: match by end_checkpoint_id for moment metrics
+                -- (old system allowed selecting any slot, not just interval starts)
+                -- Skip if interval_id already taken for this metric+user+date
+                UPDATE entries e
+                SET interval_id = i.id
+                FROM metric_definitions md, intervals i
+                WHERE e.metric_id = md.id
+                  AND md.is_checkpoint = FALSE
+                  AND e.slot_id IS NOT NULL
+                  AND e.interval_id IS NULL
+                  AND i.end_checkpoint_id = e.slot_id
+                  AND i.user_id = e.user_id
+                  AND NOT EXISTS (
+                      SELECT 1 FROM entries e2
+                      WHERE e2.metric_id = e.metric_id
+                        AND e2.user_id = e.user_id
+                        AND e2.date = e.date
+                        AND e2.interval_id = i.id
+                  );
+
                 ALTER TABLE entries DROP COLUMN slot_id;
             END IF;
         END $$;
