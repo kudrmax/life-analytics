@@ -341,6 +341,19 @@ const api = {
     getIntervals() {
         return this.request('GET', '/api/checkpoints/intervals');
     },
+    getLayout() {
+        return this.request('GET', '/api/layout');
+    },
+    async saveLayoutBlocks(items) {
+        const result = await this.request('POST', '/api/layout/blocks', items);
+        invalidateCache('/api/layout', '/api/daily/');
+        return result;
+    },
+    async saveLayoutInner(data) {
+        const result = await this.request('POST', '/api/layout/inner', data);
+        invalidateCache('/api/layout', '/api/daily/');
+        return result;
+    },
     async createCheckpoint(data) {
         const result = await this.request('POST', '/api/checkpoints', data);
         invalidateCache('/api/checkpoints');

@@ -12,7 +12,7 @@ from starlette.requests import Request
 from app.database import create_pool, close_pool, init_db, pool as app_pool
 from app.domain.exceptions import EntityNotFoundError, DuplicateEntityError, InvalidOperationError, ConflictError
 from app.migrations import run_migrations
-from app.routers import metrics, entries, daily, analytics, auth, export_import, integrations, categories, notes, insights, checkpoints
+from app.routers import metrics, entries, daily, analytics, auth, export_import, integrations, categories, notes, insights, checkpoints, layout
 
 SLOW_REQUEST_MS = int(os.environ.get("SLOW_REQUEST_MS", "500"))
 _timing_logger = logging.getLogger("timing")
@@ -95,6 +95,7 @@ app.include_router(categories.router)
 app.include_router(checkpoints.router)
 app.include_router(notes.router)
 app.include_router(insights.router)
+app.include_router(layout.router)
 
 
 @app.get("/api/health")

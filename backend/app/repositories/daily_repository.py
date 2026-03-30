@@ -26,6 +26,14 @@ class DailyRepository(BaseRepository):
             d, self.user_id,
         )
 
+    async def get_daily_layout(self) -> list[asyncpg.Record]:
+        """Get daily layout block ordering for user."""
+        return await self.conn.fetch(
+            "SELECT block_type, block_id, sort_order FROM daily_layout "
+            "WHERE user_id = $1 ORDER BY sort_order, id",
+            self.user_id,
+        )
+
     async def get_all_user_checkpoints(self) -> list[asyncpg.Record]:
         """Return all user's checkpoints sorted by sort_order."""
         return await self.conn.fetch(

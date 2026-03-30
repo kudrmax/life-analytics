@@ -34,7 +34,8 @@ class DailyService:
         progress = calculate_progress(result)
         all_user_checkpoints = data.get("all_user_checkpoints", [])
         active_intervals = data.get("active_intervals", [])
-        result = split_by_checkpoints(result, all_user_checkpoints, active_intervals)
+        daily_layout = data.get("daily_layout", [])
+        result = split_by_checkpoints(result, all_user_checkpoints, active_intervals, daily_layout)
         qt.mark("build"); qt.log()
         checkpoints = [{"id": c["id"], "label": c["label"]} for c in all_user_checkpoints]
         intervals = [{"id": iv["id"], "start_checkpoint_id": iv["start_checkpoint_id"],
@@ -96,6 +97,9 @@ class DailyService:
         all_user_checkpoints = await self.repo.get_all_user_checkpoints()
         active_intervals = await self.repo.get_active_intervals()
 
+        # Load daily layout (block ordering)
+        daily_layout = await self.repo.get_daily_layout()
+
         return {
             "metrics": metrics, "metrics_by_id": {m["id"]: m for m in metrics},
             "enabled_checkpoints": enabled_checkpoints, "disabled_checkpoints": disabled_checkpoints,
@@ -106,6 +110,7 @@ class DailyService:
             "notes_count_map": notes_count, "notes_by_metric": notes_by,
             "all_user_checkpoints": all_user_checkpoints,
             "active_intervals": active_intervals,
+            "daily_layout": daily_layout,
         }
 
     def _build_metric_responses(self, data: dict, d: date_type, privacy_mode: bool) -> list[dict]:

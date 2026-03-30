@@ -654,4 +654,19 @@ async def _init_db_schema(conn):
         CREATE INDEX IF NOT EXISTS idx_insight_metrics_insight ON insight_metrics(insight_id)
     """)
 
+    # Daily layout — top-level block ordering for the daily page
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS daily_layout (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            block_type VARCHAR(20) NOT NULL,
+            block_id INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(user_id, block_type, block_id)
+        )
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_daily_layout_user ON daily_layout(user_id)
+    """)
+
 
