@@ -4301,6 +4301,7 @@ async function renderOrderPage(container) {
                 html += `<div class="order-category-header"><span class="drag-handle order-cat-drag">⠿</span><span>${_escapeHtml(catName)}</span></div>`;
             } else {
                 html += `<div class="order-category" data-category-id="">`;
+                html += `<div class="order-category-header"><span class="drag-handle order-cat-drag">⠿</span><span>Без категории</span></div>`;
             }
             for (const item of secItems) {
                 html += `<div class="order-metric" data-metric-id="${item.metric_id}">`;
