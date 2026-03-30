@@ -2342,7 +2342,11 @@ class TestImportCheckpointOnTheFly:
     async def test_import_creates_checkpoint_on_the_fly(
         self, client: AsyncClient, user_a: dict,
     ) -> None:
-        """Entry with slot_sort_order (legacy) not in existing checkpoints creates a new checkpoint."""
+        """Entry with slot_sort_order (legacy) not in existing checkpoints creates a deleted checkpoint.
+
+        The entry is saved with checkpoint_id, but the metric config stays clean
+        (deleted checkpoint, no metric_checkpoint junction — no phantom checkpoints).
+        """
         await create_metric(
             client, user_a["token"], name="No Checkpoint", metric_type="bool",
             slug="no_checkpoint",
@@ -2365,12 +2369,18 @@ class TestImportCheckpointOnTheFly:
         assert resp.status_code == 200
         assert resp.json()["entries"]["imported"] == 1
 
-        # Verify the metric now has a checkpoint
+        # Entry saved with checkpoint_id — verify via entries API
         resp_m = await client.get(
             "/api/metrics", headers=auth_headers(user_a["token"]),
         )
         metric = next(m for m in resp_m.json() if m["slug"] == "no_checkpoint")
-        assert len(metric["checkpoints"]) >= 1
+        resp_e = await client.get(
+            f"/api/entries?date=2026-03-01&metric_id={metric['id']}",
+            headers=auth_headers(user_a["token"]),
+        )
+        entries = resp_e.json()
+        assert len(entries) == 1
+        assert entries[0]["checkpoint_id"] is not None
 
 
 # ---------------------------------------------------------------------------
