@@ -50,7 +50,8 @@ class LayoutRepository(BaseRepository):
             for item in items:
                 await self.conn.execute(
                     "INSERT INTO daily_layout (user_id, block_type, block_id, sort_order) "
-                    "VALUES ($1, $2, $3, $4)",
+                    "VALUES ($1, $2, $3, $4) "
+                    "ON CONFLICT (user_id, block_type, block_id) DO UPDATE SET sort_order = EXCLUDED.sort_order",
                     self.user_id, item["block_type"], item["block_id"], item["sort_order"],
                 )
 

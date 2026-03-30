@@ -6696,19 +6696,18 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         });
     });
 
-    // Populate interval checkboxes with checkpoint intervals
+    // Populate interval checkboxes with real interval IDs from backend
     async function _populateIntervalCheckboxes() {
         const container = document.getElementById('nm-interval-list');
         if (!container) return;
         try {
-            const checkpoints = await api.getCheckpoints();
-            const sorted = checkpoints.sort((a, b) => a.sort_order - b.sort_order);
+            const intervals = await api.getIntervals();
             const existingIntervalIds = new Set((existingMetric?.intervals || []).map(s => s.id));
             container.innerHTML = '';
-            for (let i = 0; i < sorted.length - 1; i++) {
-                const label = `${sorted[i].label} → ${sorted[i + 1].label}`;
-                const checked = existingIntervalIds.has(sorted[i].id) ? 'checked' : '';
-                container.innerHTML += `<label class="enum-multi-select-label"><input type="checkbox" name="nm-interval-cb" value="${sorted[i].id}" ${checked}><span>${label}</span></label>`;
+            for (const iv of intervals) {
+                const label = iv.label || `${iv.start_label} → ${iv.end_label}`;
+                const checked = existingIntervalIds.has(iv.id) ? 'checked' : '';
+                container.innerHTML += `<label class="enum-multi-select-label"><input type="checkbox" name="nm-interval-cb" value="${iv.id}" ${checked}><span>${label}</span></label>`;
             }
         } catch(e) {}
     }

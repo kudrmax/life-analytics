@@ -139,6 +139,52 @@ class TestLayoutBlockReorder:
         old_ids = [(b["type"], b["id"]) for b in blocks]
         assert new_ids == list(reversed(old_ids))
 
+    async def test_duplicate_blocks_handled_gracefully(self, client, user_a):
+        """Duplicate (block_type, block_id) in items must not cause 500."""
+        metric = await create_metric(client, user_a["token"], name="Dup", metric_type="bool")
+        items = [
+            {"block_type": "metric", "block_id": metric["id"], "sort_order": 0},
+            {"block_type": "metric", "block_id": metric["id"], "sort_order": 10},
+        ]
+        resp = await client.post("/api/layout/blocks", json=items, headers=auth_headers(user_a["token"]))
+        assert resp.status_code == 200
+
+    async def test_duplicate_blocks_last_sort_order_wins(self, client, user_a):
+        """When duplicates sent, last sort_order should be saved."""
+        m1 = await create_metric(client, user_a["token"], name="M1", metric_type="bool")
+        m2 = await create_metric(client, user_a["token"], name="M2", metric_type="bool")
+        items = [
+            {"block_type": "metric", "block_id": m1["id"], "sort_order": 0},
+            {"block_type": "metric", "block_id": m2["id"], "sort_order": 10},
+            {"block_type": "metric", "block_id": m1["id"], "sort_order": 20},
+        ]
+        resp = await client.post("/api/layout/blocks", json=items, headers=auth_headers(user_a["token"]))
+        assert resp.status_code == 200
+
+        data = await _get_layout(client, user_a["token"])
+        blocks = data["blocks"]
+        m1_block = next(b for b in blocks if b["type"] == "metric" and b["id"] == m1["id"])
+        m2_block = next(b for b in blocks if b["type"] == "metric" and b["id"] == m2["id"])
+        m1_idx = blocks.index(m1_block)
+        m2_idx = blocks.index(m2_block)
+        assert m2_idx < m1_idx
+
+    async def test_duplicate_category_blocks_no_crash(self, client, user_a):
+        """Exact reproduction: duplicate category block must not cause UniqueViolationError."""
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Вес", "type": "number", "new_category_name": "Здоровье"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        cat_id = resp.json()["category_id"]
+        items = [
+            {"block_type": "category", "block_id": cat_id, "sort_order": 0},
+            {"block_type": "category", "block_id": cat_id, "sort_order": 10},
+        ]
+        resp = await client.post("/api/layout/blocks", json=items, headers=auth_headers(user_a["token"]))
+        assert resp.status_code == 200
+
 
 @pytest.mark.anyio
 class TestLayoutDailyPageRespected:
