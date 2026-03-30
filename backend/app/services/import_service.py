@@ -227,7 +227,8 @@ class ImportService:
         if mt == MetricType.enum.value and p["enum_opts"]:
             await self.repo.upsert_enum_config(mid, p["multi"])
             await self._import_enum_options(mid, p["enum_opts"])
-        if len(checkpoint_configs) >= 2:
+        # Don't create metric_checkpoints for moment metrics (they use dynamic interval selection)
+        if checkpoint_configs and p.get("interval_binding") != "moment":
             await self._import_checkpoints(mid, checkpoint_configs)
         if interval_configs:
             await self._import_intervals(mid, interval_configs)
@@ -245,7 +246,8 @@ class ImportService:
             await self.repo.upsert_enum_config(mid, p["multi"])
             for i, label in enumerate(p["enum_opts"]):
                 await self.repo.insert_enum_option(mid, i, label)
-        if len(checkpoint_configs) >= 2:
+        # Don't create metric_checkpoints for moment metrics (they use dynamic interval selection)
+        if checkpoint_configs and p.get("interval_binding") != "moment":
             for i, cfg in enumerate(checkpoint_configs):
                 cp_id = await self.repo.find_or_create_checkpoint(cfg["label"])
                 await self.repo.insert_metric_checkpoint(mid, cp_id, i, cfg.get("category_id"))

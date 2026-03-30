@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up build-up down logs logs-backend test test-user migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db lint-js
+.PHONY: help up build-up down delete reset logs logs-backend test test-user migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db lint-js
 
 .DEFAULT_GOAL := help
 
@@ -14,6 +14,8 @@ help: ## Показать эту справку
 	@echo "    make up              Запустить сервисы (быстро, офлайн)"
 	@echo "    make build-up        Пересобрать образы и запустить"
 	@echo "    make down            Остановить все сервисы"
+	@echo "    make delete          Остановить и удалить всё включая БД"
+	@echo "    make reset           Пересоздать с нуля (delete + build-up)"
 	@echo "    make logs            Логи всех сервисов"
 	@echo "    make logs-backend    Логи только backend"
 	@echo "    make status          Статус контейнеров"
@@ -82,6 +84,11 @@ build-up: lint-js
 
 down:
 	docker compose down
+
+delete: ## Остановить и удалить всё включая БД (volumes)
+	docker compose down -v
+
+reset: delete build-up ## Пересоздать всё с нуля (delete + build-up)
 
 logs:
 	docker compose logs -f

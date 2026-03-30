@@ -128,17 +128,18 @@ class ImportRepository(BaseRepository):
     async def disable_enum_option(self, opt_id: int) -> None:
         await self.conn.execute("UPDATE enum_options SET enabled=FALSE WHERE id=$1", opt_id)
 
-    async def find_or_create_checkpoint(self, label: str) -> int:
+    async def find_or_create_checkpoint(self, label: str, deleted: bool = False) -> int:
+        # Find existing (active or deleted) — reuse for old entries
         existing = await self.conn.fetchrow(
-            "SELECT id FROM checkpoints WHERE user_id=$1 AND LOWER(label)=LOWER($2) AND deleted = FALSE",
+            "SELECT id FROM checkpoints WHERE user_id=$1 AND LOWER(label)=LOWER($2)",
             self.user_id, label.strip())
         if existing:
             return existing["id"]
         max_order = await self.conn.fetchval(
             "SELECT COALESCE(MAX(sort_order),-1) FROM checkpoints WHERE user_id=$1", self.user_id)
         return await self.conn.fetchval(
-            "INSERT INTO checkpoints (user_id, label, sort_order) VALUES ($1,$2,$3) RETURNING id",
-            self.user_id, label.strip(), max_order + 1)
+            "INSERT INTO checkpoints (user_id, label, sort_order, deleted) VALUES ($1,$2,$3,$4) RETURNING id",
+            self.user_id, label.strip(), max_order + 1, deleted)
 
     async def find_or_create_interval(self, start_checkpoint_id: int, end_checkpoint_id: int) -> int:
         existing = await self.conn.fetchrow(
@@ -244,7 +245,7 @@ class ImportRepository(BaseRepository):
         if not metric_ids:
             return defaultdict(dict)
         rows = await self.conn.fetch(
-            """SELECT mc.metric_id, cp.sort_order, cp.id
+            """SELECT mc.metric_id, mc.sort_order, cp.id, cp.label
                FROM metric_checkpoints mc JOIN checkpoints cp ON cp.id = mc.checkpoint_id
                WHERE mc.metric_id = ANY($1) AND mc.enabled = TRUE""",
             metric_ids)
@@ -252,6 +253,13 @@ class ImportRepository(BaseRepository):
         for sr in rows:
             result[sr["metric_id"]][sr["sort_order"]] = sr["id"]
         return result
+
+    async def get_global_checkpoint_label_lookup(self) -> dict[str, int]:
+        """Lookup: label → checkpoint_id for ALL user's checkpoints (including deleted)."""
+        rows = await self.conn.fetch(
+            "SELECT id, label FROM checkpoints WHERE user_id = $1",
+            self.user_id)
+        return {r["label"]: r["id"] for r in rows}
 
     async def check_entry_duplicate(
         self, metric_id: int, d: date_type,

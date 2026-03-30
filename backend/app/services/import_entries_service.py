@@ -26,6 +26,7 @@ class EntryImporter:
 
         all_metric_ids = list(slug_to_id.values())
         checkpoint_lookup = await self.repo.get_checkpoint_lookup(all_metric_ids)
+        global_label_lookup = await self.repo.get_global_checkpoint_label_lookup()
 
         text = zip_file.read('entries.csv').decode('utf-8')
         reader = csv.DictReader(StringIO(text))
@@ -39,7 +40,8 @@ class EntryImporter:
                     continue
 
                 d = date_type.fromisoformat(row['date'])
-                checkpoint_id, interval_id = self._resolve_entry_binding(row, metric_id, checkpoint_lookup)
+                checkpoint_id, interval_id = self._resolve_entry_binding(
+                    row, metric_id, checkpoint_lookup, global_label_lookup)
 
                 # Backward compat: old format with slot_sort_order
                 if checkpoint_id is None and interval_id is None:
@@ -48,9 +50,10 @@ class EntryImporter:
                         try:
                             so = int(csv_so)
                             label = row.get('slot_label', '') or row.get('checkpoint_label', '') or f'Checkpoint {so}'
-                            new_cp_id = await self.repo.find_or_create_checkpoint(label)
-                            await self.repo.insert_metric_checkpoint_on_fly(metric_id, new_cp_id, so)
+                            # Create checkpoint as deleted (not in metric's checkpoint_labels = was deleted)
+                            new_cp_id = await self.repo.find_or_create_checkpoint(label, deleted=True)
                             checkpoint_lookup[metric_id][so] = new_cp_id
+                            global_label_lookup[label] = new_cp_id
                             checkpoint_id = new_cp_id
                         except (ValueError, TypeError):
                             pass
@@ -114,6 +117,7 @@ class EntryImporter:
     @staticmethod
     def _resolve_entry_binding(
         row: dict, metric_id: int, checkpoint_lookup: dict,
+        global_label_lookup: dict | None = None,
     ) -> tuple[int | None, int | None]:
         """Resolve checkpoint_id and interval_id from CSV row.
 
@@ -141,6 +145,13 @@ class EntryImporter:
         csv_so = row.get('slot_sort_order', '')
         if csv_so in ('', None):
             return None, None
+
+        # Try by label first (more reliable — labels are stable across export/import)
+        label = row.get('slot_label', '') or row.get('checkpoint_label', '')
+        if label and global_label_lookup and label in global_label_lookup:
+            return global_label_lookup[label], None
+
+        # Fallback: try by sort_order
         try:
             so = int(csv_so)
             if metric_id in checkpoint_lookup and so in checkpoint_lookup[metric_id]:
@@ -155,7 +166,7 @@ class EntryImporter:
                 return None
             label_to_id = await self.repo.get_enum_option_labels(metric_id)
             ids = [label_to_id[lbl] for lbl in value if lbl in label_to_id]
-            return ids if ids else None
+            return ids  # [] is valid — means "no options selected"
         if mt == MetricType.time:
             return value if isinstance(value, str) else None
         if mt in (MetricType.number, MetricType.duration, MetricType.scale):
