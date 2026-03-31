@@ -2846,11 +2846,22 @@ function showCorrelationHelp() {
     document.getElementById('corr-help-close').addEventListener('click', () => overlay.remove());
 }
 
-function renderCorrMetricLabel(label, icon, checkpointLabel, hint, dayLabel) {
+function renderCorrMetricLabel(label, icon, bindingLabel, sourceTag, deltaStart, deltaEnd, hint, dayLabel) {
     const iconHtml = `<span class="metric-icon">${icon || ''}</span>`;
-    const bindingHtml = checkpointLabel ? `<span class="corr-binding-badge">${checkpointLabel}</span>` : '';
     const dayHtml = dayLabel ? `<div class="corr-day-label">${dayLabel}</div>` : '';
-    return `${iconHtml}<div class="corr-metric-text">${dayHtml}<div class="corr-metric-name">${label}${bindingHtml}</div><div class="corr-pair-hint">${hint}</div></div>`;
+    const bindingHtml = bindingLabel ? `<span class="corr-binding-badge">${bindingLabel}</span>` : '';
+    let tagsHtml = '';
+    if (sourceTag || deltaStart) {
+        let parts = '';
+        if (sourceTag) parts += `<span class="corr-binding-badge">${sourceTag}</span>`;
+        if (deltaStart && deltaEnd) {
+            parts += `<span class="corr-delta-label">${deltaStart}</span>`;
+            parts += `<span class="corr-delta-arrow">→</span>`;
+            parts += `<span class="corr-delta-label">${deltaEnd}</span>`;
+        }
+        tagsHtml = `<div class="corr-source-tags">${parts}</div>`;
+    }
+    return `${iconHtml}<div class="corr-metric-text">${dayHtml}<div class="corr-metric-name">${label}</div>${tagsHtml}${bindingHtml ? `<div class="corr-source-tags">${bindingHtml}</div>` : ''}<div class="corr-pair-hint">${hint}</div></div>`;
 }
 
 const _metricStatsCache = {};
@@ -2925,8 +2936,18 @@ function renderCorrPair(p, report) {
     const rawIconA = (isLagged ? p.icon_b : p.icon_a) || '';
     const rawLabelB = isLagged ? p.label_a : p.label_b;
     const rawIconB = (isLagged ? p.icon_a : p.icon_b) || '';
-    const labelA = renderCorrMetricLabel(rawLabelA, rawIconA, isLagged ? p.binding_label_b : p.binding_label_a, hintA, isLagged ? 'вчера' : '');
-    const labelB = renderCorrMetricLabel(rawLabelB, rawIconB, isLagged ? p.binding_label_a : p.binding_label_b, hintB, isLagged ? 'сегодня' : '');
+    const labelA = renderCorrMetricLabel(rawLabelA, rawIconA,
+        isLagged ? p.binding_label_b : p.binding_label_a,
+        isLagged ? (p.source_tag_b || '') : (p.source_tag_a || ''),
+        isLagged ? (p.delta_start_b || '') : (p.delta_start_a || ''),
+        isLagged ? (p.delta_end_b || '') : (p.delta_end_a || ''),
+        hintA, isLagged ? 'вчера' : '');
+    const labelB = renderCorrMetricLabel(rawLabelB, rawIconB,
+        isLagged ? p.binding_label_a : p.binding_label_b,
+        isLagged ? (p.source_tag_a || '') : (p.source_tag_b || ''),
+        isLagged ? (p.delta_start_a || '') : (p.delta_start_b || ''),
+        isLagged ? (p.delta_end_a || '') : (p.delta_end_b || ''),
+        hintB, isLagged ? 'сегодня' : '');
 
     const pairId = `corr-detail-${p.pair_id}`;
     corrPairData.set(pairId, {

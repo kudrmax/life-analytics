@@ -108,6 +108,8 @@ class TestCorrHintWords(unittest.TestCase):
 
 
 class TestBuildDisplayLabel(unittest.TestCase):
+    """build_display_label returns only the metric name (no qualifiers)."""
+
     def test_regular_metric(self) -> None:
         result = PairFormatter.build_display_label("metric:5", "Настроение", None)
         assert result == "Настроение"
@@ -120,7 +122,7 @@ class TestBuildDisplayLabel(unittest.TestCase):
         result = PairFormatter.build_display_label(
             "metric:5", "Спорт", None, metric_type="bool", has_checkpoints=True,
         )
-        assert result == "Спорт (хоть раз)"
+        assert result == "Спорт"
 
     def test_bool_with_checkpoints_deleted(self) -> None:
         result = PairFormatter.build_display_label(
@@ -137,37 +139,37 @@ class TestBuildDisplayLabel(unittest.TestCase):
     def test_auto_nonzero(self) -> None:
         sk = SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=5)
         result = PairFormatter.build_display_label(sk.to_str(), None, "Калории")
-        assert result == "Калории: не ноль"
+        assert result == "Калории"
 
     def test_auto_note_count(self) -> None:
         sk = SourceKey(auto_type=AutoSourceType.NOTE_COUNT, auto_parent_metric_id=5)
         result = PairFormatter.build_display_label(sk.to_str(), None, "Дневник")
-        assert result == "Дневник: кол-во заметок"
+        assert result == "Дневник"
 
     def test_auto_checkpoint_max(self) -> None:
         sk = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MAX, auto_parent_metric_id=5)
         result = PairFormatter.build_display_label(sk.to_str(), None, "Давление")
-        assert result == "Давление: максимум"
+        assert result == "Давление"
 
     def test_auto_checkpoint_min(self) -> None:
         sk = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MIN, auto_parent_metric_id=5)
         result = PairFormatter.build_display_label(sk.to_str(), None, "Давление")
-        assert result == "Давление: минимум"
+        assert result == "Давление"
 
     def test_auto_rolling_avg(self) -> None:
         sk = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=5, auto_option_id=7)
         result = PairFormatter.build_display_label(sk.to_str(), None, "Вес")
-        assert result == "Вес: среднее 7 дн."
+        assert result == "Вес"
 
     def test_auto_streak_true(self) -> None:
         sk = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=5)
         result = PairFormatter.build_display_label(sk.to_str(), None, "Медитация")
-        assert result == "Медитация: серия подряд (да)"
+        assert result == "Медитация"
 
     def test_auto_streak_false(self) -> None:
         sk = SourceKey(auto_type=AutoSourceType.STREAK_FALSE, auto_parent_metric_id=5)
         result = PairFormatter.build_display_label(sk.to_str(), None, "Медитация")
-        assert result == "Медитация: серия подряд (нет)"
+        assert result == "Медитация"
 
     def test_auto_day_of_week_with_option(self) -> None:
         sk = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=1)
@@ -188,6 +190,90 @@ class TestBuildDisplayLabel(unittest.TestCase):
         sk = SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=99)
         result = PairFormatter.build_display_label(sk.to_str(), None, None)
         assert result == "Авто-источник"
+
+
+# ─── build_source_tag ────────────────────────────────────────
+
+
+class TestBuildSourceTag(unittest.TestCase):
+    def test_regular_metric(self) -> None:
+        assert PairFormatter.build_source_tag("metric:5") == ""
+
+    def test_nonzero(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.NONZERO, auto_parent_metric_id=5)
+        assert PairFormatter.build_source_tag(sk.to_str()) == "не ноль"
+
+    def test_note_count(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.NOTE_COUNT, auto_parent_metric_id=5)
+        assert PairFormatter.build_source_tag(sk.to_str()) == "кол-во заметок"
+
+    def test_checkpoint_max(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MAX, auto_parent_metric_id=5)
+        assert PairFormatter.build_source_tag(sk.to_str()) == "максимум"
+
+    def test_checkpoint_min(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MIN, auto_parent_metric_id=5)
+        assert PairFormatter.build_source_tag(sk.to_str()) == "минимум"
+
+    def test_rolling_avg(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=5, auto_option_id=7)
+        assert PairFormatter.build_source_tag(sk.to_str()) == "среднее 7 дн."
+
+    def test_streak_true(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.STREAK_TRUE, auto_parent_metric_id=5)
+        assert PairFormatter.build_source_tag(sk.to_str()) == "серия подряд (да)"
+
+    def test_streak_false(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.STREAK_FALSE, auto_parent_metric_id=5)
+        assert PairFormatter.build_source_tag(sk.to_str()) == "серия подряд (нет)"
+
+    def test_delta(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.DELTA, auto_parent_metric_id=5, auto_option_id=10)
+        assert PairFormatter.build_source_tag(sk.to_str()) == "Δ"
+
+    def test_trend(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.TREND, auto_parent_metric_id=5)
+        assert PairFormatter.build_source_tag(sk.to_str()) == "тренд"
+
+    def test_range(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.RANGE, auto_parent_metric_id=5)
+        assert PairFormatter.build_source_tag(sk.to_str()) == "размах"
+
+    def test_calendar_no_tag(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.DAY_OF_WEEK, auto_option_id=1)
+        assert PairFormatter.build_source_tag(sk.to_str()) == ""
+
+    def test_bool_aggregate_with_checkpoints(self) -> None:
+        result = PairFormatter.build_source_tag("metric:5", metric_type="bool", has_checkpoints=True)
+        assert result == "хоть раз"
+
+    def test_bool_with_checkpoint_id_no_tag(self) -> None:
+        result = PairFormatter.build_source_tag(
+            "metric:5:checkpoint:3", metric_type="bool", has_checkpoints=True,
+        )
+        assert result == ""
+
+
+# ─── build_delta_labels ──────────────────────────────────────
+
+
+class TestBuildDeltaLabels(unittest.TestCase):
+    def test_non_delta_returns_empty(self) -> None:
+        assert PairFormatter.build_delta_labels("metric:5") == ("", "")
+
+    def test_delta_with_ordering(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.DELTA, auto_parent_metric_id=5, auto_option_id=10)
+        result = PairFormatter.build_delta_labels(
+            sk.to_str(),
+            checkpoint_labels={10: "Утро", 20: "День"},
+            checkpoint_ordering={5: [10, 20]},
+        )
+        assert result == ("Утро", "День")
+
+    def test_delta_without_ordering(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.DELTA, auto_parent_metric_id=5, auto_option_id=10)
+        result = PairFormatter.build_delta_labels(sk.to_str())
+        assert result == ("", "")
 
 
 # ─── resolve_icon ─────────────────────────────────────────────
@@ -283,6 +369,12 @@ class TestFormatPair(unittest.TestCase):
         result = fmt.format_pair(_make_pair())
         assert result["label_a"] == "MetricA"
         assert result["label_b"] == "MetricB"
+        assert result["source_tag_a"] == ""
+        assert result["source_tag_b"] == ""
+        assert result["delta_start_a"] == ""
+        assert result["delta_end_a"] == ""
+        assert result["delta_start_b"] == ""
+        assert result["delta_end_b"] == ""
         assert result["correlation"] == 0.75
         assert result["data_points"] == 30
         assert result["pair_id"] == 1

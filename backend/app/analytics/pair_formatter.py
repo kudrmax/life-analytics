@@ -89,6 +89,20 @@ class PairFormatter:
             checkpoint_labels=self._checkpoint_labels, checkpoint_ordering=self._checkpoint_ordering,
             interval_labels=self._interval_labels,
         )
+        source_tag_a = "" if blocked_a else self.build_source_tag(
+            p["source_key_a"], metric_type=p["type_a"],
+            has_checkpoints=(p["metric_a_id"] in self._metrics_with_checkpoints if p["metric_a_id"] else False),
+        )
+        source_tag_b = "" if blocked_b else self.build_source_tag(
+            p["source_key_b"], metric_type=p["type_b"],
+            has_checkpoints=(p["metric_b_id"] in self._metrics_with_checkpoints if p["metric_b_id"] else False),
+        )
+        delta_a = ("", "") if blocked_a else self.build_delta_labels(
+            p["source_key_a"], self._checkpoint_labels, self._checkpoint_ordering,
+        )
+        delta_b = ("", "") if blocked_b else self.build_delta_labels(
+            p["source_key_b"], self._checkpoint_labels, self._checkpoint_ordering,
+        )
         icon_a = PRIVATE_ICON if blocked_a else self.resolve_icon(p["source_key_a"], p["icon_a"])
         icon_b = PRIVATE_ICON if blocked_b else self.resolve_icon(p["source_key_b"], p["icon_b"])
 
@@ -112,6 +126,12 @@ class PairFormatter:
         return {
             "label_a": label_a,
             "label_b": label_b,
+            "source_tag_a": source_tag_a,
+            "source_tag_b": source_tag_b,
+            "delta_start_a": delta_a[0],
+            "delta_end_a": delta_a[1],
+            "delta_start_b": delta_b[0],
+            "delta_end_b": delta_b[1],
             "option_a": option_a,
             "option_b": option_b,
             "type_a": p["type_a"],
@@ -182,9 +202,14 @@ class PairFormatter:
         checkpoint_ordering: dict[int, list[int]] | None = None,
         interval_labels: dict[int, str] | None = None,
     ) -> str:
-        """Build human-readable label for a correlation source."""
+        """Build human-readable label — pure metric name only.
+
+        Qualifiers (auto-source tags, checkpoint/interval suffixes) are returned
+        separately by build_source_tag() and build_delta_labels().
+        """
         sk = SourceKey.parse(source_key_str)
         if sk.auto_type:
+            # Calendar auto-sources (no parent metric) — keep full display name
             display = AUTO_DISPLAY_NAMES.get(sk.auto_type)
             if display:
                 if sk.auto_option_id is not None:
@@ -192,51 +217,66 @@ class PairFormatter:
                     opt_label = option_labels.get(sk.auto_option_id, str(sk.auto_option_id))
                     return f"{display}: {opt_label}"
                 return display
-            if sk.auto_type == AutoSourceType.NONZERO and parent_metric_name:
-                return f"{parent_metric_name}: не ноль"
-            if sk.auto_type == AutoSourceType.NOTE_COUNT and parent_metric_name:
-                return f"{parent_metric_name}: кол-во заметок"
-            if sk.auto_type == AutoSourceType.CHECKPOINT_MAX and parent_metric_name:
-                return f"{parent_metric_name}: максимум"
-            if sk.auto_type == AutoSourceType.CHECKPOINT_MIN and parent_metric_name:
-                return f"{parent_metric_name}: минимум"
-            if sk.auto_type == AutoSourceType.ROLLING_AVG and sk.auto_option_id and parent_metric_name:
-                return f"{parent_metric_name}: среднее {sk.auto_option_id} дн."
-            if sk.auto_type == AutoSourceType.STREAK_TRUE and parent_metric_name:
-                return f"{parent_metric_name}: серия подряд (да)"
-            if sk.auto_type == AutoSourceType.STREAK_FALSE and parent_metric_name:
-                return f"{parent_metric_name}: серия подряд (нет)"
-            if sk.auto_type == AutoSourceType.DELTA and parent_metric_name:
-                if checkpoint_labels and checkpoint_ordering and sk.auto_parent_metric_id is not None:
-                    ordered = checkpoint_ordering.get(sk.auto_parent_metric_id, [])
-                    start_label = checkpoint_labels.get(sk.auto_option_id, "?") if sk.auto_option_id else "?"
-                    end_label = "?"
-                    if sk.auto_option_id is not None:
-                        for idx_s, cid in enumerate(ordered):
-                            if cid == sk.auto_option_id and idx_s + 1 < len(ordered):
-                                end_label = checkpoint_labels.get(ordered[idx_s + 1], "?")
-                                break
-                    return f"{parent_metric_name}: Δ {start_label} → {end_label}"
-                return f"{parent_metric_name}: Δ"
-            if sk.auto_type == AutoSourceType.TREND and parent_metric_name:
-                return f"{parent_metric_name}: тренд"
-            if sk.auto_type == AutoSourceType.RANGE and parent_metric_name:
-                return f"{parent_metric_name}: размах"
+            # Metric-derived auto-sources — return only parent name
+            if parent_metric_name:
+                return parent_metric_name
             return "Авто-источник"
-        # Bool aggregate with checkpoints — annotate "(хоть раз)"
-        if metric_type == MetricType.bool and has_checkpoints and sk.checkpoint_id is None:
-            return f"{metric_name} (хоть раз)" if metric_name else "Удалённая метрика"
-        # Per-checkpoint source — append checkpoint label
-        if sk.checkpoint_id is not None and checkpoint_labels:
-            checkpoint_label = checkpoint_labels.get(sk.checkpoint_id)
-            if checkpoint_label and metric_name:
-                return f"{metric_name}: {checkpoint_label}"
-        # Per-interval source — append interval label
-        if sk.interval_id is not None and interval_labels:
-            interval_label = interval_labels.get(sk.interval_id)
-            if interval_label and metric_name:
-                return f"{metric_name}: {interval_label}"
         return metric_name or "Удалённая метрика"
+
+    @staticmethod
+    def build_source_tag(
+        source_key_str: str,
+        metric_type: str | None = None,
+        has_checkpoints: bool = False,
+    ) -> str:
+        """Build qualifier tag for a correlation source (shown as badge)."""
+        sk = SourceKey.parse(source_key_str)
+        if sk.auto_type:
+            # Calendar auto-sources have no tag (label already contains full info)
+            if AUTO_DISPLAY_NAMES.get(sk.auto_type):
+                return ""
+            tag_map: dict[AutoSourceType, str] = {
+                AutoSourceType.NONZERO: "не ноль",
+                AutoSourceType.NOTE_COUNT: "кол-во заметок",
+                AutoSourceType.CHECKPOINT_MAX: "максимум",
+                AutoSourceType.CHECKPOINT_MIN: "минимум",
+                AutoSourceType.STREAK_TRUE: "серия подряд (да)",
+                AutoSourceType.STREAK_FALSE: "серия подряд (нет)",
+                AutoSourceType.DELTA: "Δ",
+                AutoSourceType.TREND: "тренд",
+                AutoSourceType.RANGE: "размах",
+            }
+            if sk.auto_type in tag_map:
+                return tag_map[sk.auto_type]
+            if sk.auto_type == AutoSourceType.ROLLING_AVG and sk.auto_option_id:
+                return f"среднее {sk.auto_option_id} дн."
+            return ""
+        # Bool aggregate with checkpoints
+        if metric_type == MetricType.bool and has_checkpoints and sk.checkpoint_id is None:
+            return "хоть раз"
+        return ""
+
+    @staticmethod
+    def build_delta_labels(
+        source_key_str: str,
+        checkpoint_labels: dict[int, str] | None = None,
+        checkpoint_ordering: dict[int, list[int]] | None = None,
+    ) -> tuple[str, str]:
+        """Return (start_label, end_label) for delta auto-sources."""
+        sk = SourceKey.parse(source_key_str)
+        if sk.auto_type != AutoSourceType.DELTA:
+            return ("", "")
+        if not checkpoint_labels or not checkpoint_ordering or sk.auto_parent_metric_id is None:
+            return ("", "")
+        ordered = checkpoint_ordering.get(sk.auto_parent_metric_id, [])
+        start_label = checkpoint_labels.get(sk.auto_option_id, "?") if sk.auto_option_id else "?"
+        end_label = "?"
+        if sk.auto_option_id is not None:
+            for idx_s, cid in enumerate(ordered):
+                if cid == sk.auto_option_id and idx_s + 1 < len(ordered):
+                    end_label = checkpoint_labels.get(ordered[idx_s + 1], "?")
+                    break
+        return (start_label, end_label)
 
     @staticmethod
     def corr_type_words(type_: str) -> tuple[str, str]:

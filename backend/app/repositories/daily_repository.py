@@ -118,7 +118,7 @@ class DailyRepository(BaseRepository):
             """SELECT DISTINCT c.id, mc.metric_id, c.label, c.sort_order
                FROM metric_checkpoints mc
                JOIN checkpoints c ON c.id = mc.checkpoint_id
-               JOIN entries e ON e.checkpoint_id = c.id AND e.date = $1 AND e.user_id = $2
+               JOIN entries e ON e.checkpoint_id = c.id AND e.metric_id = mc.metric_id AND e.date = $1 AND e.user_id = $2
                WHERE mc.metric_id = ANY($3) AND mc.enabled = FALSE
                ORDER BY mc.metric_id, c.sort_order""",
             d, self.user_id, metric_ids,
@@ -138,7 +138,7 @@ class DailyRepository(BaseRepository):
                JOIN intervals i ON i.id = mi.interval_id
                JOIN checkpoints cs ON cs.id = i.start_checkpoint_id
                JOIN checkpoints ce ON ce.id = i.end_checkpoint_id
-               JOIN entries e ON e.interval_id = i.id AND e.date = $1 AND e.user_id = $2
+               JOIN entries e ON e.interval_id = i.id AND e.metric_id = mi.metric_id AND e.date = $1 AND e.user_id = $2
                WHERE mi.metric_id = ANY($3) AND mi.enabled = FALSE
                ORDER BY mi.metric_id, cs.sort_order""",
             d, self.user_id, metric_ids,

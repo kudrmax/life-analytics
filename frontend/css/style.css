@@ -1415,6 +1415,14 @@ input[type="month"], input[type="date"] {
 .corr-pair-value.medium { color: var(--yellow); }
 .corr-pair-value.weak { color: var(--red); }
 
+.corr-source-tags {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+}
+
 .corr-binding-badge {
     display: inline-block;
     font-size: 10px;
@@ -1423,8 +1431,23 @@ input[type="month"], input[type="date"] {
     border-radius: 4px;
     background: var(--border);
     color: var(--text-dim);
-    margin-left: 4px;
     vertical-align: middle;
+}
+
+.corr-delta-label {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+}
+
+.corr-delta-arrow {
+    font-size: 10px;
+    color: var(--text-dim);
+    opacity: 0.6;
 }
 
 .corr-day-label {

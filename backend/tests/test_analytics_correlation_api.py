@@ -792,10 +792,10 @@ class TestPairChartAutoSources:
         pairs_data = resp.json()
         assert pairs_data["total"] > 0
 
-        # Find a pair with "не ноль" label (nonzero auto source)
+        # Find a pair with "не ноль" source_tag (nonzero auto source)
         nonzero_pair = None
         for p in pairs_data["pairs"]:
-            if "не ноль" in p.get("label_a", "") or "не ноль" in p.get("label_b", ""):
+            if p.get("source_tag_a") == "не ноль" or p.get("source_tag_b") == "не ноль":
                 nonzero_pair = p
                 break
         assert nonzero_pair is not None, "Expected nonzero auto-source pair"
@@ -853,10 +853,10 @@ class TestPairChartAutoSources:
         )
         pairs_data = resp.json()
 
-        # Find pair with note_count source (label contains "кол-во заметок")
+        # Find pair with note_count source (source_tag contains "кол-во заметок")
         nc_pair = None
         for p in pairs_data["pairs"]:
-            if "заметок" in p.get("label_a", "") or "заметок" in p.get("label_b", ""):
+            if p.get("source_tag_a") == "кол-во заметок" or p.get("source_tag_b") == "кол-во заметок":
                 nc_pair = p
                 break
         assert nc_pair is not None, "Expected note_count auto-source pair"
@@ -1075,17 +1075,17 @@ class TestReportDiverseSources:
             types_found.add(p["type_b"])
         assert "enum_bool" in types_found, f"Expected enum_bool in types: {types_found}"
 
-        # Check note_count source exists
-        labels = set()
+        # Check note_count source exists via source_tag
+        tags = set()
         for p in pairs_data["pairs"]:
-            labels.add(p["label_a"])
-            labels.add(p["label_b"])
-        note_labels = [l for l in labels if "заметок" in l]
-        assert len(note_labels) > 0, f"Expected note_count label, got: {labels}"
+            if p.get("source_tag_a"):
+                tags.add(p["source_tag_a"])
+            if p.get("source_tag_b"):
+                tags.add(p["source_tag_b"])
+        assert "кол-во заметок" in tags, f"Expected note_count source_tag, got: {tags}"
 
         # Check nonzero source exists
-        nonzero_labels = [l for l in labels if "не ноль" in l]
-        assert len(nonzero_labels) > 0, f"Expected nonzero label, got: {labels}"
+        assert "не ноль" in tags, f"Expected nonzero source_tag, got: {tags}"
 
         # Check enum option labels
         option_labels_found: set[str] = set()
@@ -1624,17 +1624,17 @@ class TestCheckpointMaxMinAutoSources:
         pairs_data = resp.json()
         assert pairs_data["total"] > 0
 
-        # Collect all labels
-        labels = set()
+        # Collect all source_tags
+        tags = set()
         for p in pairs_data["pairs"]:
-            labels.add(p["label_a"])
-            labels.add(p["label_b"])
+            if p.get("source_tag_a"):
+                tags.add(p["source_tag_a"])
+            if p.get("source_tag_b"):
+                tags.add(p["source_tag_b"])
 
-        # checkpoint_max and checkpoint_min should appear
-        max_labels = [l for l in labels if "максимум" in l]
-        min_labels = [l for l in labels if "минимум" in l]
-        assert len(max_labels) > 0, f"Expected checkpoint_max label with 'максимум', got labels: {labels}"
-        assert len(min_labels) > 0, f"Expected checkpoint_min label with 'минимум', got labels: {labels}"
+        # checkpoint_max and checkpoint_min should appear as source_tags
+        assert "максимум" in tags, f"Expected checkpoint_max source_tag, got: {tags}"
+        assert "минимум" in tags, f"Expected checkpoint_min source_tag, got: {tags}"
 
     async def test_checkpoint_max_min_chart_reconstruction(
         self, client: AsyncClient, user_a: dict,
@@ -1682,10 +1682,10 @@ class TestCheckpointMaxMinAutoSources:
         )
         pairs_data = resp.json()
 
-        # Find a checkpoint_max pair
+        # Find a checkpoint_max pair via source_tag
         max_pair = None
         for p in pairs_data["pairs"]:
-            if "максимум" in p.get("label_a", "") or "максимум" in p.get("label_b", ""):
+            if p.get("source_tag_a") == "максимум" or p.get("source_tag_b") == "максимум":
                 max_pair = p
                 break
         assert max_pair is not None, "Expected checkpoint_max pair"
@@ -1751,23 +1751,21 @@ class TestBoolAggregateAnnotation:
         pairs_data = resp.json()
         assert pairs_data["total"] > 0
 
-        # Find aggregate bool source — should have "(хоть раз)" annotation
-        aggregate_labels = set()
+        # Find aggregate bool source — should have "хоть раз" source_tag
+        aggregate_pairs = []
         for p in pairs_data["pairs"]:
-            for label_key, sk_key in [("label_a", "source_key_a"), ("label_b", "source_key_b")]:
-                # skip if source_key not exposed; check label
-                pass
-            if "хоть раз" in p.get("label_a", ""):
-                aggregate_labels.add(p["label_a"])
-            if "хоть раз" in p.get("label_b", ""):
-                aggregate_labels.add(p["label_b"])
+            if p.get("source_tag_a") == "хоть раз" or p.get("source_tag_b") == "хоть раз":
+                aggregate_pairs.append(p)
 
-        assert len(aggregate_labels) > 0, (
-            f"Expected '(хоть раз)' annotation on bool aggregate label"
+        assert len(aggregate_pairs) > 0, (
+            "Expected 'хоть раз' source_tag on bool aggregate pair"
         )
-        # The annotation should include the metric name
-        for lbl in aggregate_labels:
-            assert "Зарядка" in lbl
+        # The label should be the pure metric name
+        for pair in aggregate_pairs:
+            if pair.get("source_tag_a") == "хоть раз":
+                assert pair["label_a"] == "Зарядка"
+            if pair.get("source_tag_b") == "хоть раз":
+                assert pair["label_b"] == "Зарядка"
 
     async def test_bool_with_single_interval_no_annotation(
         self, client: AsyncClient, user_a: dict,
@@ -2091,13 +2089,13 @@ class TestSingleIntervalNoDuplicate:
         )
         pairs_data = resp.json()
 
-        # Should have "не ноль" auto-source for the fixed number metric
-        nonzero_labels = [
+        # Should have "не ноль" source_tag for the fixed number metric
+        nonzero_pairs = [
             p for p in pairs_data["pairs"]
-            if "не ноль" in p.get("label_a", "") or "не ноль" in p.get("label_b", "")
+            if p.get("source_tag_a") == "не ноль" or p.get("source_tag_b") == "не ноль"
         ]
-        assert len(nonzero_labels) > 0, (
-            "Expected 'не ноль' auto-source for fixed number metric"
+        assert len(nonzero_pairs) > 0, (
+            "Expected 'не ноль' source_tag for fixed number metric"
         )
 
 
@@ -2274,14 +2272,16 @@ class TestStreakSources:
         )
         assert resp.status_code == 200
         pairs_data = resp.json()
-        all_labels = set()
+        all_tags = set()
         for p in pairs_data["pairs"]:
-            all_labels.add(p["label_a"])
-            all_labels.add(p["label_b"])
+            if p.get("source_tag_a"):
+                all_tags.add(p["source_tag_a"])
+            if p.get("source_tag_b"):
+                all_tags.add(p["source_tag_b"])
 
-        assert "StreakTest: серия подряд (да)" in all_labels, (
-            f"Expected streak_true label, got labels: {all_labels}"
+        assert "серия подряд (да)" in all_tags, (
+            f"Expected streak_true source_tag, got tags: {all_tags}"
         )
-        assert "StreakTest: серия подряд (нет)" in all_labels, (
-            f"Expected streak_false label, got labels: {all_labels}"
+        assert "серия подряд (нет)" in all_tags, (
+            f"Expected streak_false source_tag, got tags: {all_tags}"
         )

@@ -573,6 +573,118 @@ class TestIntervalBindingChangeMigration:
 
 
 @pytest.mark.anyio
+class TestDisabledIntervalsNoCrossMetricContamination:
+    """Bug: disabled metric_intervals picked up entries from OTHER metrics.
+
+    get_disabled_intervals_with_entries JOIN entries was missing e.metric_id filter,
+    so any entry with matching interval_id (from any metric) would cause disabled
+    intervals to appear for a metric that had switched to all_day.
+    """
+
+    async def test_all_day_metric_not_contaminated_by_other_metric_intervals(self, client, user_a):
+        """Metric switched to all_day must NOT show intervals from other metrics' entries."""
+        cp1 = await create_checkpoint(client, user_a["token"], "Утро")
+        cp2 = await create_checkpoint(client, user_a["token"], "День")
+
+        intervals = await _get_intervals(client, user_a["token"])
+        iv1 = intervals[0]
+
+        # Metric A: by_interval, stays that way
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Кофе", "type": "bool", "interval_binding": "by_interval",
+                  "interval_ids": [iv1["id"]]},
+            headers=auth_headers(user_a["token"]),
+        )
+        metric_a = resp.json()
+
+        # Metric B: start as by_interval, then switch to all_day
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Читал", "type": "bool", "interval_binding": "by_interval",
+                  "interval_ids": [iv1["id"]]},
+            headers=auth_headers(user_a["token"]),
+        )
+        metric_b = resp.json()
+
+        # Switch Metric B to all_day (metric_intervals become disabled)
+        resp = await client.patch(
+            f"/api/metrics/{metric_b['id']}",
+            json={"interval_binding": "all_day"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["interval_binding"] == "all_day"
+
+        # Create entry for Metric A with interval_id (this is the "contaminant")
+        date = "2026-03-29"
+        await create_entry(client, user_a["token"], metric_a["id"], date, True, interval_id=iv1["id"])
+
+        # Daily page: Metric B must NOT show intervals
+        resp = await client.get(f"/api/daily/{date}", headers=auth_headers(user_a["token"]))
+        assert resp.status_code == 200
+        metrics = resp.json()["metrics"]
+        read_items = [m for m in metrics if m["name"] == "Читал"]
+        assert len(read_items) == 1, f"Expected 1 item for Читал, got {len(read_items)}"
+        assert read_items[0]["intervals"] is None, (
+            "Metric switched to all_day must not have intervals from other metrics' entries"
+        )
+
+    async def test_disabled_checkpoints_no_cross_metric_contamination(self, client, user_a):
+        """Metric with disabled checkpoints must NOT pick up entries from other metrics."""
+        cp1 = await create_checkpoint(client, user_a["token"], "Утро")
+        cp2 = await create_checkpoint(client, user_a["token"], "День")
+        cp3 = await create_checkpoint(client, user_a["token"], "Вечер")
+
+        # Metric A: checkpoint-bound with cp1+cp2, stays that way
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Настроение", "type": "scale", "scale_min": 1, "scale_max": 5,
+                  "is_checkpoint": True,
+                  "checkpoint_configs": [{"checkpoint_id": cp1["id"]}, {"checkpoint_id": cp2["id"]}]},
+            headers=auth_headers(user_a["token"]),
+        )
+        metric_a = resp.json()
+
+        # Metric B: checkpoint-bound with cp1+cp2, then narrow to cp2+cp3 (cp1 becomes disabled)
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Энергия", "type": "scale", "scale_min": 1, "scale_max": 5,
+                  "is_checkpoint": True,
+                  "checkpoint_configs": [{"checkpoint_id": cp1["id"]}, {"checkpoint_id": cp2["id"]}]},
+            headers=auth_headers(user_a["token"]),
+        )
+        metric_b = resp.json()
+
+        # Narrow Metric B: keep only cp2+cp3 (cp1 becomes disabled)
+        resp = await client.patch(
+            f"/api/metrics/{metric_b['id']}",
+            json={"checkpoint_configs": [{"checkpoint_id": cp2["id"]}, {"checkpoint_id": cp3["id"]}]},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+
+        # Create entry for Metric A at cp1 (this is the "contaminant")
+        date = "2026-03-29"
+        await create_entry(client, user_a["token"], metric_a["id"], date, 4, checkpoint_id=cp1["id"])
+
+        # Daily page: Metric B must NOT show cp1 from Metric A's entry
+        resp = await client.get(f"/api/daily/{date}", headers=auth_headers(user_a["token"]))
+        assert resp.status_code == 200
+        metrics = resp.json()["metrics"]
+        energy_items = [m for m in metrics if m["name"] == "Энергия"]
+        # Metric B should have cp2 and cp3 (enabled), but NOT cp1 (disabled, no own entries)
+        cp_ids = set()
+        for item in energy_items:
+            if item.get("checkpoints"):
+                for cp in item["checkpoints"]:
+                    cp_ids.add(cp["checkpoint_id"])
+        assert cp1["id"] not in cp_ids, (
+            "Disabled checkpoint must not appear due to other metric's entries"
+        )
+
+
+@pytest.mark.anyio
 class TestIntervalBindingUpdateNoMigration:
     async def test_update_category_does_not_remigrate_entries(self, client, user_a):
         """Bug: PATCH with same interval_ids on already-by_interval metric caused 500
