@@ -13,6 +13,7 @@ _SKIP_AUTO_PAIRS: list[tuple[frozenset[AutoSourceType], frozenset[AutoSourceType
     (STREAK_TYPES, _ROLLING_AVG_TYPES),    # streak × rolling_avg
     (_DELTA_TYPES, _DELTA_TYPES),          # delta × delta / trend × range / etc.
     (_DELTA_TYPES, _ROLLING_AVG_TYPES),    # delta × rolling_avg (derived series)
+    (_ROLLING_AVG_TYPES, _ROLLING_AVG_TYPES),  # rolling_avg × rolling_avg — inflated by autocorrelation
 ]
 
 

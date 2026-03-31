@@ -176,10 +176,11 @@ class TestShouldSkipPair(unittest.TestCase):
         b = SourceKey(auto_type=AutoSourceType.CHECKPOINT_MAX, auto_parent_metric_id=5)
         self.assertTrue(should_skip_pair(a, b))
 
-    def test_rolling_avg_different_parents_not_skipped(self) -> None:
+    def test_rolling_avg_different_parents_skipped(self) -> None:
+        """rolling_avg × rolling_avg — always skip, even different parents."""
         a = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=1, auto_option_id=7)
         b = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=2, auto_option_id=7)
-        self.assertFalse(should_skip_pair(a, b))
+        self.assertTrue(should_skip_pair(a, b))
 
     def test_rolling_avg_with_unrelated_metric_not_skipped(self) -> None:
         auto = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=3, auto_option_id=7)
@@ -239,11 +240,11 @@ class TestShouldSkipPair(unittest.TestCase):
         b = SourceKey(auto_type=AutoSourceType.STREAK_FALSE, auto_parent_metric_id=1)
         self.assertTrue(should_skip_pair(a, b))
 
-    def test_rolling_avg_x_rolling_avg_different_parents_not_skipped(self) -> None:
-        """rolling_avg × rolling_avg (different parents) — no rule, don't skip."""
+    def test_rolling_avg_x_rolling_avg_different_parents_skipped(self) -> None:
+        """rolling_avg × rolling_avg (different parents) — skip, inflated by autocorrelation."""
         a = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=1, auto_option_id=7)
         b = SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=2, auto_option_id=7)
-        self.assertFalse(should_skip_pair(a, b))
+        self.assertTrue(should_skip_pair(a, b))
 
     def test_streak_enum_option_same_option_skipped(self) -> None:
         """streak(metric=5, opt=100) vs enum_option(metric=5, opt=100) → skip."""

@@ -20,7 +20,7 @@ description = "Минимум по чекпоинтам за день (для nu
 
 [prod.auto_sources.rolling_avg]
 enabled = true
-windows = [3, 7, 14]
+windows = [7]
 description = "Скользящее среднее за N дней (для числовых метрик)"
 
 [prod.auto_sources.streak]
