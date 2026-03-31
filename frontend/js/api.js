@@ -176,6 +176,11 @@ const api = {
     getTrends(metricId, start, end) {
         return this.request('GET', `/api/analytics/trends?metric_id=${metricId}&start=${start}&end=${end}`);
     },
+    getTrendsBatch(metricIds, start, end) {
+        const params = new URLSearchParams({ start, end });
+        metricIds.forEach(id => params.append('metric_ids', id));
+        return this.request('GET', `/api/analytics/trends/batch?${params}`);
+    },
     getCorrelations(a, b, start, end) {
         return this.request('GET', `/api/analytics/correlations?metric_a=${a}&metric_b=${b}&start=${start}&end=${end}`);
     },

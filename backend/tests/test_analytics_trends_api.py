@@ -1662,3 +1662,125 @@ class TestMetricStatsScaleEmpty:
         assert stats["average"] == 0
         assert stats["min"] == 0
         assert stats["max"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Batch trends endpoint
+# ---------------------------------------------------------------------------
+
+async def _batch_trends(
+    client: AsyncClient, token: str, metric_ids: list[int],
+    start: str = _START, end: str = _END,
+) -> list[dict]:
+    params: list[tuple[str, str]] = [("start", start), ("end", end)]
+    params += [("metric_ids", str(mid)) for mid in metric_ids]
+    resp = await client.get(
+        "/api/analytics/trends/batch",
+        params=params,
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+class TestBatchTrendsBasic:
+    """Batch endpoint returns trends for multiple metrics."""
+
+    async def test_two_metrics_returned(self, client: AsyncClient, user_a: dict) -> None:
+        m1 = await create_metric(client, user_a["token"], name="BoolBatch", metric_type="bool")
+        m2 = await create_metric(client, user_a["token"], name="NumBatch", metric_type="number")
+        await create_entry(client, user_a["token"], m1["id"], _DATES[0], True)
+        await create_entry(client, user_a["token"], m2["id"], _DATES[0], 42)
+
+        results = await _batch_trends(client, user_a["token"], [m1["id"], m2["id"]])
+
+        assert len(results) == 2
+        assert results[0]["metric_id"] == m1["id"]
+        assert results[1]["metric_id"] == m2["id"]
+        assert len(results[0]["points"]) == 1
+        assert len(results[1]["points"]) == 1
+
+    async def test_each_result_has_expected_fields(self, client: AsyncClient, user_a: dict) -> None:
+        m = await create_metric(client, user_a["token"], name="FieldCheck", metric_type="bool")
+        results = await _batch_trends(client, user_a["token"], [m["id"]])
+        r = results[0]
+        assert "metric_id" in r
+        assert "metric_name" in r
+        assert "start" in r
+        assert "end" in r
+        assert "points" in r
+
+
+class TestBatchTrendsOrderPreserved:
+    """Batch results are returned in the same order as metric_ids."""
+
+    async def test_order_matches_input(self, client: AsyncClient, user_a: dict) -> None:
+        m1 = await create_metric(client, user_a["token"], name="OrderA", metric_type="bool")
+        m2 = await create_metric(client, user_a["token"], name="OrderB", metric_type="number")
+        m3 = await create_metric(client, user_a["token"], name="OrderC", metric_type="bool")
+
+        results = await _batch_trends(client, user_a["token"], [m3["id"], m1["id"], m2["id"]])
+
+        assert results[0]["metric_id"] == m3["id"]
+        assert results[1]["metric_id"] == m1["id"]
+        assert results[2]["metric_id"] == m2["id"]
+
+
+class TestBatchTrendsEmpty:
+    """Empty metric_ids list returns an empty array."""
+
+    async def test_empty_list(self, client: AsyncClient, user_a: dict) -> None:
+        resp = await client.get(
+            "/api/analytics/trends/batch",
+            params=[("start", _START), ("end", _END)],
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
+class TestBatchTrendsMissingMetric:
+    """Non-existent metric_id returns error dict in its slot."""
+
+    async def test_missing_returns_error(self, client: AsyncClient, user_a: dict) -> None:
+        m = await create_metric(client, user_a["token"], name="RealMetric", metric_type="bool")
+        results = await _batch_trends(client, user_a["token"], [m["id"], 999999])
+        assert results[0]["metric_id"] == m["id"]
+        assert results[1].get("error") == "Metric not found"
+
+
+class TestBatchTrendsPrivacy:
+    """Private metric in batch returns blocked=True."""
+
+    async def test_private_metric_blocked(self, client: AsyncClient, user_a: dict) -> None:
+        token = user_a["token"]
+        pub = await create_metric(client, token, name="BatchPub", metric_type="bool")
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "BatchPriv", "type": "bool", "private": True},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 201
+        priv = resp.json()
+
+        await _enable_privacy(client, token)
+
+        results = await _batch_trends(client, token, [pub["id"], priv["id"]])
+
+        assert not results[0].get("blocked")
+        assert results[1].get("blocked") is True
+
+
+class TestBatchTrendsDataIsolation:
+    """User A cannot see User B metrics via batch endpoint."""
+
+    async def test_other_user_metric_returns_error(
+        self, client: AsyncClient, user_a: dict, user_b: dict,
+    ) -> None:
+        mb = await create_metric(client, user_b["token"], name="UserBMetric", metric_type="bool")
+        ma = await create_metric(client, user_a["token"], name="UserAMetric", metric_type="bool")
+
+        results = await _batch_trends(client, user_a["token"], [ma["id"], mb["id"]])
+
+        assert results[0]["metric_id"] == ma["id"]
+        assert results[1].get("error") == "Metric not found"

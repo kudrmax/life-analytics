@@ -2123,9 +2123,8 @@ async function loadChartsTrends(start, end) {
 
     // Fetch all trends in parallel
     const [trendResults, awTrendPoints] = await Promise.all([
-        Promise.all(metrics.map(m =>
-            api.getTrends(m.id, start, end).then(t => ({ metric: m, trend: t }))
-        )),
+        api.getTrendsBatch(metrics.map(m => m.id), start, end)
+            .then(trends => trends.map((trend, i) => ({ metric: metrics[i], trend }))),
         (async () => {
             try {
                 const awStatus = await api.awGetStatus();

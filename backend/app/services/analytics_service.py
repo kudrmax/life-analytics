@@ -64,6 +64,12 @@ class AnalyticsService:
         qt.mark("display_name"); qt.log()
         return {"metric_id": metric_id, "metric_name": display_name, "start": start, "end": end, "points": points}
 
+    async def trends_batch(self, metric_ids: list[int], start: str, end: str, privacy_mode: bool) -> list[dict]:
+        results = []
+        for metric_id in metric_ids:
+            results.append(await self.trends(metric_id, start, end, privacy_mode))
+        return results
+
     async def metric_stats(self, metric_id: int, start: str, end: str, privacy_mode: bool) -> dict:
         qt = QueryTimer(f"metric-stats/{metric_id}")
         metric = await self.repo.get_metric_with_config(metric_id)

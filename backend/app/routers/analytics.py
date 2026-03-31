@@ -31,6 +31,18 @@ async def trends(
     return await _service(db, current_user).trends(metric_id, start, end, privacy_mode)
 
 
+@router.get("/trends/batch")
+async def trends_batch(
+    metric_ids: list[int] = Query(default=[]),
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    privacy_mode: bool = Depends(get_privacy_mode),
+):
+    return await _service(db, current_user).trends_batch(metric_ids, start, end, privacy_mode)
+
+
 @router.get("/correlations")
 async def correlations(
     metric_a: int = Query(...),
