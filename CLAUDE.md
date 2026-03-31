@@ -50,7 +50,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 
 ## Testing
 
-**Run tests:** `cd backend && python -m pytest tests/ -v`. Requires running PostgreSQL container (`make up`).
+**Run tests:** `make test`. Requires running PostgreSQL container (`make up`). Uses `-n auto` parallelism — always use `make test`, never `python -m pytest` directly (будет медленно без параллелизма).
 
 **Rule: always write tests.** Any backend change must include new or updated tests.
 
@@ -78,7 +78,7 @@ Frontend is served by `python -m http.server` (local) or nginx (Docker). Both se
 - New business function → unit test
 - Bug fix → **must** write a test reproducing the bug BEFORE fixing
 - Changed logic → update affected tests
-- **Always run the full test suite** (`python -m pytest tests/ -v`), not just tests for changed files
+- **Always run the full test suite** (`make test`), not just tests for changed files
 
 ### Test-first thinking
 
@@ -135,7 +135,7 @@ analytics/        → Computation engine (correlation_math, time_series, value_c
 4. **Use named constants** from `domain/constants.py` — never hardcode thresholds (0.7, 0.05, 3600 etc.).
 5. **Thin routers:** max 15 lines per endpoint. Create repo → create service → call → return.
 6. **No god modules:** max 300 lines per file in domain/, repositories/, services/.
-7. **Tests required:** every backend change must include tests. Run full suite, not just changed files.
+7. **Tests required:** every backend change must include tests. Run full suite via `make test`, not just changed files.
 
 ### Patterns for new code
 

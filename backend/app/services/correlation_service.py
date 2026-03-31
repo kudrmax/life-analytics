@@ -230,8 +230,8 @@ class CorrelationService:
             return " AND cps.status = 'favorite'"
         if status == PairStatus.ARCHIVED:
             return " AND cps.status = 'archived'"
-        # Default: hide archived pairs
-        return " AND (cps.status IS NULL OR cps.status != 'archived')"
+        # Default: hide archived pairs (IS DISTINCT FROM handles NULL correctly)
+        return " AND cps.status IS DISTINCT FROM 'archived'"
 
     # ── Helpers ───────────────────────────────────────────────────
 

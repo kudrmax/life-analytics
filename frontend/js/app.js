@@ -28,6 +28,8 @@ let currentUser = null;
 let isAuthenticated = false;
 let corrPollInterval = null;
 const corrPairData = new Map();
+let _corrReport = null; // текущий отчёт, для обновления секций статусов
+let _corrStatusTab = 'all'; // 'all' | 'favorite' | 'archived'
 let _dependencyMetricIdsGlobal = new Set();
 let _todayRenderVersion = 0;
 let _todayCheckpoints = [];
@@ -2673,6 +2675,16 @@ async function renderAnalysis(container) {
     await loadAnalysisCorrelation(start, end);
 }
 
+
+function _updateCorrTabBadges() {
+    if (!_corrReport) return;
+    const c = _corrReport.counts;
+    const tabsFav = document.querySelector('.corr-filter-tab[data-tab="favorite"]');
+    const tabsArch = document.querySelector('.corr-filter-tab[data-tab="archived"]');
+    if (tabsFav) tabsFav.innerHTML = `Избранное${c.favorite > 0 ? ` <span class="corr-tab-count">${c.favorite}</span>` : ''}`;
+    if (tabsArch) tabsArch.innerHTML = `Архив${c.archived > 0 ? ` <span class="corr-tab-count">${c.archived}</span>` : ''}`;
+}
+
 async function loadAnalysisCorrelation(start, end) {
     const _t0 = performance.now();
     const corrEl = document.getElementById('correlation-section');
@@ -2710,35 +2722,39 @@ async function loadAnalysisCorrelation(start, end) {
 
             if (action === 'toggle-favorite') {
                 if (isActive) {
-                    await api.removePairStatus(ska, skb, lag);
                     statusBtn.classList.remove('active');
                     statusBtn.textContent = '🤍';
+                    await api.removePairStatus(ska, skb, lag);
+                    if (_corrReport) _corrReport.counts.favorite = Math.max(0, (_corrReport.counts.favorite || 0) - 1);
+                    // На вкладке "Избранное" — убрать из DOM
+                    if (_corrStatusTab === 'favorite' && wrapper) wrapper.remove();
                 } else {
-                    await api.setPairStatus(ska, skb, lag, 'favorite');
                     statusBtn.classList.add('active');
                     statusBtn.textContent = '❤️';
-                    // If was archived, un-archive the other button
                     const archBtn = wrapper?.querySelector('[data-action="toggle-archive"]');
-                    if (archBtn) { archBtn.classList.remove('active'); }
+                    if (archBtn) archBtn.classList.remove('active');
+                    await api.setPairStatus(ska, skb, lag, 'favorite');
+                    if (_corrReport) _corrReport.counts.favorite = (_corrReport.counts.favorite || 0) + 1;
                 }
             } else if (action === 'toggle-archive') {
                 if (isActive) {
-                    await api.removePairStatus(ska, skb, lag);
                     statusBtn.classList.remove('active');
+                    await api.removePairStatus(ska, skb, lag);
+                    if (_corrReport) _corrReport.counts.archived = Math.max(0, (_corrReport.counts.archived || 0) - 1);
+                    // На вкладке "Архив" — убрать из DOM
+                    if (_corrStatusTab === 'archived' && wrapper) wrapper.remove();
                 } else {
                     await api.setPairStatus(ska, skb, lag, 'archived');
-                    statusBtn.classList.add('active');
-                    // Un-favorite the other button
-                    const favBtn = wrapper?.querySelector('[data-action="toggle-favorite"]');
-                    if (favBtn) { favBtn.classList.remove('active'); favBtn.textContent = '🤍'; }
-                    // Animate hide
-                    if (wrapper) {
+                    if (_corrReport) _corrReport.counts.archived = (_corrReport.counts.archived || 0) + 1;
+                    // На вкладках "Все" и "Избранное" — плавно убрать из DOM
+                    if (_corrStatusTab !== 'archived' && wrapper) {
                         wrapper.style.transition = 'opacity 0.3s';
                         wrapper.style.opacity = '0';
                         setTimeout(() => wrapper.remove(), 300);
                     }
                 }
             }
+            _updateCorrTabBadges();
             return;
         }
 
@@ -3041,24 +3057,134 @@ function renderCorrPair(p, report) {
 }
 
 function renderCorrelationReport(report, container) {
+    _corrReport = report;
     const c = report.counts;
     if (c.total === 0) {
         container.innerHTML = '<p style="color:var(--text-dim);font-size:13px;">Нет данных для корреляций.</p>';
         return;
     }
 
+    const favBadge = c.favorite > 0 ? ` <span class="corr-tab-count">${c.favorite}</span>` : '';
+    const archBadge = c.archived > 0 ? ` <span class="corr-tab-count">${c.archived}</span>` : '';
+    container.innerHTML = `
+        <div class="corr-filter-tabs">
+            <button class="corr-filter-tab${_corrStatusTab === 'all' ? ' active' : ''}" data-tab="all">Все</button>
+            <button class="corr-filter-tab${_corrStatusTab === 'favorite' ? ' active' : ''}" data-tab="favorite">Избранное${favBadge}</button>
+            <button class="corr-filter-tab${_corrStatusTab === 'archived' ? ' active' : ''}" data-tab="archived">Архив${archBadge}</button>
+        </div>
+        <div id="corr-report-body"></div>`;
+
+    container.querySelector('.corr-filter-tabs').addEventListener('click', (e) => {
+        const tab = e.target.closest('.corr-filter-tab');
+        if (!tab || tab.dataset.tab === _corrStatusTab) return;
+        _corrStatusTab = tab.dataset.tab;
+        container.querySelectorAll('.corr-filter-tab').forEach(b =>
+            b.classList.toggle('active', b.dataset.tab === _corrStatusTab));
+        const bodyEl = document.getElementById('corr-report-body');
+        bodyEl.innerHTML = '';
+        _renderReportBody(report, bodyEl, _corrStatusTab === 'all' ? null : _corrStatusTab);
+    });
+
+    _renderReportBody(report, document.getElementById('corr-report-body'),
+        _corrStatusTab === 'all' ? null : _corrStatusTab);
+}
+
+function _renderReportBody(report, bodyEl, statusFilter = null) {
+    const c = report.counts;
+
+    if (statusFilter) {
+        // ── Filtered tabs ("Избранное" / "Архив") ──
+        // Sections start hidden; shown only if API returns total > 0
+        let html = '';
+
+        const sigHasAny = (c.sig_strong + c.sig_medium + c.sig_weak) > 0;
+        if (sigHasAny) {
+            html += '<div id="corr-section-sig" style="display:none"><div class="corr-section">';
+            html += '<h4>Надёжные корреляции</h4>';
+            if (c.sig_strong > 0) {
+                html += '<div id="corr-subsec-sig_strong" style="display:none">';
+                html += '<div class="corr-subsection-header">Сильная корреляция <span class="corr-cat-count" id="corr-cnt-sig_strong"></span></div>';
+                html += '<div class="corr-category-pairs" id="corr-cat-sig_strong"></div>';
+                html += '</div>';
+            }
+            if (c.sig_medium > 0) {
+                html += '<div id="corr-subsec-sig_medium" style="display:none">';
+                html += '<div class="corr-subsection-header">Средняя корреляция <span class="corr-cat-count" id="corr-cnt-sig_medium"></span></div>';
+                html += '<div class="corr-category-pairs" id="corr-cat-sig_medium"></div>';
+                html += '</div>';
+            }
+            if (c.sig_weak > 0) {
+                html += '<div id="corr-subsec-sig_weak" style="display:none">';
+                html += '<div class="corr-subsection-header">Слабая корреляция <span class="corr-cat-count" id="corr-cnt-sig_weak"></span></div>';
+                html += '<div class="corr-category-pairs" id="corr-cat-sig_weak"></div>';
+                html += '</div>';
+            }
+            html += '</div></div>';
+        }
+
+        if (c.maybe > 0) {
+            html += '<div id="corr-section-maybe" style="display:none"><div class="corr-section corr-section-low">';
+            html += '<h4>Возможно ненадёжные <span class="corr-cat-count" id="corr-cnt-maybe"></span></h4>';
+            html += '<div class="corr-category-pairs" id="corr-cat-maybe"></div>';
+            html += '</div></div>';
+        }
+
+        if (c.insig > 0) {
+            html += '<div id="corr-section-insig" style="display:none"><div class="corr-section corr-section-low">';
+            html += '<h4>Ненадёжные <span class="corr-cat-count" id="corr-cnt-insig"></span></h4>';
+            html += '<div class="corr-category-pairs" id="corr-cat-insig"></div>';
+            html += '</div></div>';
+        }
+
+        html += '<p id="corr-filtered-empty" style="display:none;color:var(--text-dim);font-size:13px;">Нет пар в этом разделе.</p>';
+        bodyEl.innerHTML = html;
+
+        let pendingLoads = 0;
+        let totalLoaded = 0;
+
+        const onCatDone = (sectionId, subsecId, cntId, total) => {
+            totalLoaded += total;
+            pendingLoads--;
+            if (total > 0) {
+                if (subsecId) document.getElementById(subsecId).style.display = '';
+                document.getElementById(sectionId).style.display = '';
+                if (cntId) document.getElementById(cntId).textContent = total;
+            }
+            if (pendingLoads === 0 && totalLoaded === 0) {
+                document.getElementById('corr-filtered-empty').style.display = '';
+            }
+        };
+
+        for (const cat of ['sig_strong', 'sig_medium', 'sig_weak']) {
+            if (c[cat] > 0) {
+                pendingLoads++;
+                loadCategoryPairs(report.id, cat, document.getElementById(`corr-cat-${cat}`), report, 0, statusFilter,
+                    (total) => onCatDone('corr-section-sig', `corr-subsec-${cat}`, `corr-cnt-${cat}`, total));
+            }
+        }
+        if (c.maybe > 0) {
+            pendingLoads++;
+            loadCategoryPairs(report.id, 'maybe', document.getElementById('corr-cat-maybe'), report, 0, statusFilter,
+                (total) => onCatDone('corr-section-maybe', null, 'corr-cnt-maybe', total));
+        }
+        if (c.insig > 0) {
+            pendingLoads++;
+            loadCategoryPairs(report.id, 'insig', document.getElementById('corr-cat-insig'), report, 0, statusFilter,
+                (total) => onCatDone('corr-section-insig', null, 'corr-cnt-insig', total));
+        }
+
+        if (pendingLoads === 0) {
+            document.getElementById('corr-filtered-empty').style.display = '';
+        }
+        return;
+    }
+
+    // ── "Все" tab (unfiltered) — original behavior ──
     const sigTotal = c.sig_strong + c.sig_medium + c.sig_weak;
     let html = '';
 
-    if (c.favorite > 0) {
-        html += '<div class="corr-section">';
-        html += `<h4>❤️ Избранное <span class="corr-cat-count">${c.favorite}</span></h4>`;
-        html += '<div class="corr-category-pairs" id="corr-cat-favorite"></div>';
-        html += '</div>';
-    }
-
     html += '<div class="corr-section">';
-    html += '<h4>Надёжные корреляции <span class="corr-sig corr-sig-yes">p&lt;0.05</span></h4>';
+    html += '<h4>Надёжные корреляции</h4>';
 
     if (sigTotal > 0) {
         if (c.sig_strong > 0) {
@@ -3095,27 +3221,14 @@ function renderCorrelationReport(report, container) {
         html += '</details>';
     }
 
-    if (c.archived > 0) {
-        html += '<details class="corr-section corr-section-low" id="corr-archived-details">';
-        html += `<summary><h4>🗑️ Архив <span class="corr-cat-count">${c.archived}</span></h4></summary>`;
-        html += '<div class="corr-category-pairs" id="corr-cat-archived"></div>';
-        html += '</details>';
-    }
+    bodyEl.innerHTML = html;
 
-    container.innerHTML = html;
-
-    // Load favorite pairs
-    const favEl = document.getElementById('corr-cat-favorite');
-    if (favEl) loadCategoryPairs(report.id, 'all', favEl, report, 0, 'favorite');
-
-    // Load significant categories
     const categoriesToLoad = ['sig_strong', 'sig_medium', 'sig_weak'].filter(cat => c[cat] > 0);
     for (const cat of categoriesToLoad) {
         const el = document.getElementById(`corr-cat-${cat}`);
-        if (el) loadCategoryPairs(report.id, cat, el, report, 0);
+        if (el) loadCategoryPairs(report.id, cat, el, report, 0, null);
     }
 
-    // Lazy load maybe on <details> open
     const maybeDetails = document.getElementById('corr-maybe-details');
     if (maybeDetails) {
         maybeDetails.addEventListener('toggle', () => {
@@ -3123,12 +3236,11 @@ function renderCorrelationReport(report, container) {
             const el = document.getElementById('corr-cat-maybe');
             if (el && !el.dataset.loaded) {
                 el.dataset.loaded = '1';
-                loadCategoryPairs(report.id, 'maybe', el, report, 0);
+                loadCategoryPairs(report.id, 'maybe', el, report, 0, null);
             }
         });
     }
 
-    // Lazy load insig on <details> open
     const insigDetails = document.getElementById('corr-insig-details');
     if (insigDetails) {
         insigDetails.addEventListener('toggle', () => {
@@ -3136,26 +3248,13 @@ function renderCorrelationReport(report, container) {
             const el = document.getElementById('corr-cat-insig');
             if (el && !el.dataset.loaded) {
                 el.dataset.loaded = '1';
-                loadCategoryPairs(report.id, 'insig', el, report, 0);
-            }
-        });
-    }
-
-    // Lazy load archived on <details> open
-    const archivedDetails = document.getElementById('corr-archived-details');
-    if (archivedDetails) {
-        archivedDetails.addEventListener('toggle', () => {
-            if (!archivedDetails.open) return;
-            const el = document.getElementById('corr-cat-archived');
-            if (el && !el.dataset.loaded) {
-                el.dataset.loaded = '1';
-                loadCategoryPairs(report.id, 'all', el, report, 0, 'archived');
+                loadCategoryPairs(report.id, 'insig', el, report, 0, null);
             }
         });
     }
 }
 
-async function loadCategoryPairs(reportId, category, containerEl, report, offset, statusFilter = null) {
+async function loadCategoryPairs(reportId, category, containerEl, report, offset, statusFilter = null, onDone = null) {
     const loader = document.createElement('div');
     loader.className = 'corr-loader';
     loader.innerHTML = '<div class="corr-loader-spinner"></div>';
@@ -3166,6 +3265,8 @@ async function loadCategoryPairs(reportId, category, containerEl, report, offset
         if (statusFilter) opts.status = statusFilter;
         const data = await api.getCorrelationPairs(reportId, opts);
         loader.remove();
+
+        if (offset === 0 && onDone) onDone(data.total);
 
         let html = '';
         for (const p of data.pairs) html += renderCorrPair(p, report);
@@ -3188,6 +3289,7 @@ async function loadCategoryPairs(reportId, category, containerEl, report, offset
     } catch (err) {
         loader.remove();
         containerEl.insertAdjacentHTML('beforeend', '<p style="color:var(--text-dim);font-size:13px;">Ошибка загрузки.</p>');
+        if (offset === 0 && onDone) onDone(0);
     }
 }
 
