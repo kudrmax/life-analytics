@@ -41,6 +41,28 @@ def extract_dep_value(item: dict):
     return None
 
 
+def extract_dep_value_for_interval(dep: dict, interval_id: int):
+    """Extract dep value for a specific interval_id.
+
+    - dep has no intervals → return global value via extract_dep_value
+    - dep has intervals and matching interval_id found → return its value (None if no entry)
+    - dep has intervals but no match → fallback to first non-None interval value
+    """
+    dep_intervals = dep.get("intervals")
+    if not dep_intervals:
+        return extract_dep_value(dep)
+    for iv in dep_intervals:
+        if iv["interval_id"] == interval_id:
+            if iv.get("entry") is not None:
+                return iv["entry"]["value"]
+            return None
+    # No matching interval — fallback to first non-None value
+    for iv in dep_intervals:
+        if iv.get("entry") is not None:
+            return iv["entry"]["value"]
+    return None
+
+
 def evaluate_condition(cond: dict, dep_value) -> bool:
     """Check if a condition is met given the dependency value."""
     cond_type = cond["type"]
@@ -65,7 +87,12 @@ def evaluate_condition(cond: dict, dep_value) -> bool:
 
 
 def evaluate_visibility(result: list[dict]) -> None:
-    """Set condition_met flag on all items."""
+    """Set condition_met flag on all items.
+
+    For interval-bound conditional metrics where dep also has intervals,
+    additionally sets _interval_condition_met: dict[interval_id, bool] for per-interval override
+    in split_by_checkpoints.
+    """
     items_by_id = {item["metric_id"]: item for item in result}
     for item in result:
         cond = item.get("condition")
@@ -76,7 +103,20 @@ def evaluate_visibility(result: list[dict]) -> None:
         if not dep:
             item["condition_met"] = True
             continue
-        item["condition_met"] = evaluate_condition(cond, extract_dep_value(dep))
+
+        item_intervals = item.get("intervals")
+        dep_intervals = dep.get("intervals")
+
+        if item_intervals and dep_intervals:
+            per_iv: dict[int, bool] = {}
+            for iv in item_intervals:
+                iv_id = iv["interval_id"]
+                dep_val = extract_dep_value_for_interval(dep, iv_id)
+                per_iv[iv_id] = evaluate_condition(cond, dep_val)
+            item["_interval_condition_met"] = per_iv
+            item["condition_met"] = any(per_iv.values())
+        else:
+            item["condition_met"] = evaluate_condition(cond, extract_dep_value(dep))
 
 
 def compute_formulas(result: list[dict], metrics_by_id: dict) -> None:
@@ -218,6 +258,7 @@ def split_by_checkpoints(
         if not has_checkpoints and not has_intervals:
             item["checkpoint_section_id"] = None
             item["checkpoint_section_label"] = None
+            item["_interval_condition_met"] = None
             cat_id = item.get("category_id")
             if cat_id:
                 item["block_type"] = "category"
@@ -242,10 +283,12 @@ def split_by_checkpoints(
                     "is_checkpoint_split": True,
                     "block_type": "checkpoint",
                     "block_id": cp_id,
+                    "_interval_condition_met": None,
                 }
                 by_checkpoint.setdefault(cp_id, []).append(split)
 
         if has_intervals:
+            per_iv_cond: dict[int, bool] | None = item.get("_interval_condition_met")
             for iv in item["intervals"]:
                 iv_id = iv["interval_id"]
                 start_cp_id = interval_start_cp.get(iv_id)
@@ -258,6 +301,8 @@ def split_by_checkpoints(
                     "is_checkpoint_split": True,
                     "block_type": "interval",
                     "block_id": iv_id,
+                    "condition_met": per_iv_cond.get(iv_id, item["condition_met"]) if per_iv_cond else item["condition_met"],
+                    "_interval_condition_met": None,
                 }
                 by_interval.setdefault(iv_id, []).append(split)
 
