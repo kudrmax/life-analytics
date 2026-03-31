@@ -98,7 +98,7 @@ class LayoutRepository(BaseRepository):
         if not metric_ids:
             return []
         return await self.conn.fetch(
-            """SELECT mc.metric_id, mc.checkpoint_id, mc.sort_order, mc.category_id,
+            """SELECT mc.metric_id, mc.checkpoint_id, mc.sort_order,
                       c.label AS checkpoint_label
                FROM metric_checkpoints mc
                JOIN checkpoints c ON c.id = mc.checkpoint_id
@@ -112,7 +112,7 @@ class LayoutRepository(BaseRepository):
         if not metric_ids:
             return []
         return await self.conn.fetch(
-            """SELECT mi.metric_id, mi.interval_id, mi.sort_order, mi.category_id,
+            """SELECT mi.metric_id, mi.interval_id, mi.sort_order,
                       cs.label || ' → ' || ce.label AS interval_label
                FROM metric_intervals mi
                JOIN intervals i ON i.id = mi.interval_id
@@ -137,9 +137,9 @@ class LayoutRepository(BaseRepository):
         async with self.conn.transaction():
             for item in items:
                 await self.conn.execute(
-                    "UPDATE metric_checkpoints SET sort_order = $1, category_id = $2 "
-                    "WHERE metric_id = $3 AND checkpoint_id = $4",
-                    item["sort_order"], item.get("category_id"), item["metric_id"], checkpoint_id,
+                    "UPDATE metric_checkpoints SET sort_order = $1 "
+                    "WHERE metric_id = $2 AND checkpoint_id = $3",
+                    item["sort_order"], item["metric_id"], checkpoint_id,
                 )
 
     async def save_inner_interval(self, interval_id: int, items: list[dict]) -> None:
@@ -147,9 +147,9 @@ class LayoutRepository(BaseRepository):
         async with self.conn.transaction():
             for item in items:
                 await self.conn.execute(
-                    "UPDATE metric_intervals SET sort_order = $1, category_id = $2 "
-                    "WHERE metric_id = $3 AND interval_id = $4",
-                    item["sort_order"], item.get("category_id"), item["metric_id"], interval_id,
+                    "UPDATE metric_intervals SET sort_order = $1 "
+                    "WHERE metric_id = $2 AND interval_id = $3",
+                    item["sort_order"], item["metric_id"], interval_id,
                 )
 
     async def save_inner_standalone(self, items: list[dict]) -> None:
@@ -157,7 +157,7 @@ class LayoutRepository(BaseRepository):
         async with self.conn.transaction():
             for item in items:
                 await self.conn.execute(
-                    "UPDATE metric_definitions SET sort_order = $1, category_id = $2 "
-                    "WHERE id = $3 AND user_id = $4",
-                    item["sort_order"], item.get("category_id"), item["metric_id"], self.user_id,
+                    "UPDATE metric_definitions SET sort_order = $1 "
+                    "WHERE id = $2 AND user_id = $3",
+                    item["sort_order"], item["metric_id"], self.user_id,
                 )

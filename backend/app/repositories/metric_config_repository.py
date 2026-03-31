@@ -189,14 +189,14 @@ class MetricConfigRepository(BaseRepository):
     # ── Metric checkpoints ─────────────────────────────────────────────
 
     async def insert_metric_checkpoint(
-        self, metric_id: int, checkpoint_id: int, sort_order: int, category_id: int | None,
+        self, metric_id: int, checkpoint_id: int, sort_order: int,
     ) -> None:
         await self.conn.execute(
-            """INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order, category_id, enabled)
-               VALUES ($1, $2, $3, $4, TRUE)
+            """INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order, enabled)
+               VALUES ($1, $2, $3, TRUE)
                ON CONFLICT (metric_id, checkpoint_id)
-               DO UPDATE SET sort_order = $3, category_id = $4, enabled = TRUE""",
-            metric_id, checkpoint_id, sort_order, category_id,
+               DO UPDATE SET sort_order = $3, enabled = TRUE""",
+            metric_id, checkpoint_id, sort_order,
         )
 
     async def get_metric_checkpoints(self, metric_id: int) -> list[asyncpg.Record]:
@@ -216,14 +216,14 @@ class MetricConfigRepository(BaseRepository):
         )
 
     async def upsert_metric_checkpoint(
-        self, metric_id: int, checkpoint_id: int, category_id: int | None, sort_order: int,
+        self, metric_id: int, checkpoint_id: int, sort_order: int,
     ) -> None:
         await self.conn.execute(
-            """INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order, category_id, enabled)
-               VALUES ($1, $2, $3, $4, TRUE)
+            """INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order, enabled)
+               VALUES ($1, $2, $3, TRUE)
                ON CONFLICT (metric_id, checkpoint_id)
-               DO UPDATE SET sort_order = $3, category_id = $4, enabled = TRUE""",
-            metric_id, checkpoint_id, sort_order, category_id,
+               DO UPDATE SET sort_order = $3, enabled = TRUE""",
+            metric_id, checkpoint_id, sort_order,
         )
 
     async def migrate_null_checkpoint_entries(self, metric_id: int, target_checkpoint_id: int) -> None:
@@ -245,14 +245,14 @@ class MetricConfigRepository(BaseRepository):
     # ── Metric intervals ───────────────────────────────────────────────
 
     async def insert_metric_interval(
-        self, metric_id: int, interval_id: int, sort_order: int, category_id: int | None,
+        self, metric_id: int, interval_id: int, sort_order: int,
     ) -> None:
         await self.conn.execute(
-            """INSERT INTO metric_intervals (metric_id, interval_id, sort_order, category_id, enabled)
-               VALUES ($1, $2, $3, $4, TRUE)
+            """INSERT INTO metric_intervals (metric_id, interval_id, sort_order, enabled)
+               VALUES ($1, $2, $3, TRUE)
                ON CONFLICT (metric_id, interval_id)
-               DO UPDATE SET sort_order = $3, category_id = $4, enabled = TRUE""",
-            metric_id, interval_id, sort_order, category_id,
+               DO UPDATE SET sort_order = $3, enabled = TRUE""",
+            metric_id, interval_id, sort_order,
         )
 
     async def get_metric_intervals(self, metric_id: int) -> list[asyncpg.Record]:
@@ -275,14 +275,14 @@ class MetricConfigRepository(BaseRepository):
         )
 
     async def upsert_metric_interval(
-        self, metric_id: int, interval_id: int, category_id: int | None, sort_order: int,
+        self, metric_id: int, interval_id: int, sort_order: int,
     ) -> None:
         await self.conn.execute(
-            """INSERT INTO metric_intervals (metric_id, interval_id, sort_order, category_id, enabled)
-               VALUES ($1, $2, $3, $4, TRUE)
+            """INSERT INTO metric_intervals (metric_id, interval_id, sort_order, enabled)
+               VALUES ($1, $2, $3, TRUE)
                ON CONFLICT (metric_id, interval_id)
-               DO UPDATE SET sort_order = $3, category_id = $4, enabled = TRUE""",
-            metric_id, interval_id, sort_order, category_id,
+               DO UPDATE SET sort_order = $3, enabled = TRUE""",
+            metric_id, interval_id, sort_order,
         )
 
     async def migrate_null_interval_entries(self, metric_id: int, target_interval_id: int) -> None:

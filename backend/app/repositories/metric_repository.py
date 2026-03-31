@@ -85,10 +85,10 @@ class MetricRepository(BaseRepository):
     async def get_checkpoints_for_metrics(
         self, metric_ids: list[int], enabled_only: bool = True,
     ) -> dict[int, list[dict]]:
-        """Return {metric_id: [{id, label, sort_order, category_id}, ...]}."""
+        """Return {metric_id: [{id, label, sort_order}, ...]}."""
         condition = "AND mc.enabled = TRUE" if enabled_only else ""
         rows = await self.conn.fetch(
-            f"""SELECT mc.metric_id, c.id, c.label, c.sort_order, mc.category_id
+            f"""SELECT mc.metric_id, c.id, c.label, c.sort_order
                 FROM metric_checkpoints mc
                 JOIN checkpoints c ON c.id = mc.checkpoint_id
                 WHERE mc.metric_id = ANY($1) AND c.deleted = FALSE {condition}
@@ -99,20 +99,20 @@ class MetricRepository(BaseRepository):
         for r in rows:
             result[r["metric_id"]].append({
                 "id": r["id"], "label": r["label"],
-                "sort_order": r["sort_order"], "category_id": r["category_id"],
+                "sort_order": r["sort_order"],
             })
         return result
 
     async def get_intervals_for_metrics(
         self, metric_ids: list[int], enabled_only: bool = True,
     ) -> dict[int, list[dict]]:
-        """Return {metric_id: [{id, metric_id, interval_id, label, sort_order, category_id}, ...]}."""
+        """Return {metric_id: [{id, metric_id, interval_id, label, sort_order}, ...]}."""
         condition = "AND mi.enabled = TRUE" if enabled_only else ""
         rows = await self.conn.fetch(
             f"""SELECT mi.id AS mi_id, mi.metric_id, mi.interval_id,
                        i.start_checkpoint_id, i.end_checkpoint_id,
                        cs.label AS start_label, ce.label AS end_label,
-                       mi.sort_order, mi.category_id
+                       mi.sort_order
                 FROM metric_intervals mi
                 JOIN intervals i ON i.id = mi.interval_id
                 JOIN checkpoints cs ON cs.id = i.start_checkpoint_id
@@ -130,7 +130,7 @@ class MetricRepository(BaseRepository):
                 "interval_id": r["interval_id"], "label": label,
                 "start_checkpoint_id": r["start_checkpoint_id"],
                 "end_checkpoint_id": r["end_checkpoint_id"],
-                "sort_order": r["sort_order"], "category_id": r["category_id"],
+                "sort_order": r["sort_order"],
             })
         return result
 
@@ -226,36 +226,14 @@ class MetricRepository(BaseRepository):
             seen_metrics: set[int] = set()
             for item in items:
                 metric_id: int = item["id"]
-                checkpoint_id: int | None = item.get("checkpoint_id")
-                cat_id: int | None = item.get("category_id")
-
-                if checkpoint_id:
-                    await self.conn.execute(
-                        "UPDATE metric_checkpoints SET category_id = $1 WHERE checkpoint_id = $2 AND metric_id = $3",
-                        cat_id, checkpoint_id, metric_id,
-                    )
-
                 if metric_id not in seen_metrics:
                     seen_metrics.add(metric_id)
-                    if checkpoint_id:
-                        await self.conn.execute(
-                            """UPDATE metric_definitions
-                               SET sort_order = $1, category_id = NULL
-                               WHERE id = $2 AND user_id = $3""",
-                            item["sort_order"], metric_id, self.user_id,
-                        )
-                    else:
-                        await self.conn.execute(
-                            """UPDATE metric_definitions
-                               SET sort_order = $1, category_id = $2
-                               WHERE id = $3 AND user_id = $4""",
-                            item["sort_order"], cat_id, metric_id, self.user_id,
-                        )
-                        # propagate category to all enabled checkpoints of this metric
-                        await self.conn.execute(
-                            "UPDATE metric_checkpoints SET category_id = $1 WHERE metric_id = $2 AND enabled = TRUE",
-                            cat_id, metric_id,
-                        )
+                    await self.conn.execute(
+                        """UPDATE metric_definitions
+                           SET sort_order = $1
+                           WHERE id = $2 AND user_id = $3""",
+                        item["sort_order"], metric_id, self.user_id,
+                    )
 
     # ── Checkpoints (for interval binding) ────────────────────────────
 

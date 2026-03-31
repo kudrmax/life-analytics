@@ -224,8 +224,7 @@ class MetricsService:
                 raise InvalidOperationError("checkpoint_id is required in checkpoint_configs")
             if not await self.cfg_repo.check_checkpoint_ownership(cp_id):
                 raise InvalidOperationError(f"Checkpoint {cp_id} not found")
-            cat_id = await self._validate_category_id(cfg.get("category_id"))
-            await self.cfg_repo.insert_metric_checkpoint(metric_id, cp_id, i, cat_id)
+            await self.cfg_repo.insert_metric_checkpoint(metric_id, cp_id, i)
 
     async def _create_condition(self, metric_id: int, data: MetricDefinitionCreate) -> None:
         if data.condition_metric_id is not None and data.condition_type is not None:
@@ -326,9 +325,8 @@ class MetricsService:
         if not existing:
             first_cp_id = None
             for i, cfg in enumerate(data.checkpoint_configs):
-                cat_id = await self._validate_category_id(cfg.get("category_id"))
                 await self.cfg_repo.insert_metric_checkpoint(
-                    metric_id, cfg["checkpoint_id"], i, cat_id,
+                    metric_id, cfg["checkpoint_id"], i,
                 )
                 if i == 0:
                     first_cp_id = cfg["checkpoint_id"]
@@ -340,14 +338,13 @@ class MetricsService:
             for i, cfg in enumerate(data.checkpoint_configs):
                 cp_id = cfg["checkpoint_id"]
                 seen.add(cp_id)
-                cat_id = await self._validate_category_id(cfg.get("category_id"))
                 if cp_id in existing_by_cp:
                     await self.cfg_repo.upsert_metric_checkpoint(
-                        metric_id, cp_id, cat_id, i,
+                        metric_id, cp_id, i,
                     )
                 else:
                     await self.cfg_repo.insert_metric_checkpoint(
-                        metric_id, cp_id, i, cat_id,
+                        metric_id, cp_id, i,
                     )
             for cp in existing:
                 if cp["checkpoint_id"] not in seen:
@@ -371,7 +368,7 @@ class MetricsService:
                 raise InvalidOperationError(f"Interval {iv_id} not found")
             if not await self.cfg_repo.check_interval_active(iv_id):
                 raise InvalidOperationError(f"Interval {iv_id} references a deleted checkpoint")
-            await self.cfg_repo.insert_metric_interval(metric_id, iv_id, i, None)
+            await self.cfg_repo.insert_metric_interval(metric_id, iv_id, i)
 
     async def _update_interval_binding(self, metric_id: int, row, data: MetricDefinitionUpdate) -> None:
         """Handle interval_binding changes — recreate metric_intervals."""

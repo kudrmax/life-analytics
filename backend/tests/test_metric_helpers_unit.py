@@ -828,16 +828,16 @@ class TestGetMetricCheckpoints:
 
     @pytest.mark.asyncio
     async def test_returns_grouped_checkpoints(self) -> None:
-        row1 = {"metric_id": 1, "id": 10, "label": "Morning", "sort_order": 0, "category_id": None}
-        row2 = {"metric_id": 1, "id": 11, "label": "Evening", "sort_order": 1, "category_id": None}
-        row3 = {"metric_id": 2, "id": 20, "label": "Daily", "sort_order": 0, "category_id": 5}
+        row1 = {"metric_id": 1, "id": 10, "label": "Morning", "sort_order": 0}
+        row2 = {"metric_id": 1, "id": 11, "label": "Evening", "sort_order": 1}
+        row3 = {"metric_id": 2, "id": 20, "label": "Daily", "sort_order": 0}
         conn = AsyncMock()
         conn.fetch.return_value = [_make_record(row1), _make_record(row2), _make_record(row3)]
         result = await self._make_repo(conn).get_checkpoints_for_metrics(metric_ids=[1, 2])
         assert len(result[1]) == 2
         assert len(result[2]) == 1
         assert result[1][0]["label"] == "Morning"
-        assert result[2][0]["category_id"] == 5
+        assert result[2][0]["label"] == "Daily"
 
     @pytest.mark.asyncio
     async def test_empty_result(self) -> None:

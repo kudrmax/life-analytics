@@ -1799,11 +1799,10 @@ class TestImportCheckpointsHelper:
         assert checkpoints[2]["label"] == "C"  # untouched
         assert checkpoints[2]["enabled"] is False
 
-    async def test_reimport_checkpoints_with_cat_clears_metric_cat(
+    async def test_reimport_checkpoints_preserves_metric_category(
         self, client: AsyncClient, user_a: dict, db_pool,
     ) -> None:
-        """Importing checkpoints with category_path sets metric.category_id = NULL (line 848)."""
-        # Create a category, global checkpoints, and metric with that category
+        """Importing checkpoints does not change metric.category_id."""
         cat = await _create_category(client, user_a["token"], "SomeCat")
         cp_s1 = await create_checkpoint(client, user_a["token"], "S1")
         cp_s2 = await create_checkpoint(client, user_a["token"], "S2")
@@ -1819,7 +1818,8 @@ class TestImportCheckpointsHelper:
         assert resp.status_code == 201
         metric = resp.json()
 
-        # Import with checkpoints that have category_path
+        # Import with checkpoints — category_path in checkpoint configs is ignored,
+        # metric-level category_path determines the category
         checkpoint_labels_val = json.dumps([
             {"label": "S1", "category_path": "CheckpointCat"},
             {"label": "S2", "category_path": "CheckpointCat"},
@@ -1827,6 +1827,7 @@ class TestImportCheckpointsHelper:
         row = _metric_row(
             "cat_checkpoint", "CatCheckpoint",
             checkpoint_labels=checkpoint_labels_val,
+            category_path="SomeCat",
         )
         metrics_csv = f"{METRICS_HEADER}\n{row}\n"
         entries_csv = f"{ENTRIES_HEADER}\n"
@@ -1839,13 +1840,13 @@ class TestImportCheckpointsHelper:
         )
         assert resp.status_code == 200
 
-        # Verify metric.category_id is NULL now
+        # Verify metric.category_id is preserved
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT category_id FROM metric_definitions WHERE id = $1",
                 metric["id"],
             )
-        assert row["category_id"] is None
+        assert row["category_id"] == cat["id"]
 
 
 # ---------------------------------------------------------------------------

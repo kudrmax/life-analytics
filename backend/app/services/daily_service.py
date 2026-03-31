@@ -170,7 +170,7 @@ class DailyService:
         by_checkpoint = {e["checkpoint_id"]: e for e in entries if e.get("checkpoint_id") is not None}
         items: list[dict] = []
         for cp in all_cp:
-            si: dict = {"checkpoint_id": cp["id"], "label": cp["label"], "category_id": cp.get("category_id"), "entry": None}
+            si: dict = {"checkpoint_id": cp["id"], "label": cp["label"], "entry": None}
             e = by_checkpoint.get(cp["id"])
             if e:
                 v = data["values_map"].get(e["id"])
@@ -190,7 +190,7 @@ class DailyService:
         by_interval = {e["interval_id"]: e for e in entries if e.get("interval_id") is not None}
         items: list[dict] = []
         for iv in all_iv:
-            si: dict = {"interval_id": iv["id"], "label": iv["label"], "category_id": iv.get("category_id"), "entry": None}
+            si: dict = {"interval_id": iv["id"], "label": iv["label"], "entry": None}
             e = by_interval.get(iv["id"])
             if e:
                 v = data["values_map"].get(e["id"])

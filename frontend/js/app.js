@@ -3836,41 +3836,6 @@ async function renderSettings(container, { archiveOpen = false, openAddModal = f
         const settingsMetricsByCat = {};
         const settingsUncategorized = [];
         for (const m of activeMetrics) {
-            const _settingsBindings = m.checkpoints || m.intervals || [];
-            if (_settingsBindings.length >= 2) {
-                // Group checkpoints/intervals by category_id
-                const bindingsByCat = {};
-                for (const s of _settingsBindings) {
-                    const key = s.category_id != null ? String(s.category_id) : 'null';
-                    if (!bindingsByCat[key]) bindingsByCat[key] = [];
-                    bindingsByCat[key].push(s);
-                }
-
-                const uniqueCats = Object.keys(bindingsByCat);
-                if (uniqueCats.length === 1) {
-                    // All in one category — single row as before
-                    const catId = _settingsBindings[0].category_id;
-                    if (catId && settingsCatById[catId]) {
-                        if (!settingsMetricsByCat[catId]) settingsMetricsByCat[catId] = [];
-                        settingsMetricsByCat[catId].push(m);
-                    } else {
-                        settingsUncategorized.push(m);
-                    }
-                } else {
-                    // Checkpoints in different categories — split into view items
-                    for (const [key, catBindings] of Object.entries(bindingsByCat)) {
-                        const catId = key === 'null' ? null : parseInt(key);
-                        const viewItem = { ...m, _displayCheckpoints: catBindings };
-                        if (catId && settingsCatById[catId]) {
-                            if (!settingsMetricsByCat[catId]) settingsMetricsByCat[catId] = [];
-                            settingsMetricsByCat[catId].push(viewItem);
-                        } else {
-                            settingsUncategorized.push(viewItem);
-                        }
-                    }
-                }
-                continue;
-            }
             if (m.category_id && settingsCatById[m.category_id]) {
                 if (!settingsMetricsByCat[m.category_id]) settingsMetricsByCat[m.category_id] = [];
                 settingsMetricsByCat[m.category_id].push(m);
@@ -4490,13 +4455,9 @@ async function _saveOrderFromDOM(container) {
         const metrics = block.querySelectorAll('.order-metric[data-metric-id]');
         const items = [];
         metrics.forEach((m, i) => {
-            const catDiv = m.closest('.order-category[data-category-id]');
-            const catIdStr = catDiv ? catDiv.dataset.categoryId : '';
-            const catId = catIdStr && !isNaN(parseInt(catIdStr)) ? parseInt(catIdStr) : null;
             items.push({
                 metric_id: parseInt(m.dataset.metricId),
                 sort_order: i * 10,
-                category_id: catId,
             });
         });
         if (items.length > 0) {
@@ -6495,7 +6456,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     const addCpBtn = document.getElementById('nm-add-cp');
     const cpDropdown = document.getElementById('nm-cp-dropdown');
     const cpConfig = document.getElementById('nm-cp-config');
-    // Track selected checkpoints: [{id, label, category_id}]
+    // Track selected checkpoints: [{id, label}]
     let _selectedCheckpoints = [];
 
     // ─── Enum option management ───
@@ -6750,9 +6711,9 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         try { _globalCheckpoints = await api.getCheckpoints(); } catch(e) { _globalCheckpoints = []; }
     }
 
-    function _addSelectedCheckpoint(cpId, label, categoryId) {
+    function _addSelectedCheckpoint(cpId, label) {
         if (_selectedCheckpoints.some(s => s.id === cpId)) return;
-        const newEntry = { id: cpId, label, category_id: categoryId || null };
+        const newEntry = { id: cpId, label };
         // Insert at correct position based on global sort_order
         const globalIndex = _globalCheckpoints.findIndex(g => g.id === cpId);
         if (globalIndex === -1) {
@@ -6818,7 +6779,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
     _loadGlobalCheckpoints().then(() => {
         if (isEdit && existingMetric?.checkpoints?.length) {
             for (const s of existingMetric.checkpoints) {
-                _selectedCheckpoints.push({ id: s.id, label: s.label, category_id: s.category_id || null });
+                _selectedCheckpoints.push({ id: s.id, label: s.label });
             }
         }
         _renderSelectedCheckpoints();
@@ -6843,12 +6804,12 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 try {
                     const newCp = await api.createCheckpoint({ label: label.trim() });
                     await _loadGlobalCheckpoints();
-                    _addSelectedCheckpoint(newCp.id, newCp.label, null);
+                    _addSelectedCheckpoint(newCp.id, newCp.label);
                 } catch (e) { alert('Ошибка: ' + e.message); }
             } else {
                 const cpId = parseInt(val);
                 const cp = _globalCheckpoints.find(s => s.id === cpId);
-                if (cp) _addSelectedCheckpoint(cp.id, cp.label, null);
+                if (cp) _addSelectedCheckpoint(cp.id, cp.label);
             }
             cpDropdown.style.display = 'none';
             if (addCpBtn) addCpBtn.style.display = '';
@@ -6923,7 +6884,6 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 const privateCb = document.getElementById('nm-private');
                 const hideInCardsCb = document.getElementById('nm-hide-in-cards');
                 const descriptionEl = document.getElementById('nm-description');
-                const hasCheckpointConfigs = checkpointConfigs.length >= 2;
                 const roleRadio = document.querySelector('input[name="nm-metric-role"]:checked');
                 const isCheckpoint = roleRadio ? roleRadio.value === 'assessment' : false;
                 const intervalRadio = document.querySelector('input[name="nm-interval-binding"]:checked');
@@ -6933,7 +6893,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                     alert('Выберите хотя бы один интервал');
                     return;
                 }
-                const updateData = { name, category_id: hasCheckpointConfigs ? 0 : (categoryIdVal ? parseInt(categoryIdVal) : 0), private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, is_checkpoint: isCheckpoint, interval_binding: intervalBinding, interval_ids: intervalIds, description: descriptionEl ? descriptionEl.value.trim() || null : null };
+                const updateData = { name, category_id: categoryIdVal ? parseInt(categoryIdVal) : 0, private: privateCb ? privateCb.checked : false, hide_in_cards: hideInCardsCb ? hideInCardsCb.checked : false, is_checkpoint: isCheckpoint, interval_binding: intervalBinding, interval_ids: intervalIds, description: descriptionEl ? descriptionEl.value.trim() || null : null };
                 if (icon !== undefined) updateData.icon = icon;
                 if (existingMetric.type === 'computed') {
                     if (formulaTokens.length === 0) {

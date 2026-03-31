@@ -175,28 +175,6 @@ def calculate_progress(result: list[dict]) -> dict:
     return {"filled": filled, "total": total, "percent": round(filled / total * 100) if total > 0 else 0}
 
 
-def split_by_binding_categories(result: list[dict]) -> list[dict]:
-    """Split multi-checkpoint/interval metrics with different categories into separate items."""
-    final: list[dict] = []
-    for item in result:
-        sub_items = item.get("checkpoints") or item.get("intervals")
-        if not sub_items:
-            final.append(item)
-            continue
-        groups: dict[int | None, list] = {}
-        for s in sub_items:
-            groups.setdefault(s.get("category_id"), []).append(s)
-        if len(groups) == 1:
-            item["category_id"] = next(iter(groups.keys()))
-            final.append(item)
-        else:
-            key = "checkpoints" if item.get("checkpoints") else "intervals"
-            for cat_id, cat_items in groups.items():
-                split = {**item, "category_id": cat_id, key: cat_items, "is_checkpoint_split": True}
-                final.append(split)
-    return final
-
-
 def split_by_checkpoints(
     result: list[dict],
     all_user_checkpoints: list,

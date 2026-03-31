@@ -7,7 +7,6 @@ class CheckpointOut(BaseModel):
     id: int
     label: str
     sort_order: int
-    category_id: int | None = None
 
 
 class CheckpointCreate(BaseModel):

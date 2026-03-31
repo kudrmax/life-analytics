@@ -38,7 +38,7 @@ class LayoutService:
                     "name": m["name"],
                     "icon": m.get("icon", ""),
                     "sort_order": row["sort_order"],
-                    "category_id": row["category_id"],
+                    "category_id": m.get("category_id"),
                 })
 
         # metrics per interval: {interval_id: [{metric_id, sort_order, category_id, ...}]}
@@ -54,7 +54,7 @@ class LayoutService:
                     "name": m["name"],
                     "icon": m.get("icon", ""),
                     "sort_order": row["sort_order"],
-                    "category_id": row["category_id"],
+                    "category_id": m.get("category_id"),
                 })
 
         # Standalone metrics: not bound to any checkpoint or interval

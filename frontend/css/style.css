@@ -1386,13 +1386,6 @@ input[type="month"], input[type="date"] {
 
 .corr-metric-name {
     font-size: 14px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.corr-metric-name:hover {
-    white-space: normal;
     word-break: break-word;
 }
 

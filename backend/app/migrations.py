@@ -810,6 +810,29 @@ MIGRATIONS = [
             END LOOP;
         END $seed_layout$;
     """),
+    (27, "remove_category_id_from_junction_tables", """
+        -- Migrate category_id from junction tables to metric_definitions where missing
+        UPDATE metric_definitions md
+        SET category_id = sub.cat_id
+        FROM (
+            SELECT DISTINCT ON (mc.metric_id) mc.metric_id, mc.category_id AS cat_id
+            FROM metric_checkpoints mc
+            WHERE mc.category_id IS NOT NULL
+        ) sub
+        WHERE md.id = sub.metric_id AND md.category_id IS NULL;
+
+        UPDATE metric_definitions md
+        SET category_id = sub.cat_id
+        FROM (
+            SELECT DISTINCT ON (mi.metric_id) mi.metric_id, mi.category_id AS cat_id
+            FROM metric_intervals mi
+            WHERE mi.category_id IS NOT NULL
+        ) sub
+        WHERE md.id = sub.metric_id AND md.category_id IS NULL;
+
+        ALTER TABLE metric_checkpoints DROP COLUMN IF EXISTS category_id;
+        ALTER TABLE metric_intervals DROP COLUMN IF EXISTS category_id;
+    """),
 ]
 
 

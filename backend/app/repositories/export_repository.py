@@ -30,7 +30,7 @@ class ExportRepository(BaseRepository):
         if not metric_ids:
             return []
         return await self.conn.fetch(
-            """SELECT mc.metric_id, cp.label, cp.sort_order, mc.category_id
+            """SELECT mc.metric_id, cp.label, cp.sort_order
                FROM metric_checkpoints mc
                JOIN checkpoints cp ON cp.id = mc.checkpoint_id
                WHERE mc.metric_id = ANY($1) AND mc.enabled = TRUE AND cp.deleted = FALSE
@@ -44,7 +44,7 @@ class ExportRepository(BaseRepository):
         return await self.conn.fetch(
             """SELECT mi.metric_id, iv.id AS interval_id,
                       cp_start.label AS start_label, cp_end.label AS end_label,
-                      cp_start.sort_order, mi.category_id
+                      cp_start.sort_order
                FROM metric_intervals mi
                JOIN intervals iv ON iv.id = mi.interval_id
                JOIN checkpoints cp_start ON cp_start.id = iv.start_checkpoint_id

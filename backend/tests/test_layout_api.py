@@ -215,11 +215,7 @@ class TestLayoutDailyPageRespected:
 
 @pytest.mark.anyio
 class TestLayoutInnerOrderPreservesCategory:
-    """Saving inner order must not lose category_id on standalone metrics.
-
-    Regression: standalone items in category blocks were returned without
-    category_id, so a round-trip (GET layout → save inner) wiped the category.
-    """
+    """Inner order save only changes sort_order, never category_id."""
 
     async def test_category_block_items_include_category_id(self, client, user_a):
         """GET /api/layout must return category_id in items of category blocks."""
@@ -241,7 +237,6 @@ class TestLayoutInnerOrderPreservesCategory:
 
     async def test_save_inner_order_preserves_category(self, client, user_a):
         """Round-trip: GET layout → POST inner → metric keeps its category_id."""
-        # Create two metrics in same category
         resp1 = await client.post(
             "/api/metrics",
             json={"name": "Вес", "type": "number", "new_category_name": "Здоровье"},
@@ -259,14 +254,12 @@ class TestLayoutInnerOrderPreservesCategory:
         assert resp2.status_code == 201
         m2 = resp2.json()
 
-        # Get layout — find category block
+        # Save inner order (reversed) — only sort_order, no category_id
         data = await _get_layout(client, user_a["token"])
         cat_block = next(b for b in data["blocks"] if b["type"] == "category" and b["id"] == cat_id)
-
-        # Simulate frontend: save inner order (reversed) with category_id from response
         items = cat_block["items"]
         save_items = [
-            {"metric_id": it["metric_id"], "sort_order": i * 10, "category_id": it["category_id"]}
+            {"metric_id": it["metric_id"], "sort_order": i * 10}
             for i, it in enumerate(reversed(items))
         ]
         resp = await client.post(
@@ -282,8 +275,8 @@ class TestLayoutInnerOrderPreservesCategory:
             assert r.status_code == 200
             assert r.json()["category_id"] == cat_id, f"metric {mid} lost its category_id"
 
-    async def test_save_inner_without_category_clears_it(self, client, user_a):
-        """If inner save sends category_id=null, metric loses its category."""
+    async def test_inner_save_does_not_change_category(self, client, user_a):
+        """Inner save cannot change category — only metric settings can."""
         resp = await client.post(
             "/api/metrics",
             json={"name": "Вес", "type": "number", "new_category_name": "Здоровье"},
@@ -291,19 +284,59 @@ class TestLayoutInnerOrderPreservesCategory:
         )
         assert resp.status_code == 201
         metric = resp.json()
-        assert metric["category_id"] is not None
+        cat_id = metric["category_id"]
+        assert cat_id is not None
 
-        # Save inner order with category_id=null (reproduces the original bug)
+        # Save inner order (category_id not sent — should not affect metric)
         resp = await client.post(
             "/api/layout/inner",
-            json={"block_type": "category", "block_id": metric["category_id"],
-                  "items": [{"metric_id": metric["id"], "sort_order": 0, "category_id": None}]},
+            json={"block_type": "category", "block_id": cat_id,
+                  "items": [{"metric_id": metric["id"], "sort_order": 0}]},
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code == 200
 
         r = await client.get(f"/api/metrics/{metric['id']}", headers=auth_headers(user_a["token"]))
-        assert r.json()["category_id"] is None
+        assert r.json()["category_id"] == cat_id
+
+    async def test_interval_metric_with_category_shows_in_layout(self, client, user_a):
+        """Interval-bound metric with category_id in metric_definitions appears correctly in layout."""
+        await create_checkpoint(client, user_a["token"], "Утро")
+        await create_checkpoint(client, user_a["token"], "День")
+
+        intervals = await _get_intervals(client, user_a["token"])
+        assert len(intervals) >= 1
+        iv_id = intervals[0]["id"]
+
+        # Create category
+        cat_resp = await client.post("/api/categories", json={"name": "Привычки"}, headers=auth_headers(user_a["token"]))
+        assert cat_resp.status_code == 201
+        cat_id = cat_resp.json()["id"]
+
+        # Create interval-bound metric WITH category
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Активность", "type": "bool",
+                "category_id": cat_id,
+                "interval_binding": "by_interval",
+                "interval_ids": [iv_id],
+            },
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        metric_id = resp.json()["id"]
+
+        # Layout should show metric with correct category_id inside interval block
+        data = await _get_layout(client, user_a["token"])
+        iv_blocks = [b for b in data["blocks"] if b["type"] == "interval"]
+        found = False
+        for block in iv_blocks:
+            for item in block.get("items", []):
+                if item["metric_id"] == metric_id:
+                    assert item["category_id"] == cat_id
+                    found = True
+        assert found, "interval-bound metric not found in layout"
 
 
 @pytest.mark.anyio

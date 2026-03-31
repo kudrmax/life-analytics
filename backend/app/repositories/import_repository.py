@@ -154,18 +154,18 @@ class ImportRepository(BaseRepository):
             self.user_id, start_checkpoint_id, end_checkpoint_id)
 
     async def insert_metric_checkpoint(
-        self, metric_id: int, checkpoint_id: int, sort_order: int, category_id: int | None = None,
+        self, metric_id: int, checkpoint_id: int, sort_order: int,
     ) -> None:
         await self.conn.execute(
-            "INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order, category_id) VALUES ($1,$2,$3,$4)",
-            metric_id, checkpoint_id, sort_order, category_id)
+            "INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order) VALUES ($1,$2,$3)",
+            metric_id, checkpoint_id, sort_order)
 
     async def insert_metric_interval(
-        self, metric_id: int, interval_id: int, sort_order: int, category_id: int | None = None,
+        self, metric_id: int, interval_id: int, sort_order: int,
     ) -> None:
         await self.conn.execute(
-            "INSERT INTO metric_intervals (metric_id, interval_id, sort_order, category_id) VALUES ($1,$2,$3,$4)",
-            metric_id, interval_id, sort_order, category_id)
+            "INSERT INTO metric_intervals (metric_id, interval_id, sort_order) VALUES ($1,$2,$3)",
+            metric_id, interval_id, sort_order)
 
     async def get_metric_checkpoints(self, metric_id: int) -> list[asyncpg.Record]:
         return await self.conn.fetch(
@@ -176,36 +176,36 @@ class ImportRepository(BaseRepository):
             "SELECT * FROM metric_intervals WHERE metric_id=$1 ORDER BY sort_order", metric_id)
 
     async def update_metric_checkpoint_on_import(
-        self, row_id: int, checkpoint_id: int, category_id: int | None,
+        self, row_id: int, checkpoint_id: int,
     ) -> None:
         await self.conn.execute(
-            "UPDATE metric_checkpoints SET checkpoint_id=$1, enabled=TRUE, category_id=$2 WHERE id=$3",
-            checkpoint_id, category_id, row_id)
+            "UPDATE metric_checkpoints SET checkpoint_id=$1, enabled=TRUE WHERE id=$2",
+            checkpoint_id, row_id)
 
     async def update_metric_interval_on_import(
-        self, row_id: int, interval_id: int, category_id: int | None,
+        self, row_id: int, interval_id: int,
     ) -> None:
         await self.conn.execute(
-            "UPDATE metric_intervals SET interval_id=$1, enabled=TRUE, category_id=$2 WHERE id=$3",
-            interval_id, category_id, row_id)
+            "UPDATE metric_intervals SET interval_id=$1, enabled=TRUE WHERE id=$2",
+            interval_id, row_id)
 
     async def upsert_metric_checkpoint(
-        self, metric_id: int, checkpoint_id: int, sort_order: int, category_id: int | None,
+        self, metric_id: int, checkpoint_id: int, sort_order: int,
     ) -> None:
         await self.conn.execute(
-            """INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order, category_id) VALUES ($1,$2,$3,$4)
+            """INSERT INTO metric_checkpoints (metric_id, checkpoint_id, sort_order) VALUES ($1,$2,$3)
                ON CONFLICT (metric_id, checkpoint_id) DO UPDATE
-               SET enabled=TRUE, sort_order=EXCLUDED.sort_order, category_id=EXCLUDED.category_id""",
-            metric_id, checkpoint_id, sort_order, category_id)
+               SET enabled=TRUE, sort_order=EXCLUDED.sort_order""",
+            metric_id, checkpoint_id, sort_order)
 
     async def upsert_metric_interval(
-        self, metric_id: int, interval_id: int, sort_order: int, category_id: int | None,
+        self, metric_id: int, interval_id: int, sort_order: int,
     ) -> None:
         await self.conn.execute(
-            """INSERT INTO metric_intervals (metric_id, interval_id, sort_order, category_id) VALUES ($1,$2,$3,$4)
+            """INSERT INTO metric_intervals (metric_id, interval_id, sort_order) VALUES ($1,$2,$3)
                ON CONFLICT (metric_id, interval_id) DO UPDATE
-               SET enabled=TRUE, sort_order=EXCLUDED.sort_order, category_id=EXCLUDED.category_id""",
-            metric_id, interval_id, sort_order, category_id)
+               SET enabled=TRUE, sort_order=EXCLUDED.sort_order""",
+            metric_id, interval_id, sort_order)
 
     async def disable_metric_checkpoint(self, row_id: int) -> None:
         await self.conn.execute("UPDATE metric_checkpoints SET enabled=FALSE WHERE id=$1", row_id)

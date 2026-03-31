@@ -80,7 +80,7 @@ class DailyRepository(BaseRepository):
         if not metric_ids:
             return []
         return await self.conn.fetch(
-            """SELECT c.id, mc.metric_id, c.label, c.sort_order, mc.category_id
+            """SELECT c.id, mc.metric_id, c.label, c.sort_order
                FROM metric_checkpoints mc
                JOIN checkpoints c ON c.id = mc.checkpoint_id
                WHERE mc.metric_id = ANY($1) AND mc.enabled = TRUE AND c.deleted = FALSE
@@ -97,8 +97,7 @@ class DailyRepository(BaseRepository):
         return await self.conn.fetch(
             """SELECT i.id, mi.metric_id,
                       cs.label || ' \u2192 ' || ce.label AS label,
-                      cs.sort_order AS start_sort_order,
-                      mi.category_id
+                      cs.sort_order AS start_sort_order
                FROM metric_intervals mi
                JOIN intervals i ON i.id = mi.interval_id
                JOIN checkpoints cs ON cs.id = i.start_checkpoint_id
@@ -116,7 +115,7 @@ class DailyRepository(BaseRepository):
         if not metric_ids:
             return []
         return await self.conn.fetch(
-            """SELECT DISTINCT c.id, mc.metric_id, c.label, c.sort_order, mc.category_id
+            """SELECT DISTINCT c.id, mc.metric_id, c.label, c.sort_order
                FROM metric_checkpoints mc
                JOIN checkpoints c ON c.id = mc.checkpoint_id
                JOIN entries e ON e.checkpoint_id = c.id AND e.date = $1 AND e.user_id = $2
@@ -134,8 +133,7 @@ class DailyRepository(BaseRepository):
         return await self.conn.fetch(
             """SELECT DISTINCT i.id, mi.metric_id,
                       cs.label || ' \u2192 ' || ce.label AS label,
-                      cs.sort_order AS start_sort_order,
-                      mi.category_id
+                      cs.sort_order AS start_sort_order
                FROM metric_intervals mi
                JOIN intervals i ON i.id = mi.interval_id
                JOIN checkpoints cs ON cs.id = i.start_checkpoint_id

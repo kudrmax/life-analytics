@@ -37,7 +37,7 @@ class ExportService:
         checkpoints_by_metric: dict[int, list[dict]] = defaultdict(list)
         for r in all_checkpoint_rows:
             checkpoints_by_metric[r["metric_id"]].append({
-                "label": r["label"], "category_id": r.get("category_id"),
+                "label": r["label"],
             })
 
         all_interval_rows = await self.repo.get_intervals_for_export(metric_ids)
@@ -45,7 +45,6 @@ class ExportService:
         for r in all_interval_rows:
             intervals_by_metric[r["metric_id"]].append({
                 "start_label": r["start_label"], "end_label": r["end_label"],
-                "category_id": r.get("category_id"),
             })
 
         computed_cfgs = await self.repo.get_computed_configs(metric_ids)
@@ -76,28 +75,13 @@ class ExportService:
 
         for m in metrics:
             cp_data = checkpoints_by_metric.get(m["id"], [])
-            has_cp_cats = any(cpd["category_id"] is not None for cpd in cp_data)
-            if has_cp_cats:
-                checkpoint_labels = [
-                    {"label": cpd["label"], "category_path": _cat_path(cpd["category_id"])}
-                    for cpd in cp_data
-                ]
-            else:
-                checkpoint_labels = [cpd["label"] for cpd in cp_data]
+            checkpoint_labels = [cpd["label"] for cpd in cp_data]
 
             iv_data = intervals_by_metric.get(m["id"], [])
-            has_iv_cats = any(ivd.get("category_id") is not None for ivd in iv_data)
-            if has_iv_cats:
-                interval_labels_list = [
-                    {"start_label": ivd["start_label"], "end_label": ivd["end_label"],
-                     "category_path": _cat_path(ivd["category_id"])}
-                    for ivd in iv_data
-                ]
-            else:
-                interval_labels_list = [
-                    {"start_label": ivd["start_label"], "end_label": ivd["end_label"]}
-                    for ivd in iv_data
-                ]
+            interval_labels_list = [
+                {"start_label": ivd["start_label"], "end_label": ivd["end_label"]}
+                for ivd in iv_data
+            ]
 
             cc = computed_cfgs.get(m["id"])
             formula_export = ''
