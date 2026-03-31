@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up build-up down delete reset logs logs-backend test test-user migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db lint-js
+.PHONY: help up build-up down delete reset logs logs-backend test test-unit test-int test-user migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db lint-js
 
 .DEFAULT_GOAL := help
 
@@ -22,7 +22,9 @@ help: ## Показать эту справку
 	@echo ""
 	@echo "  Lint и тесты:"
 	@echo "    make lint-js         Проверить синтаксис JS файлов"
-	@echo "    make test            Запустить тесты (нужен PostgreSQL)"
+	@echo "    make test            Запустить все тесты (нужен PostgreSQL)"
+	@echo "    make test-unit       Запустить только unit-тесты"
+	@echo "    make test-int        Запустить только интеграционные тесты"
 	@echo "    make test-user       Создать тестового пользователя с данными за 15 дней"
 	@echo ""
 	@echo "  Production (на сервере):"
@@ -98,8 +100,14 @@ logs-backend:
 
 # ─── Тесты ───
 
-test: ## Запустить тесты (нужен запущенный PostgreSQL)
+test: ## Запустить все тесты (нужен запущенный PostgreSQL)
 	cd backend && source venv/bin/activate && python -m pytest -v $(ARGS)
+
+test-unit: ## Запустить только unit-тесты
+	cd backend && source venv/bin/activate && python -m pytest tests/ -k "unit" $(ARGS)
+
+test-int: ## Запустить только интеграционные (API) тесты
+	cd backend && source venv/bin/activate && python -m pytest tests/ -k "not unit" $(ARGS)
 
 test-user: ## Создать тестового пользователя с данными за 15 дней
 	python3 scripts/seed_test_user.py

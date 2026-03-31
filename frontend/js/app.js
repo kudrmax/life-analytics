@@ -2696,8 +2696,52 @@ async function loadAnalysisCorrelation(start, end) {
         loadCorrelationReport(start, end);
     });
 
-    // Event delegation: one listener for all corr detail buttons
-    document.getElementById('corr-reports').addEventListener('click', (e) => {
+    // Event delegation: one listener for all corr detail buttons and status buttons
+    document.getElementById('corr-reports').addEventListener('click', async (e) => {
+        const statusBtn = e.target.closest('.corr-status-btn');
+        if (statusBtn) {
+            e.stopPropagation();
+            const action = statusBtn.dataset.action;
+            const ska = statusBtn.dataset.ska;
+            const skb = statusBtn.dataset.skb;
+            const lag = parseInt(statusBtn.dataset.lag);
+            const isActive = statusBtn.classList.contains('active');
+            const wrapper = statusBtn.closest('.corr-pair-wrapper');
+
+            if (action === 'toggle-favorite') {
+                if (isActive) {
+                    await api.removePairStatus(ska, skb, lag);
+                    statusBtn.classList.remove('active');
+                    statusBtn.textContent = '🤍';
+                } else {
+                    await api.setPairStatus(ska, skb, lag, 'favorite');
+                    statusBtn.classList.add('active');
+                    statusBtn.textContent = '❤️';
+                    // If was archived, un-archive the other button
+                    const archBtn = wrapper?.querySelector('[data-action="toggle-archive"]');
+                    if (archBtn) { archBtn.classList.remove('active'); }
+                }
+            } else if (action === 'toggle-archive') {
+                if (isActive) {
+                    await api.removePairStatus(ska, skb, lag);
+                    statusBtn.classList.remove('active');
+                } else {
+                    await api.setPairStatus(ska, skb, lag, 'archived');
+                    statusBtn.classList.add('active');
+                    // Un-favorite the other button
+                    const favBtn = wrapper?.querySelector('[data-action="toggle-favorite"]');
+                    if (favBtn) { favBtn.classList.remove('active'); favBtn.textContent = '🤍'; }
+                    // Animate hide
+                    if (wrapper) {
+                        wrapper.style.transition = 'opacity 0.3s';
+                        wrapper.style.opacity = '0';
+                        setTimeout(() => wrapper.remove(), 300);
+                    }
+                }
+            }
+            return;
+        }
+
         const btn = e.target.closest('.corr-detail-btn');
         if (!btn) return;
         e.stopPropagation();
@@ -2964,6 +3008,9 @@ function renderCorrPair(p, report) {
         dbPairId: p.pair_id,
     });
 
+    const isFav = p.status === 'favorite';
+    const isArch = p.status === 'archived';
+
     return `<div class="corr-pair-wrapper">
         <div class="corr-pair-row">
         <div class="corr-col-metric">${labelA}</div>
@@ -2972,6 +3019,10 @@ function renderCorrPair(p, report) {
         <div class="corr-col-info">
             <div class="corr-pair-value ${cls}">${absR.toFixed(3)} <button class="corr-detail-btn" data-pair-id="${pairId}">i</button></div>
             <div class="corr-info-sub">${p.data_points} дн.</div>
+            <div class="corr-pair-actions">
+                <button class="corr-status-btn${isFav ? ' active' : ''}" data-action="toggle-favorite" data-ska="${p.source_key_a}" data-skb="${p.source_key_b}" data-lag="${p.lag_days}" title="Избранное">${isFav ? '❤️' : '🤍'}</button>
+                <button class="corr-status-btn${isArch ? ' active' : ''}" data-action="toggle-archive" data-ska="${p.source_key_a}" data-skb="${p.source_key_b}" data-lag="${p.lag_days}" title="Архив">🗑️</button>
+            </div>
         </div>
     </div>
     <div class="corr-detail-panel" id="${pairId}">
@@ -2997,7 +3048,16 @@ function renderCorrelationReport(report, container) {
     }
 
     const sigTotal = c.sig_strong + c.sig_medium + c.sig_weak;
-    let html = '<div class="corr-section">';
+    let html = '';
+
+    if (c.favorite > 0) {
+        html += '<div class="corr-section">';
+        html += `<h4>❤️ Избранное <span class="corr-cat-count">${c.favorite}</span></h4>`;
+        html += '<div class="corr-category-pairs" id="corr-cat-favorite"></div>';
+        html += '</div>';
+    }
+
+    html += '<div class="corr-section">';
     html += '<h4>Надёжные корреляции <span class="corr-sig corr-sig-yes">p&lt;0.05</span></h4>';
 
     if (sigTotal > 0) {
@@ -3035,7 +3095,18 @@ function renderCorrelationReport(report, container) {
         html += '</details>';
     }
 
+    if (c.archived > 0) {
+        html += '<details class="corr-section corr-section-low" id="corr-archived-details">';
+        html += `<summary><h4>🗑️ Архив <span class="corr-cat-count">${c.archived}</span></h4></summary>`;
+        html += '<div class="corr-category-pairs" id="corr-cat-archived"></div>';
+        html += '</details>';
+    }
+
     container.innerHTML = html;
+
+    // Load favorite pairs
+    const favEl = document.getElementById('corr-cat-favorite');
+    if (favEl) loadCategoryPairs(report.id, 'all', favEl, report, 0, 'favorite');
 
     // Load significant categories
     const categoriesToLoad = ['sig_strong', 'sig_medium', 'sig_weak'].filter(cat => c[cat] > 0);
@@ -3069,16 +3140,31 @@ function renderCorrelationReport(report, container) {
             }
         });
     }
+
+    // Lazy load archived on <details> open
+    const archivedDetails = document.getElementById('corr-archived-details');
+    if (archivedDetails) {
+        archivedDetails.addEventListener('toggle', () => {
+            if (!archivedDetails.open) return;
+            const el = document.getElementById('corr-cat-archived');
+            if (el && !el.dataset.loaded) {
+                el.dataset.loaded = '1';
+                loadCategoryPairs(report.id, 'all', el, report, 0, 'archived');
+            }
+        });
+    }
 }
 
-async function loadCategoryPairs(reportId, category, containerEl, report, offset) {
+async function loadCategoryPairs(reportId, category, containerEl, report, offset, statusFilter = null) {
     const loader = document.createElement('div');
     loader.className = 'corr-loader';
     loader.innerHTML = '<div class="corr-loader-spinner"></div>';
     containerEl.appendChild(loader);
 
     try {
-        const data = await api.getCorrelationPairs(reportId, { category, offset });
+        const opts = { category, offset };
+        if (statusFilter) opts.status = statusFilter;
+        const data = await api.getCorrelationPairs(reportId, opts);
         loader.remove();
 
         let html = '';
@@ -3094,7 +3180,7 @@ async function loadCategoryPairs(reportId, category, containerEl, report, offset
                 if (entries[0].isIntersecting) {
                     observer.disconnect();
                     sentinel.remove();
-                    loadCategoryPairs(reportId, category, containerEl, report, offset + 50);
+                    loadCategoryPairs(reportId, category, containerEl, report, offset + 50, statusFilter);
                 }
             }, { rootMargin: '200px' });
             observer.observe(sentinel);

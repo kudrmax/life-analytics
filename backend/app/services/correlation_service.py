@@ -12,7 +12,7 @@ from app.analytics.time_series import TimeSeriesTransform
 from app.analytics.value_converter import ValueConverter
 from app.analytics.value_fetcher import ValueFetcher
 from app.correlation_config import CorrelationConfig, correlation_config
-from app.domain.enums import MetricType
+from app.domain.enums import MetricType, PairStatus
 from app.formula import get_referenced_metric_ids
 from app.domain.privacy import is_blocked, PRIVATE_MASK
 from app.repositories.analytics_repository import AnalyticsRepository
@@ -79,13 +79,17 @@ class CorrelationService:
                 "id": done_row["id"], "status": "done",
                 "period_start": str(done_row["period_start"]), "period_end": str(done_row["period_end"]),
                 "created_at": done_row["created_at"].isoformat(),
-                "counts": {k: counts_row[k] for k in ("total", "sig_strong", "sig_medium", "sig_weak", "maybe", "insig")},
+                "counts": {k: counts_row[k] for k in (
+                    "total", "sig_strong", "sig_medium", "sig_weak", "maybe", "insig",
+                    "favorite", "archived",
+                )},
             }
         return {"running": running, "report": report}
 
     async def get_pairs(
         self, report_id: int, category: str, offset: int, limit: int,
         metric_ids_str: str | None, privacy_mode: bool,
+        status: str | None = None,
     ) -> dict:
         report_row = await self.repo.get_report_owned(report_id)
         if not report_row:
@@ -101,8 +105,12 @@ class CorrelationService:
                 metric_filter = f" AND cp.metric_a_id = ANY(${idx}::int[]) AND cp.metric_b_id = ANY(${idx}::int[])"
                 args_base.append(ids_list)
 
-        total = await self.repo.count_pairs(report_id, cat_filter, metric_filter, args_base)
-        pairs = await self.repo.fetch_pairs_page(report_id, cat_filter, metric_filter, args_base, limit, offset)
+        status_filter = self._build_status_filter(status)
+
+        total = await self.repo.count_pairs(report_id, cat_filter, metric_filter, args_base, status_filter)
+        pairs = await self.repo.fetch_pairs_page(
+            report_id, cat_filter, metric_filter, args_base, limit, offset, status_filter,
+        )
 
         all_parent_ids, all_enum_ids = self._collect_source_key_ids(pairs)
         metric_icons, parent_names = await self._batch_load_parents(all_parent_ids)
@@ -197,6 +205,33 @@ class CorrelationService:
             "correlation": row["correlation"], "lag_days": lag,
             "original_dates_b": original_dates_b if not (blocked_a or blocked_b) else None,
         }
+
+    # ── Pair statuses ────────────────────────────────────────────
+
+    async def set_pair_status(
+        self, source_key_a: str, source_key_b: str, lag_days: int, status: str,
+    ) -> dict:
+        """Установить статус пары. Валидирует через PairStatus enum."""
+        PairStatus(status)  # raises ValueError if invalid
+        await self.repo.set_pair_status(source_key_a, source_key_b, lag_days, status)
+        return {"ok": True}
+
+    async def remove_pair_status(
+        self, source_key_a: str, source_key_b: str, lag_days: int,
+    ) -> dict:
+        """Снять статус пары."""
+        await self.repo.remove_pair_status(source_key_a, source_key_b, lag_days)
+        return {"ok": True}
+
+    @staticmethod
+    def _build_status_filter(status: str | None) -> str:
+        """Build SQL fragment for filtering by pair status."""
+        if status == PairStatus.FAVORITE:
+            return " AND cps.status = 'favorite'"
+        if status == PairStatus.ARCHIVED:
+            return " AND cps.status = 'archived'"
+        # Default: hide archived pairs
+        return " AND (cps.status IS NULL OR cps.status != 'archived')"
 
     # ── Helpers ───────────────────────────────────────────────────
 

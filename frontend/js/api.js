@@ -196,13 +196,23 @@ const api = {
     getCorrelationReport() {
         return this.request('GET', '/api/analytics/correlation-report');
     },
-    getCorrelationPairs(reportId, { category = 'all', offset = 0, limit = 50, metric_ids = null } = {}) {
+    getCorrelationPairs(reportId, { category = 'all', offset = 0, limit = 50, metric_ids = null, status = null } = {}) {
         const params = new URLSearchParams({ category, offset, limit });
         if (metric_ids) params.set('metric_ids', metric_ids);
+        if (status) params.set('status', status);
         return this.request('GET', `/api/analytics/correlation-report/${reportId}/pairs?${params}`);
     },
     getCorrelationPairChart(pairId) {
         return this.request('GET', `/api/analytics/correlation-pair-chart?pair_id=${pairId}`);
+    },
+    setPairStatus(sourceKeyA, sourceKeyB, lagDays, status) {
+        return this.request('PUT', '/api/analytics/correlation-pair-status', {
+            source_key_a: sourceKeyA, source_key_b: sourceKeyB, lag_days: lagDays, status,
+        });
+    },
+    removePairStatus(sourceKeyA, sourceKeyB, lagDays) {
+        const params = new URLSearchParams({ source_key_a: sourceKeyA, source_key_b: sourceKeyB, lag_days: lagDays });
+        return this.request('DELETE', `/api/analytics/correlation-pair-status?${params}`);
     },
 
     // Integrations

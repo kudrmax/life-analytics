@@ -134,9 +134,21 @@ class AnalyticsRepository(BaseRepository):
                    COUNT(*) FILTER (WHERE quality_issue IS NULL AND ABS(correlation) <= {moderate}) AS sig_weak,
                    COUNT(*) FILTER (WHERE quality_issue IN ('wide_ci', 'fisher_exact_high_p')) AS maybe,
                    COUNT(*) FILTER (WHERE quality_issue IS NOT NULL
-                                    AND quality_issue NOT IN ('wide_ci', 'fisher_exact_high_p')) AS insig
-               FROM correlation_pairs WHERE report_id = $1""",
-            report_id,
+                                    AND quality_issue NOT IN ('wide_ci', 'fisher_exact_high_p')) AS insig,
+                   COUNT(*) FILTER (WHERE EXISTS (
+                       SELECT 1 FROM correlation_pair_statuses cps
+                       WHERE cps.user_id = $2 AND cps.source_key_a = cp.source_key_a
+                         AND cps.source_key_b = cp.source_key_b AND cps.lag_days = cp.lag_days
+                         AND cps.status = 'favorite'
+                   )) AS favorite,
+                   COUNT(*) FILTER (WHERE EXISTS (
+                       SELECT 1 FROM correlation_pair_statuses cps
+                       WHERE cps.user_id = $2 AND cps.source_key_a = cp.source_key_a
+                         AND cps.source_key_b = cp.source_key_b AND cps.lag_days = cp.lag_days
+                         AND cps.status = 'archived'
+                   )) AS archived
+               FROM correlation_pairs cp WHERE cp.report_id = $1""",
+            report_id, self.user_id,
         )
 
     async def get_report_owned(self, report_id: int) -> asyncpg.Record | None:
@@ -146,17 +158,23 @@ class AnalyticsRepository(BaseRepository):
         )
 
     async def count_pairs(
-        self, report_id: int, cat_filter: str, metric_filter: str, args: list,
+        self, report_id: int, cat_filter: str, metric_filter: str,
+        args: list, status_filter: str = "",
     ) -> int:
+        join = ""
+        if status_filter:
+            join = f"""LEFT JOIN correlation_pair_statuses cps
+                       ON cps.user_id = {self.user_id} AND cps.source_key_a = cp.source_key_a
+                       AND cps.source_key_b = cp.source_key_b AND cps.lag_days = cp.lag_days """
         row = await self.conn.fetchrow(
-            f"SELECT COUNT(*) AS cnt FROM correlation_pairs cp WHERE cp.report_id = $1 {cat_filter}{metric_filter}",
+            f"SELECT COUNT(*) AS cnt FROM correlation_pairs cp {join}WHERE cp.report_id = $1 {cat_filter}{metric_filter}{status_filter}",
             *args,
         )
         return row["cnt"]
 
     async def fetch_pairs_page(
         self, report_id: int, cat_filter: str, metric_filter: str,
-        args_base: list, limit: int, offset: int,
+        args_base: list, limit: int, offset: int, status_filter: str = "",
     ) -> list[asyncpg.Record]:
         limit_idx = len(args_base) + 1
         offset_idx = len(args_base) + 2
@@ -171,7 +189,8 @@ class AnalyticsRepository(BaseRepository):
                        ca.label AS checkpoint_label_a,
                        cb.label AS checkpoint_label_b,
                        ics.label AS interval_start_label_a, ice.label AS interval_end_label_a,
-                       ids.label AS interval_start_label_b, ide.label AS interval_end_label_b
+                       ids.label AS interval_start_label_b, ide.label AS interval_end_label_b,
+                       cps.status AS pair_status
                 FROM correlation_pairs cp
                 LEFT JOIN metric_definitions ma ON ma.id = cp.metric_a_id
                 LEFT JOIN metric_definitions mb ON mb.id = cp.metric_b_id
@@ -183,10 +202,39 @@ class AnalyticsRepository(BaseRepository):
                 LEFT JOIN intervals ib ON ib.id = cp.interval_b_id
                 LEFT JOIN checkpoints ids ON ids.id = ib.start_checkpoint_id
                 LEFT JOIN checkpoints ide ON ide.id = ib.end_checkpoint_id
-                WHERE cp.report_id = $1 {cat_filter}{metric_filter}
+                LEFT JOIN correlation_pair_statuses cps
+                    ON cps.user_id = {self.user_id} AND cps.source_key_a = cp.source_key_a
+                    AND cps.source_key_b = cp.source_key_b AND cps.lag_days = cp.lag_days
+                WHERE cp.report_id = $1 {cat_filter}{metric_filter}{status_filter}
                 ORDER BY ABS(cp.correlation) DESC
                 LIMIT ${limit_idx} OFFSET ${offset_idx}""",
             *args_base, limit, offset,
+        )
+
+    # ── Pair statuses ────────────────────────────────────────────────
+
+    async def set_pair_status(
+        self, source_key_a: str, source_key_b: str, lag_days: int, status: str,
+    ) -> None:
+        """Upsert статуса пары (INSERT ON CONFLICT UPDATE)."""
+        await self.conn.execute(
+            """INSERT INTO correlation_pair_statuses
+                   (user_id, source_key_a, source_key_b, lag_days, status)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (user_id, source_key_a, source_key_b, lag_days)
+               DO UPDATE SET status = $5, created_at = now()""",
+            self.user_id, source_key_a, source_key_b, lag_days, status,
+        )
+
+    async def remove_pair_status(
+        self, source_key_a: str, source_key_b: str, lag_days: int,
+    ) -> None:
+        """Удалить статус пары."""
+        await self.conn.execute(
+            """DELETE FROM correlation_pair_statuses
+               WHERE user_id = $1 AND source_key_a = $2
+                 AND source_key_b = $3 AND lag_days = $4""",
+            self.user_id, source_key_a, source_key_b, lag_days,
         )
 
     async def get_metric_names_icons(self, ids: list[int]) -> list[asyncpg.Record]:

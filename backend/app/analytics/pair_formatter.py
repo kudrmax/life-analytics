@@ -126,6 +126,9 @@ class PairFormatter:
         return {
             "label_a": label_a,
             "label_b": label_b,
+            "source_key_a": p["source_key_a"],
+            "source_key_b": p["source_key_b"],
+            "status": p.get("pair_status"),
             "source_tag_a": source_tag_a,
             "source_tag_b": source_tag_b,
             "delta_start_a": delta_a[0],

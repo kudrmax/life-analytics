@@ -494,3 +494,26 @@ class TestCategoryFilters(unittest.TestCase):
 
     def test_sig_strong_has_07_threshold(self) -> None:
         assert "0.7" in PairFormatter.CATEGORY_FILTERS["sig_strong"]
+
+
+# ─── format_pair: status & source_keys ───────────────────────
+
+
+class TestFormatPairStatusFields(unittest.TestCase):
+    def test_includes_status_from_pair(self) -> None:
+        fmt = _make_formatter()
+        pair = _make_pair(pair_status="favorite")
+        result = fmt.format_pair(pair)
+        assert result["status"] == "favorite"
+
+    def test_status_none_when_absent(self) -> None:
+        fmt = _make_formatter()
+        result = fmt.format_pair(_make_pair())
+        assert result["status"] is None
+
+    def test_includes_source_keys(self) -> None:
+        fmt = _make_formatter()
+        pair = _make_pair(source_key_a="metric:10", source_key_b="metric:20")
+        result = fmt.format_pair(pair)
+        assert result["source_key_a"] == "metric:10"
+        assert result["source_key_b"] == "metric:20"

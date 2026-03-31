@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import AsyncGenerator
 
 import asyncpg
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
@@ -105,7 +106,7 @@ async def client(app) -> AsyncGenerator[AsyncClient, None]:
 # ---------------------------------------------------------------------------
 
 _CLEANUP_TABLES = [
-    "correlation_pairs", "correlation_reports",
+    "correlation_pair_statuses", "correlation_pairs", "correlation_reports",
     "insight_metrics", "insights",
     "notes",
     "values_bool", "values_time", "values_number",
@@ -131,8 +132,10 @@ _CLEANUP_TABLES = [
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def cleanup(db_pool: asyncpg.Pool):
+async def cleanup(db_pool: asyncpg.Pool, request: pytest.FixtureRequest):
     yield
+    if "unit" in request.node.nodeid:
+        return
     import asyncio
     # Wait for background correlation tasks to complete before cleanup.
     for _ in range(60):
@@ -147,8 +150,6 @@ async def cleanup(db_pool: asyncpg.Pool):
         except Exception:
             break
         await asyncio.sleep(0.1)
-    # Extra delay to let background tasks finish any post-status-update work
-    await asyncio.sleep(0.05)
     for attempt in range(3):
         try:
             async with db_pool.acquire() as conn:

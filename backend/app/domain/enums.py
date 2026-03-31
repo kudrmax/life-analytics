@@ -21,9 +21,16 @@ class IntervalBinding(str, Enum):
     BY_INTERVAL = "by_interval"
 
 
+class PairStatus(str, Enum):
+    """Статус корреляционной пары (correlation_pair_statuses.status)."""
+    FAVORITE = "favorite"
+    ARCHIVED = "archived"
+
+
 __all__ = [
     "MetricType",
     "IntervalBinding",
+    "PairStatus",
     "ReportStatus",
     "CorrelationStrength",
     "ConditionType",

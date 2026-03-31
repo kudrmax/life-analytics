@@ -72,6 +72,13 @@ class CorrelationReportRequest(BaseModel):
     end: str
 
 
+class PairStatusBody(BaseModel):
+    source_key_a: str
+    source_key_b: str
+    lag_days: int = 0
+    status: str
+
+
 @router.post("/correlation-report")
 async def create_correlation_report(
     body: CorrelationReportRequest,
@@ -93,12 +100,37 @@ async def get_correlation_pairs(
     offset: int = 0,
     limit: int = 50,
     metric_ids: str | None = Query(None),
+    status: str | None = Query(None),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
     privacy_mode: bool = Depends(get_privacy_mode),
 ):
     return await _corr_service(db, current_user).get_pairs(
-        report_id, category, offset, limit, metric_ids, privacy_mode,
+        report_id, category, offset, limit, metric_ids, privacy_mode, status=status,
+    )
+
+
+@router.put("/correlation-pair-status")
+async def set_pair_status(
+    body: PairStatusBody,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    return await _corr_service(db, current_user).set_pair_status(
+        body.source_key_a, body.source_key_b, body.lag_days, body.status,
+    )
+
+
+@router.delete("/correlation-pair-status")
+async def remove_pair_status(
+    source_key_a: str = Query(...),
+    source_key_b: str = Query(...),
+    lag_days: int = Query(...),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    return await _corr_service(db, current_user).remove_pair_status(
+        source_key_a, source_key_b, lag_days,
     )
 
 

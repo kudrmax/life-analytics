@@ -833,6 +833,20 @@ MIGRATIONS = [
         ALTER TABLE metric_checkpoints DROP COLUMN IF EXISTS category_id;
         ALTER TABLE metric_intervals DROP COLUMN IF EXISTS category_id;
     """),
+    (28, "add_correlation_pair_statuses", """
+        CREATE TABLE IF NOT EXISTS correlation_pair_statuses (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            source_key_a VARCHAR(100) NOT NULL,
+            source_key_b VARCHAR(100) NOT NULL,
+            lag_days INTEGER NOT NULL DEFAULT 0,
+            status VARCHAR(20) NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE(user_id, source_key_a, source_key_b, lag_days)
+        );
+        CREATE INDEX IF NOT EXISTS idx_corr_pair_statuses_user
+            ON correlation_pair_statuses(user_id);
+    """),
 ]
 
 

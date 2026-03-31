@@ -2285,3 +2285,205 @@ class TestStreakSources:
         assert "серия подряд (нет)" in all_tags, (
             f"Expected streak_false source_tag, got tags: {all_tags}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Pair statuses (favorite / archived)
+# ---------------------------------------------------------------------------
+
+class TestPairStatuses:
+    """Tests for PUT/DELETE /correlation-pair-status and status filtering."""
+
+    async def _setup_report_with_pairs(
+        self, client: AsyncClient, token: str,
+    ) -> tuple[int, dict]:
+        """Create metrics, entries, report, wait for done, return (report_id, first_pair)."""
+        await _create_metrics_with_entries(client, token)
+        await _start_report(client, token)
+        data = await _wait_for_report_done(client, token)
+        assert data.get("report") is not None, "Report did not finish"
+        report_id = data["report"]["id"]
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            params={"category": "all", "limit": 1},
+            headers=auth_headers(token),
+        )
+        pairs = resp.json()
+        assert pairs["total"] > 0, "No pairs generated"
+        return report_id, pairs["pairs"][0]
+
+    async def test_set_favorite(self, client: AsyncClient, user_a: dict) -> None:
+        report_id, pair = await self._setup_report_with_pairs(client, user_a["token"])
+        ska, skb, lag = pair["source_key_a"], pair["source_key_b"], pair["lag_days"]
+
+        resp = await client.put(
+            "/api/analytics/correlation-pair-status",
+            json={"source_key_a": ska, "source_key_b": skb, "lag_days": lag, "status": "favorite"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+
+        # Verify status appears in pairs
+        resp2 = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            params={"category": "all", "limit": 500},
+            headers=auth_headers(user_a["token"]),
+        )
+        found = [p for p in resp2.json()["pairs"]
+                 if p["source_key_a"] == ska and p["source_key_b"] == skb and p["lag_days"] == lag]
+        assert len(found) == 1
+        assert found[0]["status"] == "favorite"
+
+    async def test_set_archived_hides_from_default(self, client: AsyncClient, user_a: dict) -> None:
+        report_id, pair = await self._setup_report_with_pairs(client, user_a["token"])
+        ska, skb, lag = pair["source_key_a"], pair["source_key_b"], pair["lag_days"]
+
+        await client.put(
+            "/api/analytics/correlation-pair-status",
+            json={"source_key_a": ska, "source_key_b": skb, "lag_days": lag, "status": "archived"},
+            headers=auth_headers(user_a["token"]),
+        )
+
+        # Default query should NOT include archived pair
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            params={"category": "all", "limit": 500},
+            headers=auth_headers(user_a["token"]),
+        )
+        keys = [(p["source_key_a"], p["source_key_b"], p["lag_days"]) for p in resp.json()["pairs"]]
+        assert (ska, skb, lag) not in keys
+
+    async def test_archived_filter(self, client: AsyncClient, user_a: dict) -> None:
+        report_id, pair = await self._setup_report_with_pairs(client, user_a["token"])
+        ska, skb, lag = pair["source_key_a"], pair["source_key_b"], pair["lag_days"]
+
+        await client.put(
+            "/api/analytics/correlation-pair-status",
+            json={"source_key_a": ska, "source_key_b": skb, "lag_days": lag, "status": "archived"},
+            headers=auth_headers(user_a["token"]),
+        )
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            params={"category": "all", "limit": 500, "status": "archived"},
+            headers=auth_headers(user_a["token"]),
+        )
+        pairs = resp.json()["pairs"]
+        assert len(pairs) >= 1
+        assert all(p["status"] == "archived" for p in pairs)
+
+    async def test_favorite_filter(self, client: AsyncClient, user_a: dict) -> None:
+        report_id, pair = await self._setup_report_with_pairs(client, user_a["token"])
+        ska, skb, lag = pair["source_key_a"], pair["source_key_b"], pair["lag_days"]
+
+        await client.put(
+            "/api/analytics/correlation-pair-status",
+            json={"source_key_a": ska, "source_key_b": skb, "lag_days": lag, "status": "favorite"},
+            headers=auth_headers(user_a["token"]),
+        )
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            params={"category": "all", "limit": 500, "status": "favorite"},
+            headers=auth_headers(user_a["token"]),
+        )
+        pairs = resp.json()["pairs"]
+        assert len(pairs) == 1
+        assert pairs[0]["source_key_a"] == ska
+
+    async def test_remove_status(self, client: AsyncClient, user_a: dict) -> None:
+        report_id, pair = await self._setup_report_with_pairs(client, user_a["token"])
+        ska, skb, lag = pair["source_key_a"], pair["source_key_b"], pair["lag_days"]
+
+        # Set then remove
+        await client.put(
+            "/api/analytics/correlation-pair-status",
+            json={"source_key_a": ska, "source_key_b": skb, "lag_days": lag, "status": "archived"},
+            headers=auth_headers(user_a["token"]),
+        )
+        resp = await client.delete(
+            "/api/analytics/correlation-pair-status",
+            params={"source_key_a": ska, "source_key_b": skb, "lag_days": lag},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+
+        # Pair should be visible again with no status
+        resp2 = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            params={"category": "all", "limit": 500},
+            headers=auth_headers(user_a["token"]),
+        )
+        found = [p for p in resp2.json()["pairs"]
+                 if p["source_key_a"] == ska and p["source_key_b"] == skb and p["lag_days"] == lag]
+        assert len(found) == 1
+        assert found[0]["status"] is None
+
+    async def test_upsert_replaces_status(self, client: AsyncClient, user_a: dict) -> None:
+        report_id, pair = await self._setup_report_with_pairs(client, user_a["token"])
+        ska, skb, lag = pair["source_key_a"], pair["source_key_b"], pair["lag_days"]
+
+        await client.put(
+            "/api/analytics/correlation-pair-status",
+            json={"source_key_a": ska, "source_key_b": skb, "lag_days": lag, "status": "favorite"},
+            headers=auth_headers(user_a["token"]),
+        )
+        await client.put(
+            "/api/analytics/correlation-pair-status",
+            json={"source_key_a": ska, "source_key_b": skb, "lag_days": lag, "status": "archived"},
+            headers=auth_headers(user_a["token"]),
+        )
+
+        # Should be archived, not favorite
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs",
+            params={"category": "all", "limit": 500, "status": "archived"},
+            headers=auth_headers(user_a["token"]),
+        )
+        found = [p for p in resp.json()["pairs"]
+                 if p["source_key_a"] == ska and p["source_key_b"] == skb]
+        assert len(found) == 1
+        assert found[0]["status"] == "archived"
+
+    async def test_counts_include_favorite_and_archived(self, client: AsyncClient, user_a: dict) -> None:
+        report_id, pair = await self._setup_report_with_pairs(client, user_a["token"])
+        ska, skb, lag = pair["source_key_a"], pair["source_key_b"], pair["lag_days"]
+
+        await client.put(
+            "/api/analytics/correlation-pair-status",
+            json={"source_key_a": ska, "source_key_b": skb, "lag_days": lag, "status": "favorite"},
+            headers=auth_headers(user_a["token"]),
+        )
+
+        resp = await client.get(
+            "/api/analytics/correlation-report",
+            headers=auth_headers(user_a["token"]),
+        )
+        counts = resp.json()["report"]["counts"]
+        assert "favorite" in counts
+        assert "archived" in counts
+        assert counts["favorite"] >= 1
+
+    async def test_data_isolation(self, client: AsyncClient, user_a: dict, user_b: dict) -> None:
+        report_id, pair = await self._setup_report_with_pairs(client, user_a["token"])
+        ska, skb, lag = pair["source_key_a"], pair["source_key_b"], pair["lag_days"]
+
+        await client.put(
+            "/api/analytics/correlation-pair-status",
+            json={"source_key_a": ska, "source_key_b": skb, "lag_days": lag, "status": "favorite"},
+            headers=auth_headers(user_a["token"]),
+        )
+
+        # user_b should not see user_a's status
+        # Create a report for user_b to have the endpoint work
+        await _create_metrics_with_entries(client, user_b["token"])
+        await _start_report(client, user_b["token"])
+        data_b = await _wait_for_report_done(client, user_b["token"])
+        if data_b.get("report"):
+            resp = await client.get(
+                f"/api/analytics/correlation-report/{data_b['report']['id']}/pairs",
+                params={"category": "all", "limit": 500, "status": "favorite"},
+                headers=auth_headers(user_b["token"]),
+            )
+            # user_b has no favorites
+            assert resp.json()["total"] == 0
