@@ -6380,15 +6380,49 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                 opt.dataset.metricData = JSON.stringify({
                     type: m.type, scale_min: m.scale_min, scale_max: m.scale_max,
                     scale_step: m.scale_step, enum_options: m.enum_options,
+                    multi_select: m.multi_select,
                 });
                 if (existingMetric?.condition_metric_id === m.id) opt.selected = true;
                 condMetricSel.appendChild(opt);
             }
 
+            function updateConditionTypeOptions() {
+                const selOpt = condMetricSel.selectedOptions[0];
+                let mData = {};
+                if (selOpt && selOpt.dataset.metricData) {
+                    try { mData = JSON.parse(selOpt.dataset.metricData); } catch {}
+                }
+                const isMultiEnum = mData.type === 'enum' && mData.multi_select;
+                const existingNoneOpt = condTypeSel.querySelector('option[value="none_selected"]');
+                const existingAnyOpt = condTypeSel.querySelector('option[value="any_selected"]');
+                if (isMultiEnum) {
+                    if (!existingNoneOpt) {
+                        const opt = document.createElement('option');
+                        opt.value = 'none_selected';
+                        opt.textContent = 'Выбрано «Ничего»';
+                        if (existingMetric?.condition_type === 'none_selected') opt.selected = true;
+                        condTypeSel.appendChild(opt);
+                    }
+                    if (!existingAnyOpt) {
+                        const opt = document.createElement('option');
+                        opt.value = 'any_selected';
+                        opt.textContent = 'Выбрано что-то';
+                        if (existingMetric?.condition_type === 'any_selected') opt.selected = true;
+                        condTypeSel.appendChild(opt);
+                    }
+                } else {
+                    if (existingNoneOpt) { existingNoneOpt.remove(); }
+                    if (existingAnyOpt) { existingAnyOpt.remove(); }
+                    if (condTypeSel.value === 'none_selected' || condTypeSel.value === 'any_selected') {
+                        condTypeSel.value = 'filled';
+                    }
+                }
+            }
+
             function renderConditionValueInput() {
                 if (!condValueContainer) return;
                 const condType = condTypeSel.value;
-                if (condType === 'filled') {
+                if (condType === 'filled' || condType === 'none_selected' || condType === 'any_selected') {
                     condValueContainer.innerHTML = '';
                     return;
                 }
@@ -6434,14 +6468,19 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
             condMetricSel.addEventListener('change', () => {
                 const hasSelection = !!condMetricSel.value;
                 condTypeRow.style.display = hasSelection ? 'flex' : 'none';
-                if (hasSelection) renderConditionValueInput();
-                else condValueContainer.innerHTML = '';
+                if (hasSelection) {
+                    updateConditionTypeOptions();
+                    renderConditionValueInput();
+                } else {
+                    condValueContainer.innerHTML = '';
+                }
             });
             condTypeSel.addEventListener('change', renderConditionValueInput);
 
             // Init if editing with existing condition
             if (existingMetric?.condition_metric_id) {
                 condTypeRow.style.display = 'flex';
+                updateConditionTypeOptions();
                 renderConditionValueInput();
             }
         } catch(e) { console.warn('Failed to setup condition section', e); }
@@ -7052,7 +7091,7 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
         if (!condMetricSel || !condMetricSel.value) return { remove: true };
         const condType = condTypeSel ? condTypeSel.value : 'filled';
         let condValue = null;
-        if (condType !== 'filled') {
+        if (condType !== 'filled' && condType !== 'none_selected' && condType !== 'any_selected') {
             const condValueContainer = document.getElementById('nm-condition-value-container');
             if (condValueContainer) {
                 const activeButtons = condValueContainer.querySelectorAll('.cond-val-btn.active');

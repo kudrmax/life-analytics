@@ -61,6 +61,8 @@ class ConditionType(str, Enum):
     FILLED = "filled"
     EQUALS = "equals"
     NOT_EQUALS = "not_equals"
+    NONE_SELECTED = "none_selected"
+    ANY_SELECTED = "any_selected"
 
 
 class IntegrationProvider(str, Enum):

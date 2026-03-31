@@ -57,6 +57,10 @@ def evaluate_condition(cond: dict, dep_value) -> bool:
         if isinstance(dep_value, list):
             return not any(v in dep_value for v in cond_value) if isinstance(cond_value, list) else cond_value not in dep_value
         return dep_value != cond_value
+    if cond_type == "none_selected":
+        return isinstance(dep_value, list) and len(dep_value) == 0
+    if cond_type == "any_selected":
+        return isinstance(dep_value, list) and len(dep_value) > 0
     return True
 
 
