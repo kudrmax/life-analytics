@@ -395,6 +395,17 @@ class MetricsService:
         if old_binding != "by_interval" and new_binding == "by_interval" and data.interval_ids:
             await self.cfg_repo.migrate_null_interval_entries(metric_id, data.interval_ids[0])
 
+        # When transitioning from by_interval to all_day, the metric becomes standalone
+        # and needs a layout entry (category block or metric block).
+        if old_binding == "by_interval" and new_binding == "all_day":
+            layout = self._layout_repo()
+            cat_id = row.get("category_id")
+            if cat_id:
+                if not await layout.has_block("category", cat_id):
+                    await layout.add_block("category", cat_id)
+            else:
+                await layout.add_block("metric", metric_id)
+
     async def _update_condition(self, metric_id: int, data: MetricDefinitionUpdate) -> None:
         if data.remove_condition:
             await self.cfg_repo.delete_condition(metric_id)

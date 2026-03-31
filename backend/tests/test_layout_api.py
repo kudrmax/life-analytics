@@ -323,3 +323,92 @@ class TestLayoutDataIsolation:
         assert "A-Metric" not in b_labels
         assert "B-Metric" in b_labels
         assert "B-Metric" not in a_labels
+
+
+@pytest.mark.anyio
+class TestLayoutEnsureMissingStandalone:
+    """_ensure_layout adds missing standalone metrics to layout."""
+
+    async def test_standalone_without_layout_entry_appears(self, client, user_a, db_pool):
+        """Metric that has no daily_layout entry should appear via _ensure_layout."""
+        metric = await create_metric(client, user_a["token"], name="Orphan", metric_type="bool")
+
+        # Manually delete its layout entry to simulate the bug
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM daily_layout WHERE user_id = $1 AND block_type = 'metric' AND block_id = $2",
+                user_a["user_id"], metric["id"],
+            )
+
+        # GET layout should still include the metric (via _ensure_layout)
+        data = await _get_layout(client, user_a["token"])
+        metric_blocks = [b for b in data["blocks"] if b["type"] == "metric"]
+        assert any(b["id"] == metric["id"] for b in metric_blocks)
+
+    async def test_category_metric_without_layout_entry_appears(self, client, user_a, db_pool):
+        """Category block without layout entry should appear via _ensure_layout."""
+        resp = await client.post(
+            "/api/metrics",
+            json={"name": "Вес", "type": "number", "new_category_name": "Здоровье"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        cat_id = resp.json()["category_id"]
+
+        # Manually delete the category layout entry
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM daily_layout WHERE user_id = $1 AND block_type = 'category' AND block_id = $2",
+                user_a["user_id"], cat_id,
+            )
+
+        # GET layout should still include the category block
+        data = await _get_layout(client, user_a["token"])
+        cat_blocks = [b for b in data["blocks"] if b["type"] == "category"]
+        assert any(b["id"] == cat_id for b in cat_blocks)
+
+
+@pytest.mark.anyio
+class TestLayoutOnIntervalBindingChange:
+    """Changing interval_binding from by_interval to all_day adds layout entry."""
+
+    async def test_by_interval_to_all_day_adds_layout(self, client, user_a):
+        """Metric transitioning from by_interval to all_day gets a layout entry."""
+        await create_checkpoint(client, user_a["token"], "Утро")
+        await create_checkpoint(client, user_a["token"], "День")
+
+        intervals = await _get_intervals(client, user_a["token"])
+        assert len(intervals) >= 1
+        iv_id = intervals[0]["id"]
+
+        # Create metric with by_interval binding
+        resp = await client.post(
+            "/api/metrics",
+            json={
+                "name": "Активность",
+                "type": "bool",
+                "interval_binding": "by_interval",
+                "interval_ids": [iv_id],
+            },
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 201
+        metric_id = resp.json()["id"]
+
+        # Verify it's NOT in layout as standalone metric
+        data = await _get_layout(client, user_a["token"])
+        metric_blocks = [b for b in data["blocks"] if b["type"] == "metric"]
+        assert not any(b["id"] == metric_id for b in metric_blocks)
+
+        # Change to all_day
+        resp = await client.patch(
+            f"/api/metrics/{metric_id}",
+            json={"interval_binding": "all_day"},
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+
+        # Now it should appear as standalone in layout
+        data = await _get_layout(client, user_a["token"])
+        metric_blocks = [b for b in data["blocks"] if b["type"] == "metric"]
+        assert any(b["id"] == metric_id for b in metric_blocks)

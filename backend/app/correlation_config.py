@@ -18,7 +18,7 @@ class AutoSourcesConfig:
     checkpoint_min: bool = True
     rolling_avg: bool = True
     rolling_avg_windows: tuple[int, ...] = (3, 7, 14)
-    streak: bool = True
+    streak: bool = False
     day_of_week: bool = True
     month: bool = True
     is_workday: bool = True

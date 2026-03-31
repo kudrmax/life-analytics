@@ -116,6 +116,7 @@ _CLEANUP_TABLES = [
     "integration_filter_config", "integration_query_config",
     "integration_app_config", "integration_category_config",
     "integration_config",
+    "daily_layout",
     "metric_checkpoints", "metric_intervals",
     "intervals",
     "checkpoints",

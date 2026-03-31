@@ -28,6 +28,8 @@ class TestLoadDefaultConfig(unittest.TestCase):
             val = getattr(src, field_name)
             if field_name == "rolling_avg_windows":
                 self.assertEqual(val, (3, 7, 14))
+            elif field_name == "streak":
+                self.assertFalse(val, "streak should be False by default (matches prod TOML)")
             else:
                 self.assertTrue(val, f"{field_name} should be True by default")
 
