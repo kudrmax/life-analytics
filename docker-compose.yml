@@ -21,7 +21,7 @@ services:
       -c effective_cache_size=256MB
       -c work_mem=4MB
       -c maintenance_work_mem=64MB
-      -c max_connections=20
+      -c max_connections=${POSTGRES_MAX_CONNECTIONS:-20}
     deploy:
       resources:
         limits:

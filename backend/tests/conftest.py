@@ -6,6 +6,7 @@ Creates a dedicated test database in the existing PostgreSQL instance
 """
 from __future__ import annotations
 
+import os
 from typing import AsyncGenerator
 
 import asyncpg
@@ -22,7 +23,6 @@ _PG_PASSWORD = "la_password"
 _PG_HOST = "localhost"
 _PG_PORT = 5432
 _PG_ADMIN_DB = "life_analytics"  # existing DB, used to CREATE the test DB
-_PG_TEST_DB = "life_analytics_test"
 
 
 # ---------------------------------------------------------------------------
@@ -31,6 +31,10 @@ _PG_TEST_DB = "life_analytics_test"
 
 @pytest_asyncio.fixture(scope="session")
 async def db_pool() -> AsyncGenerator[asyncpg.Pool, None]:
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER", "master")
+    test_db = f"life_analytics_test_{worker_id}"
+    is_xdist = os.environ.get("PYTEST_XDIST_WORKER") is not None
+
     # Connect to admin DB to create/recreate the test database
     admin_conn = await asyncpg.connect(
         user=_PG_USER, password=_PG_PASSWORD,
@@ -40,17 +44,18 @@ async def db_pool() -> AsyncGenerator[asyncpg.Pool, None]:
     await admin_conn.execute(f"""
         SELECT pg_terminate_backend(pid)
         FROM pg_stat_activity
-        WHERE datname = '{_PG_TEST_DB}' AND pid <> pg_backend_pid()
+        WHERE datname = '{test_db}' AND pid <> pg_backend_pid()
     """)
-    await admin_conn.execute(f"DROP DATABASE IF EXISTS {_PG_TEST_DB}")
-    await admin_conn.execute(f"CREATE DATABASE {_PG_TEST_DB} OWNER {_PG_USER}")
+    await admin_conn.execute(f"DROP DATABASE IF EXISTS {test_db}")
+    await admin_conn.execute(f"CREATE DATABASE {test_db} OWNER {_PG_USER}")
     await admin_conn.close()
 
     # Create pool connected to the test DB
     pool = await asyncpg.create_pool(
         user=_PG_USER, password=_PG_PASSWORD,
-        host=_PG_HOST, port=_PG_PORT, database=_PG_TEST_DB,
-        min_size=2, max_size=10,
+        host=_PG_HOST, port=_PG_PORT, database=test_db,
+        min_size=1,
+        max_size=5 if is_xdist else 10,
     )
 
     # Initialise schema + run all migrations — same code path as production.
@@ -71,9 +76,9 @@ async def db_pool() -> AsyncGenerator[asyncpg.Pool, None]:
     await admin_conn.execute(f"""
         SELECT pg_terminate_backend(pid)
         FROM pg_stat_activity
-        WHERE datname = '{_PG_TEST_DB}' AND pid <> pg_backend_pid()
+        WHERE datname = '{test_db}' AND pid <> pg_backend_pid()
     """)
-    await admin_conn.execute(f"DROP DATABASE IF EXISTS {_PG_TEST_DB}")
+    await admin_conn.execute(f"DROP DATABASE IF EXISTS {test_db}")
     await admin_conn.close()
 
 

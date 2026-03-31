@@ -48,7 +48,7 @@ jobs:
         run: pip install -r backend/requirements-test.txt
       - name: Run tests
         working-directory: backend
-        run: python -m pytest -v
+        run: python -m pytest -n auto
 
   lint-js:
     runs-on: ubuntu-latest

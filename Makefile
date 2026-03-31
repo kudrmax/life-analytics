@@ -101,13 +101,13 @@ logs-backend:
 # ─── Тесты ───
 
 test: ## Запустить все тесты (нужен запущенный PostgreSQL)
-	cd backend && source venv/bin/activate && python -m pytest -v $(ARGS)
+	cd backend && source venv/bin/activate && python -m pytest -n auto $(ARGS)
 
 test-unit: ## Запустить только unit-тесты
 	cd backend && source venv/bin/activate && python -m pytest tests/ -k "unit" $(ARGS)
 
 test-int: ## Запустить только интеграционные (API) тесты
-	cd backend && source venv/bin/activate && python -m pytest tests/ -k "not unit" $(ARGS)
+	cd backend && source venv/bin/activate && python -m pytest tests/ -k "not unit" -n auto $(ARGS)
 
 test-user: ## Создать тестового пользователя с данными за 15 дней
 	python3 scripts/seed_test_user.py
