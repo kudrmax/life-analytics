@@ -13,6 +13,8 @@
     --green: #4caf50;
     --red: #ef5350;
     --yellow: #ffc107;
+    --metric-assessment-color: #c9a060;
+    --metric-interval-color: #5b9e97;
 }
 
 /* ═══════════════════════════════════════════════════════ */
@@ -30,6 +32,8 @@
     --green: #43a047;
     --red: #e53935;
     --yellow: #f9a825;
+    --metric-assessment-color: #b8902a;
+    --metric-interval-color: #3d8f87;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; touch-action: manipulation; }
@@ -383,6 +387,13 @@ h3 {
 .metric-card.filled {
     opacity: 0.5;
     border-color: #222;
+}
+
+.metric-card.metric-role-assessment {
+    border-left: 3px solid var(--metric-assessment-color) !important;
+}
+.metric-card.metric-role-interval {
+    border-left: 3px solid var(--metric-interval-color) !important;
 }
 
 .metric-header:has(+ .metric-description) { margin-bottom: 0; }
@@ -875,20 +886,41 @@ input[type="number"]:focus {
     gap: 6px;
 }
 
+.metric-role-assessment .metric-header {
+    margin-bottom: 4px;
+}
+
+.metric-badge-row .checkpoint-badge {
+    margin-left: 0;
+}
+
+.metric-badge-row {
+    margin-bottom: 12px;
+}
+
 .period-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+    margin-bottom: 12px;
 }
 
 .period-label {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-    flex: 1;
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: #fff;
+    opacity: 0.85;
+    vertical-align: middle;
+}
+.metric-checkpoint .period-label {
+    background: var(--metric-assessment-color);
+}
+.metric-interval .period-label {
+    background: var(--metric-interval-color);
 }
 
 .period-clear-btn {
@@ -2733,9 +2765,9 @@ emoji-picker {
     padding: 1px 6px;
     border-radius: 4px;
     margin-left: 6px;
-    background: var(--accent);
+    background: var(--metric-assessment-color);
     color: #fff;
-    opacity: 0.8;
+    opacity: 0.85;
     vertical-align: middle;
 }
 

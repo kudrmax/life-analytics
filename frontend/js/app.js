@@ -1026,9 +1026,10 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
 
 function renderMetricInput(m, metricNameById) {
     const hicCls = m.hide_in_cards ? ' hide-in-cards' : '';
+    const roleCls = m.is_checkpoint ? ' metric-role-assessment' : (m.interval_binding === 'by_interval' ? ' metric-role-interval' : '');
     // Private metric blocked in privacy mode
     if (isMetricBlocked(m)) {
-        return `<div class="metric-card${hicCls} metric-private">
+        return `<div class="metric-card${hicCls}${roleCls} metric-private">
             <div class="metric-header"><label class="metric-label">${metricLabelHtml(m)}</label></div>
             <div class="metric-private-hint">Сначала отключите приватный режим</div>
         </div>`;
@@ -1048,7 +1049,7 @@ function renderMetricInput(m, metricNameById) {
             }
             if (dv) currentValHtml = `<div class="condition-current-value">Текущее значение: ${dv}</div>`;
         }
-        return `<div class="metric-card${hicCls} metric-condition-blocked" data-metric-id="${m.metric_id}" data-metric-type="${m.type}">
+        return `<div class="metric-card${hicCls}${roleCls} metric-condition-blocked" data-metric-id="${m.metric_id}" data-metric-type="${m.type}">
             <div class="metric-header"><label class="metric-label">${metricLabelHtml(m)}</label></div>
             <div class="condition-hint">Чтобы заполнить, сначала укажите «${depName}»</div>
             ${currentValHtml}
@@ -1076,7 +1077,7 @@ function renderMetricInput(m, metricNameById) {
         let configHint = '';
         if (m.filter_name) configHint = `<span class="integration-hint">Фильтр: ${m.filter_name}</span>`;
         else if (m.filter_query) configHint = `<span class="integration-hint">Запрос: ${m.filter_query}</span>`;
-        return `<div class="metric-card${hicCls} ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="integration" data-provider="${m.provider || ''}" data-entry-id="${entryId || ''}">
+        return `<div class="metric-card${hicCls}${roleCls} ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="integration" data-provider="${m.provider || ''}" data-entry-id="${entryId || ''}">
             <div class="metric-header">
                 <label class="metric-label">${metricLabelHtml(m)}</label>
                 ${clearBtn}
@@ -1106,7 +1107,7 @@ function renderMetricInput(m, metricNameById) {
                 </div>
             </div>`;
         }
-        return `<div class="metric-card${hicCls} ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="text">
+        return `<div class="metric-card${hicCls}${roleCls} ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="text">
             <div class="metric-header">
                 <label class="metric-label">${metricLabelHtml(m)}</label>
                 ${noteCount > 0 ? `<span class="note-count-badge">${noteCount}</span>` : ''}
@@ -1137,7 +1138,7 @@ function renderMetricInput(m, metricNameById) {
         } else {
             displayVal = typeof val === 'number' ? val.toFixed(2) : String(val);
         }
-        return `<div class="metric-card${hicCls} ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="computed">
+        return `<div class="metric-card${hicCls}${roleCls} ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="computed">
             <div class="metric-header">
                 <label class="metric-label">${metricLabelHtml(m)}</label>
                 <span class="computed-badge">формула</span>
@@ -1172,19 +1173,19 @@ function renderMetricInput(m, metricNameById) {
             ? `<button class="metric-clear-btn" data-clear-entry="${entryId}" title="Очистить">&times;</button>`
             : '';
 
-        const checkpointBadge = `<span class="checkpoint-badge">${_escapeHtml(cp.label)}</span>`;
         const labelHtml = m.icon
-            ? `<span class="metric-icon">${_escapeHtml(m.icon)}</span> ${_escapeHtml(m.name)}${checkpointBadge}`
-            : `${_escapeHtml(m.name)}${checkpointBadge}`;
+            ? `<span class="metric-icon">${_escapeHtml(m.icon)}</span> ${_escapeHtml(m.name)}`
+            : `${_escapeHtml(m.name)}`;
 
         const splitDescHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
 
-        return `<div class="metric-card${hicCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}" data-checkpoint-id="${cp.checkpoint_id}">
+        return `<div class="metric-card${hicCls}${roleCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}" data-checkpoint-id="${cp.checkpoint_id}">
             <div class="metric-header">
                 <label class="metric-label">${labelHtml}</label>
                 ${clearBtn}
             </div>
             ${splitDescHtml}
+            <div class="metric-badge-row"><span class="checkpoint-badge">${_escapeHtml(cp.label)}</span></div>
             <div class="metric-input">${input}</div>
         </div>`;
     }
@@ -1234,7 +1235,7 @@ function renderMetricInput(m, metricNameById) {
         bindingsHtml += '</div>';
 
         const multiDescHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
-        return `<div class="metric-card${hicCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="">
+        return `<div class="metric-card${hicCls}${roleCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="">
             <div class="metric-header">
                 <label class="metric-label">${metricLabelHtml(m)}</label>
             </div>
@@ -1264,7 +1265,7 @@ function renderMetricInput(m, metricNameById) {
         : '';
 
     const descHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
-    return `<div class="metric-card${hicCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}">
+    return `<div class="metric-card${hicCls}${roleCls} ${filledClass}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-entry-id="${entryId || ''}">
         <div class="metric-header">
             <label class="metric-label">${metricLabelHtml(m)}</label>
             ${clearBtn}
