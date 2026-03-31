@@ -68,7 +68,9 @@
       "Bash(wc:*)",
       "Bash(cd:*)",
       "Bash(/usr/local/bin/node --check /Users/mdmkudryashov/PycharmProjects/life-analytics/frontend/js/app.js)",
-      "Bash(/usr/bin/node --check /Users/mdmkudryashov/PycharmProjects/life-analytics/frontend/js/app.js)"
+      "Bash(/usr/bin/node --check /Users/mdmkudryashov/PycharmProjects/life-analytics/frontend/js/app.js)",
+      "Bash(grep -E \"\\\\.\\(py\\)$\")",
+      "Bash(make test:*)"
     ]
   }
 }
