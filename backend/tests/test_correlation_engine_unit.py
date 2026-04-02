@@ -289,3 +289,97 @@ class TestPrecomputeQualityFlags(unittest.TestCase):
         engine._source_data = {0: {"d1": 42.0}}
         engine._precompute_quality_flags()
         assert 0 in engine._low_var_sources
+
+# ─── _apply_bh_correction ─────────────────────────────────────
+
+
+def _make_pair(
+    p_value: float,
+    quality_issue: str | None = None,
+    adjusted_p_value: float | None = None,
+) -> CorrelationPairResult:
+    return CorrelationPairResult(
+        report_id=1,
+        metric_a_id=1, metric_b_id=2,
+        checkpoint_a_id=None, checkpoint_b_id=None,
+        interval_a_id=None, interval_b_id=None,
+        source_key_a="metric:1", source_key_b="metric:2",
+        type_a="number", type_b="number",
+        correlation=0.5, data_points=30,
+        lag_days=0, p_value=p_value,
+        quality_issue=quality_issue,
+        adjusted_p_value=adjusted_p_value,
+    )
+
+
+class TestBHCorrection(unittest.TestCase):
+
+    def test_empty_list_returns_empty(self) -> None:
+        assert CorrelationEngine._apply_bh_correction([]) == []
+
+    def test_adjusted_p_assigned_to_all_pairs(self) -> None:
+        pairs = [_make_pair(0.01), _make_pair(0.03), _make_pair(0.20)]
+        result = CorrelationEngine._apply_bh_correction(pairs)
+        for pr in result:
+            assert pr.adjusted_p_value is not None
+
+    def test_single_pair_adjusted_equals_raw(self) -> None:
+        pair = _make_pair(0.04)
+        result = CorrelationEngine._apply_bh_correction([pair])
+        assert result[0].adjusted_p_value == 0.04
+
+    def test_fdr_replaces_none_issue_when_adjusted_p_high(self) -> None:
+        # m=2: pair p=0.03 at rank 1 → adj=0.03*2/1=0.06 >= 0.05 → fdr
+        # pair p=0.04 at rank 2 → adj=0.04*2/2=0.04 < 0.05 → stays None
+        pairs = [_make_pair(0.04, quality_issue=None), _make_pair(0.03, quality_issue=None)]
+        result = CorrelationEngine._apply_bh_correction(pairs)
+        p03 = next(pr for pr in result if pr.p_value == 0.03)
+        p04 = next(pr for pr in result if pr.p_value == 0.04)
+        assert p03.quality_issue == "fdr_high_p_value"
+        assert p04.quality_issue is None
+
+    def test_fdr_replaces_wide_ci_when_adjusted_p_high(self) -> None:
+        # m=2: pair p=0.03 at rank 1 → adj=0.06 >= 0.05 → fdr (overrides wide_ci)
+        # pair p=0.04 at rank 2 → adj=0.04 < 0.05 → stays wide_ci
+        pairs = [_make_pair(0.04, quality_issue="wide_ci"), _make_pair(0.03, quality_issue="wide_ci")]
+        result = CorrelationEngine._apply_bh_correction(pairs)
+        p03 = next(pr for pr in result if pr.p_value == 0.03)
+        p04 = next(pr for pr in result if pr.p_value == 0.04)
+        assert p03.quality_issue == "fdr_high_p_value"
+        assert p04.quality_issue == "wide_ci"
+
+    def test_fdr_does_not_override_high_p_value(self) -> None:
+        pairs = [_make_pair(0.10, quality_issue="high_p_value"), _make_pair(0.10, quality_issue="high_p_value")]
+        result = CorrelationEngine._apply_bh_correction(pairs)
+        assert all(pr.quality_issue == "high_p_value" for pr in result)
+
+    def test_fdr_does_not_override_other_bad_issues(self) -> None:
+        pairs = [
+            _make_pair(0.03, quality_issue="low_data_points"),
+            _make_pair(0.03, quality_issue="insufficient_variance"),
+        ]
+        result = CorrelationEngine._apply_bh_correction(pairs)
+        assert result[0].quality_issue == "low_data_points"
+        assert result[1].quality_issue == "insufficient_variance"
+
+    def test_low_p_passes_fdr(self) -> None:
+        # Single pair with very small p — should pass FDR
+        pair = _make_pair(0.001, quality_issue=None)
+        result = CorrelationEngine._apply_bh_correction([pair])
+        assert result[0].quality_issue is None
+
+    def test_adjusted_p_formula(self) -> None:
+        """adj = p * m / rank (rank 1 = smallest p)."""
+        pairs = [_make_pair(0.04), _make_pair(0.03)]
+        result = CorrelationEngine._apply_bh_correction(pairs)
+        p03 = next(pr for pr in result if pr.p_value == 0.03)
+        p04 = next(pr for pr in result if pr.p_value == 0.04)
+        assert p03.adjusted_p_value == round(0.03 * 2 / 1, 4)  # rank 1: 0.06
+        assert p04.adjusted_p_value == round(0.04 * 2 / 2, 4)  # rank 2: 0.04
+
+    def test_adjusted_p_capped_at_1(self) -> None:
+        pairs = [_make_pair(0.99)] * 10
+        result = CorrelationEngine._apply_bh_correction(pairs)
+        for pr in result:
+            assert pr.adjusted_p_value is not None
+            assert pr.adjusted_p_value <= 1.0

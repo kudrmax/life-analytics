@@ -11,6 +11,7 @@ class QualityIssue(str, Enum):
     INSUFFICIENT_VARIANCE = "insufficient_variance"
     LOW_BINARY_DATA_POINTS = "low_binary_data_points"
     HIGH_P_VALUE = "high_p_value"
+    FDR_HIGH_P_VALUE = "fdr_high_p_value"
     FISHER_EXACT_HIGH_P = "fisher_exact_high_p"
     WIDE_CI = "wide_ci"
     LOW_STREAK_RESETS = "low_streak_resets"
@@ -24,6 +25,7 @@ class QualityAssessor:
         QualityIssue.INSUFFICIENT_VARIANCE: "Недостаточная дисперсия (значение почти не меняется)",
         QualityIssue.LOW_BINARY_DATA_POINTS: "Мало наблюдений в группе бинарного источника (менее 5)",
         QualityIssue.HIGH_P_VALUE: "Статистически незначимо (p ≥ 0.05)",
+        QualityIssue.FDR_HIGH_P_VALUE: "Статистически незначимо после поправки на множественное тестирование (FDR, скорректированное p ≥ 0.05)",
         QualityIssue.FISHER_EXACT_HIGH_P: "Совпадение бинарных значений может быть случайным (точный тест Фишера, p ≥ 0.05)",
         QualityIssue.WIDE_CI: "Широкий доверительный интервал",
         QualityIssue.LOW_STREAK_RESETS: "Серия сбрасывалась слишком редко (< 2 раз за период)",
@@ -34,6 +36,7 @@ class QualityAssessor:
         QualityIssue.INSUFFICIENT_VARIANCE: "bad",
         QualityIssue.LOW_BINARY_DATA_POINTS: "bad",
         QualityIssue.HIGH_P_VALUE: "bad",
+        QualityIssue.FDR_HIGH_P_VALUE: "maybe",
         QualityIssue.FISHER_EXACT_HIGH_P: "maybe",
         QualityIssue.WIDE_CI: "maybe",
         QualityIssue.LOW_STREAK_RESETS: "bad",

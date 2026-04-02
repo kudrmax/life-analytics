@@ -21,8 +21,8 @@ class PairFormatter:
         "sig_strong": f"AND quality_issue IS NULL AND ABS(correlation) > {CORRELATION_THRESHOLD_STRONG}",
         "sig_medium": f"AND quality_issue IS NULL AND ABS(correlation) > {CORRELATION_THRESHOLD_MODERATE} AND ABS(correlation) <= {CORRELATION_THRESHOLD_STRONG}",
         "sig_weak": f"AND quality_issue IS NULL AND ABS(correlation) <= {CORRELATION_THRESHOLD_MODERATE}",
-        "maybe": "AND quality_issue IN ('wide_ci', 'fisher_exact_high_p')",
-        "insig": "AND quality_issue IS NOT NULL AND quality_issue NOT IN ('wide_ci', 'fisher_exact_high_p')",
+        "maybe": "AND quality_issue IN ('wide_ci', 'fisher_exact_high_p', 'fdr_high_p_value')",
+        "insig": "AND quality_issue IS NOT NULL AND quality_issue NOT IN ('wide_ci', 'fisher_exact_high_p', 'fdr_high_p_value')",
         "all": "",
     }
 
@@ -35,8 +35,8 @@ class PairFormatter:
             "sig_strong": f"AND quality_issue IS NULL AND ABS(correlation) > {strong}",
             "sig_medium": f"AND quality_issue IS NULL AND ABS(correlation) > {moderate} AND ABS(correlation) <= {strong}",
             "sig_weak": f"AND quality_issue IS NULL AND ABS(correlation) <= {moderate}",
-            "maybe": "AND quality_issue IN ('wide_ci', 'fisher_exact_high_p')",
-            "insig": "AND quality_issue IS NOT NULL AND quality_issue NOT IN ('wide_ci', 'fisher_exact_high_p')",
+            "maybe": "AND quality_issue IN ('wide_ci', 'fisher_exact_high_p', 'fdr_high_p_value')",
+            "insig": "AND quality_issue IS NOT NULL AND quality_issue NOT IN ('wide_ci', 'fisher_exact_high_p', 'fdr_high_p_value')",
             "all": "",
         }
         return filters.get(category, "")
@@ -163,6 +163,7 @@ class PairFormatter:
             "quality_issue": p.get("quality_issue"),
             "quality_issue_label": QualityAssessor.LABELS.get(p.get("quality_issue")) if p.get("quality_issue") else None,
             "quality_severity": QualityAssessor.SEVERITY.get(p.get("quality_issue")) if p.get("quality_issue") else None,
+            "adjusted_p_value": p.get("adjusted_p_value"),
         }
 
     def _resolve_binding_label(self, p: dict[str, Any], side: str) -> str:

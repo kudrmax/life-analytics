@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date as date_type, timedelta
 from statistics import variance
 
@@ -11,7 +11,7 @@ from app.analytics.correlation_math import (
     fisher_exact_p, BINARY_TYPES,
 )
 from app.domain.constants import SECONDS_PER_HOUR
-from app.analytics.quality import QualityAssessor
+from app.analytics.quality import QualityAssessor, QualityIssue
 from app.analytics.auto_sources.registry import AutoSourceInput, compute_auto_source
 from app.analytics.time_series import TimeSeriesTransform
 from app.analytics.value_converter import ValueConverter
@@ -50,6 +50,7 @@ class CorrelationPairResult:
     lag_days: int
     p_value: float
     quality_issue: str | None
+    adjusted_p_value: float | None = None
 
 
 class CorrelationEngine:
@@ -105,6 +106,7 @@ class CorrelationEngine:
         await self._compute_auto_sources()
         self._precompute_quality_flags()
         pairs = self._evaluate_all_pairs()
+        pairs = self._apply_bh_correction(pairs)
         await self._insert_pairs(pairs)
         await self._finalize()
 
@@ -614,13 +616,36 @@ class CorrelationEngine:
                 return True
         return False
 
-    # ─── Phase 7: Insert pairs ─────────────────────────────────────
+    # ─── Phase 7: BH correction ────────────────────────────────────
+
+    @staticmethod
+    def _apply_bh_correction(pairs: list[CorrelationPairResult]) -> list[CorrelationPairResult]:
+        """Вычислить adjusted p-value (Benjamini–Hochberg) и присвоить fdr_high_p_value."""
+        m = len(pairs)
+        if m == 0:
+            return pairs
+        indexed = sorted(enumerate(pairs), key=lambda x: x[1].p_value)
+        result = list(pairs)
+        _alpha = 0.05
+        _fdr = QualityIssue.FDR_HIGH_P_VALUE.value
+        _wide_ci = QualityIssue.WIDE_CI.value
+        for rank, (orig_idx, _pr) in enumerate(indexed, start=1):
+            pr = pairs[orig_idx]
+            ap = round(min(pr.p_value * m / rank, 1.0), 4)
+            if ap >= _alpha and pr.quality_issue in (None, _wide_ci):
+                new_qi = _fdr
+            else:
+                new_qi = pr.quality_issue
+            result[orig_idx] = replace(pr, adjusted_p_value=ap, quality_issue=new_qi)
+        return result
+
+    # ─── Phase 8: Insert pairs ─────────────────────────────────────
 
     async def _insert_pairs(self, pairs: list[CorrelationPairResult]) -> None:
         await self._repo.insert_pairs(pairs)
         self._qt.mark("insert_pairs")
 
-    # ─── Phase 8: Finalize ─────────────────────────────────────────
+    # ─── Phase 9: Finalize ─────────────────────────────────────────
 
     async def _finalize(self) -> None:
         await self._repo.finalize_report(self._report_id)

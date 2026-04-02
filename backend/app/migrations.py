@@ -847,6 +847,9 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_corr_pair_statuses_user
             ON correlation_pair_statuses(user_id);
     """),
+    (29, "add_adjusted_p_value_to_correlation_pairs", """
+        ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS adjusted_p_value FLOAT;
+    """),
 ]
 
 

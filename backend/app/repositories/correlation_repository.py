@@ -87,8 +87,9 @@ class CorrelationRepository(BaseRepository):
                 """INSERT INTO correlation_pairs
                    (report_id, metric_a_id, metric_b_id, checkpoint_a_id, checkpoint_b_id,
                     interval_a_id, interval_b_id,
-                    source_key_a, source_key_b, type_a, type_b, correlation, data_points, lag_days, p_value, quality_issue)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)""",
+                    source_key_a, source_key_b, type_a, type_b, correlation, data_points, lag_days, p_value, quality_issue,
+                    adjusted_p_value)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)""",
                 [astuple(p) for p in pairs],
             )
 

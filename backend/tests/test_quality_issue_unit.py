@@ -270,8 +270,11 @@ class TestQualityIssueMappings:
     def test_fisher_exact_high_p_is_maybe(self) -> None:
         assert QUALITY_SEVERITY[QualityIssue.FISHER_EXACT_HIGH_P] == "maybe"
 
+    def test_fdr_high_p_value_is_maybe(self) -> None:
+        assert QUALITY_SEVERITY[QualityIssue.FDR_HIGH_P_VALUE] == "maybe"
+
     def test_others_are_bad(self) -> None:
-        _MAYBE_ISSUES = {QualityIssue.WIDE_CI, QualityIssue.FISHER_EXACT_HIGH_P}
+        _MAYBE_ISSUES = {QualityIssue.WIDE_CI, QualityIssue.FISHER_EXACT_HIGH_P, QualityIssue.FDR_HIGH_P_VALUE}
         for issue in QualityIssue:
             if issue not in _MAYBE_ISSUES:
                 assert QUALITY_SEVERITY[issue] == "bad", f"{issue} should be 'bad'"

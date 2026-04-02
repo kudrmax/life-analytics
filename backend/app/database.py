@@ -324,7 +324,8 @@ async def _init_db_schema(conn):
             correlation FLOAT,
             data_points INTEGER NOT NULL DEFAULT 0,
             p_value FLOAT,
-            quality_issue VARCHAR(30)
+            quality_issue VARCHAR(30),
+            adjusted_p_value FLOAT
         )
     """)
 
@@ -355,6 +356,9 @@ async def _init_db_schema(conn):
     """)
     await conn.execute("""
         ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS quality_issue VARCHAR(30)
+    """)
+    await conn.execute("""
+        ALTER TABLE correlation_pairs ADD COLUMN IF NOT EXISTS adjusted_p_value FLOAT
     """)
 
     # Correlation pair statuses (favorite / archived)
