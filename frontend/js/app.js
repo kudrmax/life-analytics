@@ -1107,11 +1107,13 @@ function renderMetricInput(m, metricNameById) {
                 </div>
             </div>`;
         }
+        const textDescHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
         return `<div class="metric-card${hicCls}${roleCls} ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="text">
             <div class="metric-header">
                 <label class="metric-label">${metricLabelHtml(m)}</label>
                 ${noteCount > 0 ? `<span class="note-count-badge">${noteCount}</span>` : ''}
             </div>
+            ${textDescHtml}
             <div class="notes-list">${notesHtml}</div>
             <div class="note-input-row">
                 <textarea class="note-textarea" placeholder="Написать заметку..." rows="1"></textarea>
