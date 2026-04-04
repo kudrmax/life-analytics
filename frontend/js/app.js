@@ -7701,10 +7701,11 @@ function _findNextFreeSlot(existingEntries) {
     };
 }
 
+let _trpLastBlockSlots = 3; // remember last block length across picker invocations
+
 function showTimeRangePicker(existingEntries, callback, initialStart, initialEnd) {
-    const SLOT_H = 28;
+    const SLOT_H = 20;
     const TOTAL_SLOTS = 48;
-    const DEFAULT_SLOTS = 3; // 1.5h
 
     function timeToSlot(t) {
         const [h, m] = t.split(':').map(Number);
@@ -7736,7 +7737,7 @@ function showTimeRangePicker(existingEntries, callback, initialStart, initialEnd
         : _findNextFreeSlot(existingEntries);
     let selStart = timeToSlot(defaults.start);
     let selEnd = timeToSlot(defaults.end);
-    if (selEnd <= selStart) selEnd = Math.min(selStart + DEFAULT_SLOTS, TOTAL_SLOTS);
+    if (selEnd <= selStart) selEnd = Math.min(selStart + _trpLastBlockSlots, TOTAL_SLOTS);
 
     // Build DOM
     const overlay = document.createElement('div');
@@ -7878,7 +7879,7 @@ function showTimeRangePicker(existingEntries, callback, initialStart, initialEnd
             // Click on empty slot — create block at that position
             const idx = parseInt(target.closest('.trp-slot').dataset.idx);
             if (isOccupied(idx)) return;
-            const newEnd = Math.min(idx + DEFAULT_SLOTS, TOTAL_SLOTS);
+            const newEnd = Math.min(idx + _trpLastBlockSlots, TOTAL_SLOTS);
             if (!rangeOverlapsOccupied(idx, newEnd)) {
                 selStart = idx;
                 selEnd = newEnd;
@@ -7909,9 +7910,12 @@ function showTimeRangePicker(existingEntries, callback, initialStart, initialEnd
 
     function onPointerUp(e) {
         if (!dragMode) return;
+        const wasResize = dragMode === 'resize-top' || dragMode === 'resize-bottom';
         dragMode = null;
         block.classList.remove('dragging');
         timeline.releasePointerCapture(e.pointerId);
+        // Remember block length after resize for next click
+        if (wasResize) _trpLastBlockSlots = selEnd - selStart;
     }
 
     timeline.addEventListener('pointerdown', onPointerDown);

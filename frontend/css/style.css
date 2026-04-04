@@ -2923,7 +2923,7 @@ emoji-picker {
     touch-action: none;
 }
 .trp-slot {
-    height: 28px;
+    height: 20px;
     display: flex;
     align-items: stretch;
     cursor: pointer;
