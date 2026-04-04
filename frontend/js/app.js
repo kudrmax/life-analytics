@@ -1244,6 +1244,40 @@ function renderMetricInput(m, metricNameById) {
         </div>`;
     }
 
+    // Free checkpoints — multiple entries per day at arbitrary times
+    if (m.interval_binding === 'free_checkpoints') {
+        const freeEntries = m.free_entries || [];
+        const isFilled = freeEntries.length > 0;
+        let entriesHtml = '';
+        for (const fe of freeEntries) {
+            const time = fe.recorded_at ? new Date(fe.recorded_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+            const dv = fe.display_value !== null && fe.display_value !== undefined ? fe.display_value : fe.value;
+            entriesHtml += `<div class="free-entry-item" data-free-entry-id="${fe.id}">
+                <button type="button" class="time-picker-btn has-value free-entry-time-btn" data-action="pick-free-time" data-entry-id="${fe.id}">${time}</button>
+                <span class="free-entry-value">${dv}</span>
+                <button class="btn-icon-tiny btn-icon-danger" data-action="delete-free-entry" data-entry-id="${fe.id}" title="Удалить"><i data-lucide="trash-2"></i></button>
+            </div>`;
+        }
+        let addInput;
+        if (m.type === 'enum') addInput = renderEnum(null, m.enum_options, m.multi_select, false);
+        else if (m.type === 'time') addInput = renderTime(null);
+        else if (m.type === 'duration') addInput = renderDuration(null);
+        else if (m.type === 'number') addInput = renderNumber(null);
+        else if (m.type === 'scale') addInput = renderScale(null, m.scale_min, m.scale_max, m.scale_step, m.scale_labels);
+        else addInput = renderBoolean(null);
+
+        const descHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
+        return `<div class="metric-card${hicCls} metric-role-free-cp ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-free-checkpoints="true">
+            <div class="metric-header">
+                <label class="metric-label">${metricLabelHtml(m)}</label>
+                ${isFilled ? `<span class="note-count-badge">${freeEntries.length}</span>` : ''}
+            </div>
+            ${descHtml}
+            <div class="free-entries-list">${entriesHtml}</div>
+            <div class="metric-input">${addInput}</div>
+        </div>`;
+    }
+
     // Single entry metric (no checkpoints/intervals)
     const entry = m.entry;
     const val = entry ? entry.value : null;
@@ -1344,6 +1378,7 @@ function renderEnum(selectedIds, options, multiSelect, hasEntry) {
 // ─── Event Handlers ───
 async function handleNumberChange(e) {
     const input = e.target;
+
     if (!input.classList.contains('number-value-input')) return;
 
     const card = input.closest('.metric-card');
@@ -1374,6 +1409,13 @@ async function handleNumberChange(e) {
     const parsed = parseInt(raw);
     if (isNaN(parsed)) {
         input.value = '';
+        return;
+    }
+
+    if (card.dataset.freeCheckpoints) {
+        api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: parsed })
+            .then(() => renderTodayForm(true))
+            .catch(err => { alert('Ошибка: ' + err.message); });
         return;
     }
 
@@ -1527,6 +1569,34 @@ async function handleFormClick(e) {
         return;
     }
 
+    // Free checkpoint: delete entry
+    if (btn.dataset.action === 'delete-free-entry') {
+        const entryId = parseInt(btn.dataset.entryId);
+        try {
+            await api.deleteEntry(entryId);
+            await renderTodayForm(true);
+        } catch (error) {
+            alert('Ошибка: ' + error.message);
+        }
+        return;
+    }
+
+    // Free checkpoint: edit time via clock picker
+    if (btn.dataset.action === 'pick-free-time') {
+        if (document.querySelector('.cp-overlay')) return;
+        const entryId = parseInt(btn.dataset.entryId);
+        const currentVal = btn.textContent.trim();
+        showClockPicker(currentVal, async (newVal) => {
+            try {
+                await api.updateEntryTime(entryId, newVal);
+                await renderTodayForm(true);
+            } catch (error) {
+                alert('Ошибка: ' + error.message);
+            }
+        });
+        return;
+    }
+
     // Edit note — switch to inline editing
     if (btn.dataset.action === 'edit-note') {
         const noteId = btn.dataset.noteId;
@@ -1608,6 +1678,24 @@ async function handleFormClick(e) {
             renderTodayForm(true);
         });
         return;
+    }
+
+    // Free checkpoints: intercept value clicks → always create new entry
+    if (card.dataset.freeCheckpoints) {
+        let freeValue = null;
+        if (btn.classList.contains('scale-btn')) freeValue = parseInt(btn.dataset.value);
+        else if (btn.classList.contains('bool-btn')) freeValue = btn.dataset.value === 'true';
+        else if (btn.classList.contains('enum-btn')) {
+            const optId = parseInt(btn.dataset.optionId);
+            if (!isNaN(optId)) freeValue = [optId];
+        }
+        if (freeValue !== null) {
+            btn.disabled = true;
+            api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: freeValue })
+                .then(() => renderTodayForm(true))
+                .catch(err => { alert('Ошибка: ' + err.message); btn.disabled = false; });
+            return;
+        }
     }
 
     // Boolean buttons
@@ -1758,7 +1846,11 @@ async function handleFormClick(e) {
         const currentVal = timeTrigger.classList.contains('has-value') ? timeTrigger.textContent.trim() : '';
         showClockPicker(currentVal, async (newVal) => {
             try {
-                await saveDaily(metricId, entryId, newVal, bindingId, bindingType);
+                if (card.dataset.freeCheckpoints) {
+                    await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: newVal });
+                } else {
+                    await saveDaily(metricId, entryId, newVal, bindingId, bindingType);
+                }
                 await renderTodayForm(true);
             } catch (error) {
                 alert('Ошибка: ' + error.message);
@@ -1787,7 +1879,11 @@ async function handleFormClick(e) {
             try {
                 const parts = hhmmVal.split(':').map(Number);
                 const minutes = parts[0] * 60 + parts[1];
-                await saveDaily(metricId, entryId, minutes, bindingId, bindingType);
+                if (card.dataset.freeCheckpoints) {
+                    await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: minutes });
+                } else {
+                    await saveDaily(metricId, entryId, minutes, bindingId, bindingType);
+                }
                 await renderTodayForm(true);
             } catch (error) {
                 alert('Ошибка: ' + error.message);
@@ -6079,6 +6175,11 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <div class="role-choice-icon"><i data-lucide="pin"></i></div>
                             <span class="role-choice-title">В определённые интервалы</span>
                         </label>
+                        <label class="role-choice-card ${existingMetric?.interval_binding === 'free_checkpoints' ? 'selected' : ''}" data-interval="free_checkpoints">
+                            <input type="radio" name="nm-interval-binding" value="free_checkpoints" ${existingMetric?.interval_binding === 'free_checkpoints' ? 'checked' : ''}>
+                            <div class="role-choice-icon"><i data-lucide="clock"></i></div>
+                            <span class="role-choice-title">Свободные замеры</span>
+                        </label>
                     </div>
                     <div id="nm-interval-select" style="display:${existingMetric?.interval_binding === 'by_interval' ? '' : 'none'}">
                         <div id="nm-interval-list" class="checkbox-list"></div>
@@ -6264,6 +6365,11 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <input type="radio" name="nm-interval-binding" value="by_interval">
                             <div class="role-choice-icon"><i data-lucide="pin"></i></div>
                             <span class="role-choice-title">В определённые интервалы</span>
+                        </label>
+                        <label class="role-choice-card" data-interval="free_checkpoints">
+                            <input type="radio" name="nm-interval-binding" value="free_checkpoints">
+                            <div class="role-choice-icon"><i data-lucide="clock"></i></div>
+                            <span class="role-choice-title">Свободные замеры</span>
                         </label>
                     </div>
                     <div id="nm-interval-select" style="display:none">

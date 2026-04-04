@@ -136,6 +136,7 @@ class ExportService:
             'date', 'metric_slug', 'value',
             'checkpoint_id', 'checkpoint_label',
             'interval_id', 'interval_start_label', 'interval_end_label',
+            'is_free_checkpoint', 'recorded_at',
         ])
 
         entry_repo = EntryRepository(self.conn, self.repo.user_id)
@@ -158,6 +159,8 @@ class ExportService:
                 e["interval_id"] if e.get("interval_id") is not None else '',
                 e.get("interval_start_label") or '',
                 e.get("interval_end_label") or '',
+                1 if e.get("is_free_checkpoint") else '',
+                str(e["recorded_at"]) if e.get("is_free_checkpoint") else '',
             ])
 
         zip_file.writestr('entries.csv', entries_csv.getvalue())

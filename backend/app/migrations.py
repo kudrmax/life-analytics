@@ -847,6 +847,24 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_corr_pair_statuses_user
             ON correlation_pair_statuses(user_id);
     """),
+    (29, "add_free_checkpoint_support", """
+        ALTER TABLE entries ADD COLUMN IF NOT EXISTS is_free_checkpoint BOOLEAN NOT NULL DEFAULT FALSE;
+
+        DROP INDEX IF EXISTS entries_no_binding_key;
+        CREATE UNIQUE INDEX IF NOT EXISTS entries_no_binding_key
+            ON entries(metric_id, user_id, date)
+            WHERE checkpoint_id IS NULL AND interval_id IS NULL AND NOT is_free_checkpoint;
+
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'entries_free_cp_no_binding') THEN
+                ALTER TABLE entries ADD CONSTRAINT entries_free_cp_no_binding
+                    CHECK (NOT (is_free_checkpoint AND (checkpoint_id IS NOT NULL OR interval_id IS NOT NULL)));
+            END IF;
+        END $$;
+
+        CREATE INDEX IF NOT EXISTS idx_entries_free_checkpoint
+            ON entries(metric_id, user_id, date) WHERE is_free_checkpoint;
+    """),
 ]
 
 

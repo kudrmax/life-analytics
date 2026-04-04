@@ -26,6 +26,9 @@ class AutoSourcesConfig:
     delta: bool = True
     trend: bool = True
     range: bool = True
+    free_cp_max: bool = True
+    free_cp_min: bool = True
+    free_cp_range: bool = True
 
 
 @dataclass(frozen=True)

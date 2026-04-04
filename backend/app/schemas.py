@@ -164,6 +164,10 @@ class EntryUpdate(BaseModel):
     value: bool | str | int | list[int]
 
 
+class EntryTimeUpdate(BaseModel):
+    recorded_at: str  # HH:MM
+
+
 class EntryOut(BaseModel):
     id: int
     metric_id: int
@@ -174,6 +178,7 @@ class EntryOut(BaseModel):
     checkpoint_label: str = ""
     interval_id: int | None = None
     interval_label: str = ""
+    is_free_checkpoint: bool = False
 
 
 # Auth schemas

@@ -2823,6 +2823,35 @@ emoji-picker {
     color: var(--text-dim);
 }
 
+/* Free checkpoints */
+.free-entries-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.free-entry-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    background: var(--surface2);
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.free-entry-time-btn {
+    padding: 2px 8px;
+    font-size: 12px;
+    min-width: auto;
+}
+
+.free-entry-value {
+    flex: 1;
+    font-weight: 500;
+}
+
 .btn-icon-tiny {
     background: none;
     border: none;

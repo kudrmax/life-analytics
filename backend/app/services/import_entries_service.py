@@ -68,7 +68,12 @@ class EntryImporter:
                     except (ValueError, TypeError):
                         pass
 
-                if await self.repo.check_entry_duplicate(metric_id, d, checkpoint_id, interval_id):
+                is_free_cp = row.get('is_free_checkpoint', '') == '1'
+                recorded_at_csv = row.get('recorded_at', '') or None
+
+                if await self.repo.check_entry_duplicate(
+                    metric_id, d, checkpoint_id, interval_id, is_free_checkpoint=is_free_cp,
+                ):
                     skipped += 1
                     continue
 
@@ -80,7 +85,11 @@ class EntryImporter:
                     continue
 
                 async with self.repo.transaction():
-                    entry_id = await self.repo.create_entry(metric_id, d, checkpoint_id, interval_id)
+                    entry_id = await self.repo.create_entry(
+                        metric_id, d, checkpoint_id, interval_id,
+                        is_free_checkpoint=is_free_cp,
+                        recorded_at=recorded_at_csv,
+                    )
                     await self.entry_repo.insert_value(entry_id, value, mt, entry_date=d, metric_id=metric_id)
                 imported += 1
             except Exception as e:

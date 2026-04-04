@@ -264,7 +264,10 @@ class ImportRepository(BaseRepository):
     async def check_entry_duplicate(
         self, metric_id: int, d: date_type,
         checkpoint_id: int | None = None, interval_id: int | None = None,
+        is_free_checkpoint: bool = False,
     ) -> bool:
+        if is_free_checkpoint:
+            return False
         if checkpoint_id is not None:
             val = await self.conn.fetchval(
                 "SELECT id FROM entries WHERE metric_id=$1 AND user_id=$2 AND date=$3 AND checkpoint_id=$4",
@@ -282,10 +285,18 @@ class ImportRepository(BaseRepository):
     async def create_entry(
         self, metric_id: int, d: date_type,
         checkpoint_id: int | None = None, interval_id: int | None = None,
+        is_free_checkpoint: bool = False,
+        recorded_at: str | None = None,
     ) -> int:
+        if is_free_checkpoint and recorded_at:
+            return await self.conn.fetchval(
+                "INSERT INTO entries (metric_id, user_id, date, checkpoint_id, interval_id, is_free_checkpoint, recorded_at) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
+                metric_id, self.user_id, d, checkpoint_id, interval_id, True, recorded_at)
         return await self.conn.fetchval(
-            "INSERT INTO entries (metric_id, user_id, date, checkpoint_id, interval_id) VALUES ($1,$2,$3,$4,$5) RETURNING id",
-            metric_id, self.user_id, d, checkpoint_id, interval_id)
+            "INSERT INTO entries (metric_id, user_id, date, checkpoint_id, interval_id, is_free_checkpoint) "
+            "VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
+            metric_id, self.user_id, d, checkpoint_id, interval_id, is_free_checkpoint)
 
     async def get_enum_option_labels(self, metric_id: int) -> dict[str, int]:
         rows = await self.conn.fetch("SELECT id, label FROM enum_options WHERE metric_id=$1", metric_id)

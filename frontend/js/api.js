@@ -166,6 +166,11 @@ const api = {
         invalidateCache('/api/daily/', '/api/entries');
         return result;
     },
+    async updateEntryTime(id, time) {
+        const result = await this.request('PATCH', `/api/entries/${id}/time`, { recorded_at: time });
+        invalidateCache('/api/daily/', '/api/entries');
+        return result;
+    },
 
     // Daily
     getDailySummary(date) {

@@ -69,7 +69,10 @@ class EntryRepository(BaseRepository):
         d: date_type,
         checkpoint_id: int | None = None,
         interval_id: int | None = None,
+        is_free_checkpoint: bool = False,
     ) -> bool:
+        if is_free_checkpoint:
+            return False
         if checkpoint_id is not None:
             existing = await self.conn.fetchval(
                 "SELECT id FROM entries "
@@ -97,11 +100,12 @@ class EntryRepository(BaseRepository):
         d: date_type,
         checkpoint_id: int | None = None,
         interval_id: int | None = None,
+        is_free_checkpoint: bool = False,
     ) -> int:
         return await self.conn.fetchval(
-            "INSERT INTO entries (metric_id, user_id, date, checkpoint_id, interval_id) "
-            "VALUES ($1, $2, $3, $4, $5) RETURNING id",
-            metric_id, self.user_id, d, checkpoint_id, interval_id,
+            "INSERT INTO entries (metric_id, user_id, date, checkpoint_id, interval_id, is_free_checkpoint) "
+            "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+            metric_id, self.user_id, d, checkpoint_id, interval_id, is_free_checkpoint,
         )
 
     async def get_with_binding(self, entry_id: int) -> asyncpg.Record:
@@ -127,6 +131,15 @@ class EntryRepository(BaseRepository):
         if not row:
             raise EntityNotFoundError("entries", entry_id)
         return row
+
+    async def update_recorded_at(self, entry_id: int, new_time: datetime) -> None:
+        """Update recorded_at for a free_checkpoint entry."""
+        result = await self.conn.execute(
+            "UPDATE entries SET recorded_at = $1 WHERE id = $2 AND user_id = $3 AND is_free_checkpoint = TRUE",
+            new_time, entry_id, self.user_id,
+        )
+        if result == "UPDATE 0":
+            raise EntityNotFoundError("entries", entry_id)
 
     async def delete(self, entry_id: int) -> None:
         row = await self.conn.fetchval(

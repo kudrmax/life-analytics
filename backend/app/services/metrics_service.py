@@ -10,7 +10,8 @@ from app.integrations.activitywatch.registry import ACTIVITYWATCH_METRICS, ACTIV
 from app.services.metric_builder import build_metric_out
 from app.repositories.metric_repository import MetricRepository
 from app.repositories.metric_config_repository import MetricConfigRepository
-from app.domain.enums import MetricType
+from app.domain.constants import FREE_CHECKPOINTS_SUPPORTED_TYPES
+from app.domain.enums import IntervalBinding, MetricType
 from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut
 from app.services.metric_conversion_service import MetricConversionService, ALLOWED_CONVERSIONS
 from app.repositories.layout_repository import LayoutRepository
@@ -57,6 +58,7 @@ class MetricsService:
         await self.repo.reorder(items)
 
     async def create(self, data: MetricDefinitionCreate, privacy_mode: bool) -> MetricDefinitionOut:
+        self._validate_free_checkpoints(data)
         await self._validate_integration(data)
         self._validate_enum(data)
         slug = await self._resolve_slug(data)
@@ -355,7 +357,7 @@ class MetricsService:
         interval_ids: list[int] | None,
     ) -> None:
         """Auto-create metric_intervals for interval-bound facts."""
-        if binding == "all_day":
+        if binding in ("all_day", IntervalBinding.FREE_CHECKPOINTS):
             return
         if not interval_ids:
             raise InvalidOperationError("interval_ids is required for by_interval binding")
@@ -370,8 +372,27 @@ class MetricsService:
                 raise InvalidOperationError(f"Interval {iv_id} references a deleted checkpoint")
             await self.cfg_repo.insert_metric_interval(metric_id, iv_id, i)
 
+    @staticmethod
+    def _validate_free_checkpoints(data: MetricDefinitionCreate | MetricDefinitionUpdate) -> None:
+        """Validate free_checkpoints constraints."""
+        binding = getattr(data, "interval_binding", None)
+        if binding != IntervalBinding.FREE_CHECKPOINTS:
+            return
+        is_cp = getattr(data, "is_checkpoint", None)
+        if is_cp:
+            raise InvalidOperationError("free_checkpoints is incompatible with is_checkpoint=True")
+        mt = getattr(data, "type", None)
+        if mt is not None and mt.value not in FREE_CHECKPOINTS_SUPPORTED_TYPES:
+            raise InvalidOperationError(f"Metric type '{mt.value}' does not support free_checkpoints")
+
     async def _update_interval_binding(self, metric_id: int, row, data: MetricDefinitionUpdate) -> None:
         """Handle interval_binding changes — recreate metric_intervals."""
+        if data.interval_binding is not None:
+            self._validate_free_checkpoints(data)
+            # Also check is_checkpoint from existing row if not in update
+            if data.interval_binding == IntervalBinding.FREE_CHECKPOINTS and data.is_checkpoint is None:
+                if row.get("is_checkpoint"):
+                    raise InvalidOperationError("free_checkpoints is incompatible with is_checkpoint=True")
         if data.interval_binding is None and data.interval_ids is None:
             return
         old_binding = row.get("interval_binding", "all_day")
@@ -392,9 +413,9 @@ class MetricsService:
         if old_binding != "by_interval" and new_binding == "by_interval" and data.interval_ids:
             await self.cfg_repo.migrate_null_interval_entries(metric_id, data.interval_ids[0])
 
-        # When transitioning from by_interval to all_day, the metric becomes standalone
+        # When transitioning from by_interval to all_day/free_checkpoints, the metric becomes standalone
         # and needs a layout entry (category block or metric block).
-        if old_binding == "by_interval" and new_binding == "all_day":
+        if old_binding == "by_interval" and new_binding in ("all_day", IntervalBinding.FREE_CHECKPOINTS):
             layout = self._layout_repo()
             cat_id = row.get("category_id")
             if cat_id:

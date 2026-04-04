@@ -1,5 +1,7 @@
 """Domain constants — именованные константы вместо magic numbers."""
 
+from __future__ import annotations
+
 # --- Корреляционные пороги ---
 # pair_formatter.py, analytics.py — фильтрация пар по силе корреляции
 CORRELATION_THRESHOLD_STRONG: float = 0.7
@@ -38,3 +40,9 @@ MAX_USERNAME_LENGTH: int = 30
 # integrations.py — кол-во элементов в summary
 MAX_APPS_IN_SUMMARY: int = 7
 MAX_DOMAINS_IN_SUMMARY: int = 5
+
+# --- Free checkpoints ---
+# Типы метрик, поддерживающие свободные замеры (free_checkpoints)
+FREE_CHECKPOINTS_SUPPORTED_TYPES: frozenset[str] = frozenset({
+    "bool", "number", "scale", "duration", "time", "enum",
+})

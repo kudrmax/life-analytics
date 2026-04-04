@@ -44,6 +44,9 @@ class AutoSourceType(str, Enum):
     DELTA = "delta"
     TREND = "trend"
     RANGE = "range"
+    FREE_CP_MAX = "free_cp_max"
+    FREE_CP_MIN = "free_cp_min"
+    FREE_CP_RANGE = "free_cp_range"
 
 
 ROLLING_AVG_WINDOWS: list[int] = [3, 7, 14]
@@ -93,6 +96,9 @@ _DELTA_TYPES: frozenset[AutoSourceType] = frozenset({
     AutoSourceType.DELTA,
     AutoSourceType.TREND,
     AutoSourceType.RANGE,
+    AutoSourceType.FREE_CP_MAX,
+    AutoSourceType.FREE_CP_MIN,
+    AutoSourceType.FREE_CP_RANGE,
 })
 
 # Legacy auto source type values for backward compat parsing

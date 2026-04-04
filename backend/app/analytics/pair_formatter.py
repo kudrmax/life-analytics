@@ -248,6 +248,9 @@ class PairFormatter:
                 AutoSourceType.DELTA: "Δ",
                 AutoSourceType.TREND: "тренд",
                 AutoSourceType.RANGE: "размах",
+                AutoSourceType.FREE_CP_MAX: "максимум",
+                AutoSourceType.FREE_CP_MIN: "минимум",
+                AutoSourceType.FREE_CP_RANGE: "размах",
             }
             if sk.auto_type in tag_map:
                 return tag_map[sk.auto_type]
