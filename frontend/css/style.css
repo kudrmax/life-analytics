@@ -2912,26 +2912,95 @@ emoji-picker {
     margin-bottom: 6px;
 }
 
-.time-range-picker {
+/* Time Range Picker — vertical calendar timeline */
+.trp-timeline {
+    position: relative;
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    touch-action: none;
+}
+.trp-slot {
+    height: 28px;
+    display: flex;
+    align-items: stretch;
+    cursor: pointer;
+    user-select: none;
+}
+.trp-slot-hour {
+    border-top: 1px solid var(--border);
+}
+.trp-slot-label {
+    width: 44px;
+    font-size: 11px;
+    color: var(--text-dim);
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 12px;
+    justify-content: flex-end;
+    padding-right: 6px;
+    flex-shrink: 0;
 }
-
-.time-range-picker select {
+.trp-slot-area {
     flex: 1;
-    padding: 8px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text);
-    font-size: 14px;
 }
-
-.time-range-picker .time-range-separator {
+.trp-block {
+    position: absolute;
+    left: 48px; right: 4px;
+    background: var(--accent);
+    border-radius: 8px;
+    opacity: 0.85;
+    z-index: 2;
+    cursor: grab;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 28px;
+    transition: opacity 0.1s;
+}
+.trp-block.dragging { cursor: grabbing; opacity: 0.7; }
+.trp-handle {
+    height: 10px;
+    cursor: ns-resize;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.trp-handle::after {
+    content: '';
+    width: 24px; height: 3px;
+    background: rgba(255,255,255,0.5);
+    border-radius: 2px;
+}
+.trp-block-label {
+    color: #fff;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 2px 8px;
+    pointer-events: none;
+    text-align: center;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.trp-occupied-block {
+    position: absolute;
+    left: 48px; right: 4px;
+    background: var(--text-dim);
+    border-radius: 6px;
+    opacity: 0.2;
+    z-index: 1;
+    pointer-events: none;
+}
+.trp-selection-label {
+    text-align: center;
+    font-weight: 500;
+    padding: 8px;
+    color: var(--primary);
     font-size: 14px;
-    color: var(--text-dim);
 }
 
 .note-input-row {

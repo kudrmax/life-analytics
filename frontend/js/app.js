@@ -7674,87 +7674,256 @@ async function showEditMetricModal(metric) {
 }
 
 // ─── Time Range Picker (for free intervals) ───
-function _generateTimeOptions() {
-    const opts = [];
-    for (let h = 0; h < 24; h++) {
-        for (let m = 0; m < 60; m += 30) {
-            const val = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-            opts.push(val);
-        }
-    }
-    return opts;
-}
-
 function _findNextFreeSlot(existingEntries) {
     if (!existingEntries || existingEntries.length === 0) {
         const now = new Date();
         const h = now.getHours();
         const m = now.getMinutes() < 30 ? 0 : 30;
         const start = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-        const endH = m === 30 ? h + 1 : h;
-        const endM = m === 30 ? 0 : 30;
-        if (endH >= 24) return { start: '23:00', end: '23:30' };
-        return { start, end: `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}` };
+        const endH = h + 1;
+        const endM = m + 30;
+        const finalEndH = endM >= 60 ? endH + 1 : endH;
+        const finalEndM = endM >= 60 ? endM - 60 : endM;
+        if (finalEndH >= 24) return { start: '22:00', end: '23:30' };
+        return { start, end: `${String(finalEndH).padStart(2, '0')}:${String(finalEndM).padStart(2, '0')}` };
     }
-    // Find the last entry's end time and use it as start
     const sorted = [...existingEntries].sort((a, b) => (a.time_end || '').localeCompare(b.time_end || ''));
     const lastEnd = sorted[sorted.length - 1].time_end || '00:00';
     const [lh, lm] = lastEnd.split(':').map(Number);
-    const startH = lh + (lm >= 30 ? 1 : 0);
-    const startM = lm >= 30 ? 0 : 30;
-    if (startH >= 24) return { start: '23:00', end: '23:30' };
-    const endH2 = startM === 30 ? startH + 1 : startH;
-    const endM2 = startM === 30 ? 0 : 30;
-    const start = `${String(startH).padStart(2, '0')}:${String(startM).padStart(2, '0')}`;
-    const end = endH2 >= 24 ? '23:30' : `${String(endH2).padStart(2, '0')}:${String(endM2).padStart(2, '0')}`;
-    return { start, end };
+    const si = lh * 2 + (lm >= 30 ? 1 : 0);
+    const ei = Math.min(si + 3, 47); // 1.5h = 3 slots
+    if (si >= 47) return { start: '22:00', end: '23:30' };
+    const sh = Math.floor(si / 2), sm = (si % 2) * 30;
+    const eh = Math.floor((ei + 1) / 2), em = ((ei + 1) % 2) * 30;
+    return {
+        start: `${String(sh).padStart(2, '0')}:${String(sm).padStart(2, '0')}`,
+        end: `${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}`,
+    };
 }
 
 function showTimeRangePicker(existingEntries, callback, initialStart, initialEnd) {
-    const timeOpts = _generateTimeOptions();
+    const SLOT_H = 28;
+    const TOTAL_SLOTS = 48;
+    const DEFAULT_SLOTS = 3; // 1.5h
+
+    function timeToSlot(t) {
+        const [h, m] = t.split(':').map(Number);
+        return h * 2 + (m >= 30 ? 1 : 0);
+    }
+    function slotToTime(i) {
+        const h = Math.floor(i / 2), m = (i % 2) * 30;
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    }
+
+    // Occupied ranges as slot indices
+    const occupied = (existingEntries || [])
+        .filter(e => e.time_start && e.time_end)
+        .map(e => ({ s: timeToSlot(e.time_start), e: timeToSlot(e.time_end) }));
+
+    function isOccupied(slotIdx) {
+        return occupied.some(o => slotIdx >= o.s && slotIdx < o.e);
+    }
+    function rangeOverlapsOccupied(startSlot, endSlot) {
+        for (let i = startSlot; i < endSlot; i++) {
+            if (isOccupied(i)) return true;
+        }
+        return false;
+    }
+
+    // Initial selection
     const defaults = (initialStart && initialEnd)
         ? { start: initialStart, end: initialEnd }
         : _findNextFreeSlot(existingEntries);
+    let selStart = timeToSlot(defaults.start);
+    let selEnd = timeToSlot(defaults.end);
+    if (selEnd <= selStart) selEnd = Math.min(selStart + DEFAULT_SLOTS, TOTAL_SLOTS);
 
+    // Build DOM
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
 
-    const startOptions = timeOpts.map(t => `<option value="${t}" ${t === defaults.start ? 'selected' : ''}>${t}</option>`).join('');
-    const endOptions = timeOpts.map(t => `<option value="${t}" ${t === defaults.end ? 'selected' : ''}>${t}</option>`).join('');
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.style.maxWidth = '340px';
+    overlay.appendChild(modal);
 
-    overlay.innerHTML = `<div class="modal" style="max-width:340px">
-        <h3>${initialStart ? 'Изменить время' : 'Выберите интервал'}</h3>
-        <div class="time-range-picker">
-            <select id="trp-start">${startOptions}</select>
-            <span class="time-range-separator">→</span>
-            <select id="trp-end">${endOptions}</select>
-        </div>
-        <div id="trp-error" style="color:var(--red);font-size:13px;display:none;margin-bottom:8px"></div>
-        <div class="modal-actions">
-            <button class="btn-primary" id="trp-ok">OK</button>
-            <button class="btn-small" id="trp-cancel">Отмена</button>
-        </div>
-    </div>`;
+    const title = document.createElement('h3');
+    title.textContent = initialStart ? 'Изменить время' : 'Выберите интервал';
+    modal.appendChild(title);
+
+    const timeline = document.createElement('div');
+    timeline.className = 'trp-timeline';
+    modal.appendChild(timeline);
+
+    // Slots
+    for (let i = 0; i < TOTAL_SLOTS; i++) {
+        const slot = document.createElement('div');
+        slot.className = 'trp-slot';
+        slot.dataset.idx = i;
+        const isHour = i % 2 === 0;
+        if (isHour) slot.classList.add('trp-slot-hour');
+        const label = document.createElement('div');
+        label.className = 'trp-slot-label';
+        label.textContent = isHour ? slotToTime(i) : '';
+        slot.appendChild(label);
+        const area = document.createElement('div');
+        area.className = 'trp-slot-area';
+        slot.appendChild(area);
+        timeline.appendChild(slot);
+    }
+
+    // Occupied blocks
+    for (const o of occupied) {
+        const block = document.createElement('div');
+        block.className = 'trp-occupied-block';
+        block.style.top = (o.s * SLOT_H) + 'px';
+        block.style.height = ((o.e - o.s) * SLOT_H) + 'px';
+        timeline.appendChild(block);
+    }
+
+    // Selection block
+    const block = document.createElement('div');
+    block.className = 'trp-block';
+    timeline.appendChild(block);
+
+    const handleTop = document.createElement('div');
+    handleTop.className = 'trp-handle trp-handle-top';
+    block.appendChild(handleTop);
+
+    const blockLabel = document.createElement('div');
+    blockLabel.className = 'trp-block-label';
+    block.appendChild(blockLabel);
+
+    const handleBottom = document.createElement('div');
+    handleBottom.className = 'trp-handle trp-handle-bottom';
+    block.appendChild(handleBottom);
+
+    // Selection label
+    const selLabel = document.createElement('div');
+    selLabel.className = 'trp-selection-label';
+    modal.appendChild(selLabel);
+
+    // Actions
+    const actions = document.createElement('div');
+    actions.className = 'modal-actions';
+    actions.innerHTML = '<button class="btn-primary" id="trp-ok">OK</button><button class="btn-small" id="trp-cancel">Отмена</button>';
+    modal.appendChild(actions);
+
+    function updateBlock() {
+        block.style.top = (selStart * SLOT_H) + 'px';
+        block.style.height = ((selEnd - selStart) * SLOT_H) + 'px';
+        const lbl = `${slotToTime(selStart)} – ${slotToTime(selEnd)}`;
+        blockLabel.textContent = lbl;
+        selLabel.textContent = lbl;
+    }
+    updateBlock();
 
     document.body.appendChild(overlay);
 
-    const startSel = overlay.querySelector('#trp-start');
-    const endSel = overlay.querySelector('#trp-end');
-    const errorEl = overlay.querySelector('#trp-error');
+    // Auto-scroll to selection
+    const scrollTarget = Math.max(0, selStart * SLOT_H - 80);
+    timeline.scrollTop = scrollTarget;
 
-    overlay.querySelector('#trp-ok').addEventListener('click', () => {
-        const s = startSel.value;
-        const e = endSel.value;
-        if (e <= s) {
-            errorEl.textContent = 'Конец должен быть позже начала';
-            errorEl.style.display = '';
+    // --- Drag logic ---
+    let dragMode = null; // 'move' | 'resize-top' | 'resize-bottom'
+    let dragStartY = 0;
+    let dragOrigStart = 0;
+    let dragOrigEnd = 0;
+
+    function clampSlot(v) { return Math.max(0, Math.min(v, TOTAL_SLOTS)); }
+
+    function applyDrag(clientY) {
+        const rect = timeline.getBoundingClientRect();
+        const y = clientY - rect.top + timeline.scrollTop;
+        const slotAtY = Math.round(y / SLOT_H);
+
+        if (dragMode === 'resize-top') {
+            let newStart = clampSlot(slotAtY);
+            if (newStart >= selEnd) newStart = selEnd - 1;
+            if (newStart < 0) newStart = 0;
+            if (!rangeOverlapsOccupied(newStart, selEnd)) {
+                selStart = newStart;
+            }
+        } else if (dragMode === 'resize-bottom') {
+            let newEnd = clampSlot(slotAtY);
+            if (newEnd <= selStart) newEnd = selStart + 1;
+            if (newEnd > TOTAL_SLOTS) newEnd = TOTAL_SLOTS;
+            if (!rangeOverlapsOccupied(selStart, newEnd)) {
+                selEnd = newEnd;
+            }
+        } else if (dragMode === 'move') {
+            const deltaSlots = Math.round((clientY - dragStartY) / SLOT_H);
+            const len = dragOrigEnd - dragOrigStart;
+            let newStart = clampSlot(dragOrigStart + deltaSlots);
+            let newEnd = newStart + len;
+            if (newEnd > TOTAL_SLOTS) { newEnd = TOTAL_SLOTS; newStart = newEnd - len; }
+            if (newStart < 0) { newStart = 0; newEnd = len; }
+            if (!rangeOverlapsOccupied(newStart, newEnd)) {
+                selStart = newStart;
+                selEnd = newEnd;
+            }
+        }
+        updateBlock();
+    }
+
+    function onPointerDown(e) {
+        const target = e.target;
+        if (target.closest('.trp-handle-top')) {
+            dragMode = 'resize-top';
+        } else if (target.closest('.trp-handle-bottom')) {
+            dragMode = 'resize-bottom';
+        } else if (target.closest('.trp-block')) {
+            dragMode = 'move';
+        } else if (target.closest('.trp-slot')) {
+            // Click on empty slot — create block at that position
+            const idx = parseInt(target.closest('.trp-slot').dataset.idx);
+            if (isOccupied(idx)) return;
+            const newEnd = Math.min(idx + DEFAULT_SLOTS, TOTAL_SLOTS);
+            if (!rangeOverlapsOccupied(idx, newEnd)) {
+                selStart = idx;
+                selEnd = newEnd;
+                // Trim if overlaps occupied at the end
+                for (let i = selStart; i < selEnd; i++) {
+                    if (isOccupied(i)) { selEnd = i; break; }
+                }
+                if (selEnd <= selStart) selEnd = selStart + 1;
+                updateBlock();
+            }
+            return;
+        } else {
             return;
         }
-        overlay.remove();
-        callback(s, e);
-    });
+        e.preventDefault();
+        dragStartY = e.clientY;
+        dragOrigStart = selStart;
+        dragOrigEnd = selEnd;
+        block.classList.add('dragging');
+        timeline.setPointerCapture(e.pointerId);
+    }
 
-    overlay.querySelector('#trp-cancel').addEventListener('click', () => overlay.remove());
+    function onPointerMove(e) {
+        if (!dragMode) return;
+        e.preventDefault();
+        applyDrag(e.clientY);
+    }
+
+    function onPointerUp(e) {
+        if (!dragMode) return;
+        dragMode = null;
+        block.classList.remove('dragging');
+        timeline.releasePointerCapture(e.pointerId);
+    }
+
+    timeline.addEventListener('pointerdown', onPointerDown);
+    timeline.addEventListener('pointermove', onPointerMove);
+    timeline.addEventListener('pointerup', onPointerUp);
+
+    // OK / Cancel
+    actions.querySelector('#trp-ok').addEventListener('click', () => {
+        overlay.remove();
+        callback(slotToTime(selStart), slotToTime(selEnd));
+    });
+    actions.querySelector('#trp-cancel').addEventListener('click', () => overlay.remove());
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 }
 
