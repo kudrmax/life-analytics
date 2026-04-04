@@ -46,3 +46,9 @@ MAX_DOMAINS_IN_SUMMARY: int = 5
 FREE_CHECKPOINTS_SUPPORTED_TYPES: frozenset[str] = frozenset({
     "bool", "number", "scale", "duration", "time", "enum",
 })
+
+# --- Free intervals ---
+# Типы метрик, поддерживающие свободные интервалы (free_intervals)
+FREE_INTERVALS_SUPPORTED_TYPES: frozenset[str] = frozenset({
+    "bool", "number", "scale", "duration", "time", "enum",
+})

@@ -1,6 +1,6 @@
 """Repository for entries CRUD operations."""
 
-from datetime import date as date_type, datetime, timezone
+from datetime import date as date_type, datetime, time as time_type, timezone
 
 import asyncpg
 
@@ -70,9 +70,20 @@ class EntryRepository(BaseRepository):
         checkpoint_id: int | None = None,
         interval_id: int | None = None,
         is_free_checkpoint: bool = False,
+        is_free_interval: bool = False,
+        time_start: time_type | None = None,
+        time_end: time_type | None = None,
     ) -> bool:
         if is_free_checkpoint:
             return False
+        if is_free_interval:
+            existing = await self.conn.fetchval(
+                "SELECT id FROM entries "
+                "WHERE metric_id = $1 AND user_id = $2 AND date = $3 "
+                "AND time_start = $4 AND time_end = $5",
+                metric_id, self.user_id, d, time_start, time_end,
+            )
+            return existing is not None
         if checkpoint_id is not None:
             existing = await self.conn.fetchval(
                 "SELECT id FROM entries "
@@ -94,6 +105,32 @@ class EntryRepository(BaseRepository):
             )
         return existing is not None
 
+    async def check_time_overlap(
+        self,
+        metric_id: int,
+        d: date_type,
+        time_start: time_type,
+        time_end: time_type,
+        exclude_entry_id: int | None = None,
+    ) -> bool:
+        """Check if a new time range overlaps with existing free interval entries."""
+        if exclude_entry_id is not None:
+            existing = await self.conn.fetchval(
+                "SELECT id FROM entries "
+                "WHERE metric_id = $1 AND user_id = $2 AND date = $3 "
+                "AND is_free_interval AND time_start < $5 AND time_end > $4 "
+                "AND id != $6 LIMIT 1",
+                metric_id, self.user_id, d, time_start, time_end, exclude_entry_id,
+            )
+        else:
+            existing = await self.conn.fetchval(
+                "SELECT id FROM entries "
+                "WHERE metric_id = $1 AND user_id = $2 AND date = $3 "
+                "AND is_free_interval AND time_start < $5 AND time_end > $4 LIMIT 1",
+                metric_id, self.user_id, d, time_start, time_end,
+            )
+        return existing is not None
+
     async def create(
         self,
         metric_id: int,
@@ -101,11 +138,17 @@ class EntryRepository(BaseRepository):
         checkpoint_id: int | None = None,
         interval_id: int | None = None,
         is_free_checkpoint: bool = False,
+        is_free_interval: bool = False,
+        time_start: time_type | None = None,
+        time_end: time_type | None = None,
     ) -> int:
         return await self.conn.fetchval(
-            "INSERT INTO entries (metric_id, user_id, date, checkpoint_id, interval_id, is_free_checkpoint) "
-            "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
-            metric_id, self.user_id, d, checkpoint_id, interval_id, is_free_checkpoint,
+            "INSERT INTO entries "
+            "(metric_id, user_id, date, checkpoint_id, interval_id, "
+            "is_free_checkpoint, is_free_interval, time_start, time_end) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
+            metric_id, self.user_id, d, checkpoint_id, interval_id,
+            is_free_checkpoint, is_free_interval, time_start, time_end,
         )
 
     async def get_with_binding(self, entry_id: int) -> asyncpg.Record:

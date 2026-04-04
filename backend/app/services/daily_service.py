@@ -131,7 +131,7 @@ class DailyService:
                 "private": m_private, "hide_in_cards": m.get("hide_in_cards", False),
                 "is_checkpoint": m.get("is_checkpoint", False),
                 "interval_binding": m.get("interval_binding", "all_day"),
-                "entry": None, "checkpoints": None, "intervals": None, "free_entries": None,
+                "entry": None, "checkpoints": None, "intervals": None, "free_entries": None, "free_interval_entries": None,
                 "formula": _parse_formula(m.get("formula")) or None,
                 "result_type": m.get("result_type"), "provider": m.get("provider"),
                 "metric_key": m.get("metric_key"), "value_type": m.get("value_type"),
@@ -157,11 +157,13 @@ class DailyService:
 
             if m.get("interval_binding") == IntervalBinding.FREE_CHECKPOINTS:
                 self._fill_free_checkpoints(item, m, data["entries_by_metric"].get(mid, []), data)
+            elif m.get("interval_binding") == IntervalBinding.FREE_INTERVALS:
+                self._fill_free_intervals(item, m, data["entries_by_metric"].get(mid, []), data)
             elif cp_slots or cp_extra:
                 self._fill_checkpoints(item, m, data["entries_by_metric"].get(mid, []), cp_slots, cp_extra, data)
-            if iv_slots or iv_extra:
+            if m.get("interval_binding") not in (IntervalBinding.FREE_CHECKPOINTS, IntervalBinding.FREE_INTERVALS) and (iv_slots or iv_extra):
                 self._fill_intervals(item, m, data["entries_by_metric"].get(mid, []), iv_slots, iv_extra, data)
-            if m.get("interval_binding") != IntervalBinding.FREE_CHECKPOINTS and not cp_slots and not cp_extra and not iv_slots and not iv_extra:
+            if m.get("interval_binding") not in (IntervalBinding.FREE_CHECKPOINTS, IntervalBinding.FREE_INTERVALS) and not cp_slots and not cp_extra and not iv_slots and not iv_extra:
                 self._fill_single(item, m, data["entries_by_metric"].get(mid, []), data)
             result.append(item)
         return result
@@ -233,6 +235,37 @@ class DailyService:
                 fe["scale_step"] = sc["scale_step"]
             items.append(fe)
         item["free_entries"] = items
+
+    def _fill_free_intervals(self, item: dict, m: dict, entries: list, data: dict) -> None:
+        """Fill free_interval_entries list for free_intervals metrics."""
+        mid = m["id"]
+        free = sorted(
+            [e for e in entries if e.get("is_free_interval")],
+            key=lambda e: e["time_start"],
+        )
+        items: list[dict] = []
+        for e in free:
+            v = data["values_map"].get(e["id"])
+            ts = e["time_start"]
+            te = e["time_end"]
+            fe: dict = {
+                "id": e["id"],
+                "time_start": ts.strftime("%H:%M") if ts else None,
+                "time_end": te.strftime("%H:%M") if te else None,
+                "value": v,
+                "display_value": format_display_value(
+                    v, m["type"], m.get("result_type"),
+                    data["enum_options_by_metric"].get(mid),
+                    scale_labels=item.get("scale_labels"),
+                ),
+            }
+            sc = data["scale_context_map"].get(e["id"])
+            if sc:
+                fe["scale_min"] = sc["scale_min"]
+                fe["scale_max"] = sc["scale_max"]
+                fe["scale_step"] = sc["scale_step"]
+            items.append(fe)
+        item["free_interval_entries"] = items
 
     def _fill_single(self, item: dict, m: dict, entries: list, data: dict) -> None:
         mid = m["id"]

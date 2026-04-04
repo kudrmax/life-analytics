@@ -28,6 +28,8 @@ def extract_dep_value(item: dict):
     """Extract dependency value from a daily item for condition evaluation."""
     if item.get("free_entries"):
         return item["free_entries"][-1]["value"]
+    if item.get("free_interval_entries"):
+        return item["free_interval_entries"][-1]["value"]
     if item.get("checkpoints"):
         for cp in item["checkpoints"]:
             if cp.get("entry") is not None:
@@ -134,6 +136,11 @@ def compute_formulas(result: list[dict], metrics_by_id: dict) -> None:
                     for cv in [convert_metric_value(fe["value"], mt, m["scale_min"], m["scale_max"])]
                     if cv is not None]
             numeric_by_id[item["metric_id"]] = (sum(vals) / len(vals)) if vals else None
+        elif item.get("free_interval_entries"):
+            vals = [cv for fe in item["free_interval_entries"]
+                    for cv in [convert_metric_value(fe["value"], mt, m["scale_min"], m["scale_max"])]
+                    if cv is not None]
+            numeric_by_id[item["metric_id"]] = (sum(vals) / len(vals)) if vals else None
         elif item.get("checkpoints"):
             vals = [cv for cp in item["checkpoints"] if cp["entry"] is not None
                     for cv in [convert_metric_value(cp["entry"]["value"], mt, m["scale_min"], m["scale_max"])]
@@ -182,6 +189,9 @@ def build_auto_metrics(
             if item.get("free_entries"):
                 vals = [fe["value"] for fe in item["free_entries"]]
                 nz = any(v != 0 for v in vals) if vals else False
+            elif item.get("free_interval_entries"):
+                vals = [fe["value"] for fe in item["free_interval_entries"]]
+                nz = any(v != 0 for v in vals) if vals else False
             elif item.get("checkpoints"):
                 vals = [cp["entry"]["value"] for cp in item["checkpoints"] if cp["entry"] is not None]
                 nz = any(v != 0 for v in vals) if vals else False
@@ -215,6 +225,10 @@ def calculate_progress(result: list[dict]) -> dict:
         if item.get("free_entries") is not None:
             total += 1
             if len(item["free_entries"]) > 0:
+                filled += 1
+        elif item.get("free_interval_entries") is not None:
+            total += 1
+            if len(item["free_interval_entries"]) > 0:
                 filled += 1
         elif item.get("checkpoints"):
             for cp in item["checkpoints"]:

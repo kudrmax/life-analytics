@@ -2,7 +2,7 @@
 
 import csv
 import json
-from datetime import date as date_type
+from datetime import date as date_type, time as time_type
 from io import StringIO
 
 from app.domain.enums import MetricType
@@ -71,8 +71,16 @@ class EntryImporter:
                 is_free_cp = row.get('is_free_checkpoint', '') == '1'
                 recorded_at_csv = row.get('recorded_at', '') or None
 
+                is_free_iv = row.get('is_free_interval', '') == '1'
+                time_start = self._parse_time_field(row.get('time_start', ''))
+                time_end = self._parse_time_field(row.get('time_end', ''))
+
                 if await self.repo.check_entry_duplicate(
-                    metric_id, d, checkpoint_id, interval_id, is_free_checkpoint=is_free_cp,
+                    metric_id, d, checkpoint_id, interval_id,
+                    is_free_checkpoint=is_free_cp,
+                    is_free_interval=is_free_iv,
+                    time_start=time_start,
+                    time_end=time_end,
                 ):
                     skipped += 1
                     continue
@@ -89,6 +97,9 @@ class EntryImporter:
                         metric_id, d, checkpoint_id, interval_id,
                         is_free_checkpoint=is_free_cp,
                         recorded_at=recorded_at_csv,
+                        is_free_interval=is_free_iv,
+                        time_start=time_start,
+                        time_end=time_end,
                     )
                     await self.entry_repo.insert_value(entry_id, value, mt, entry_date=d, metric_id=metric_id)
                 imported += 1
@@ -168,6 +179,18 @@ class EntryImporter:
         except (ValueError, TypeError):
             pass
         return None, None
+
+    @staticmethod
+    def _parse_time_field(raw: str) -> time_type | None:
+        """Parse 'HH:MM' string into time object. Returns None for empty/invalid."""
+        raw = (raw or '').strip()
+        if not raw:
+            return None
+        try:
+            parts = raw.split(':')
+            return time_type(int(parts[0]), int(parts[1]))
+        except (ValueError, TypeError, IndexError):
+            return None
 
     async def _coerce_value(self, value, mt: str, metric_id: int):
         if mt == MetricType.enum:

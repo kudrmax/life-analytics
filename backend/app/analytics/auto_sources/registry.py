@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date as date_type
 
+from statistics import mean as _mean
+
 from app.analytics.time_series import TimeSeriesTransform
 from app.source_key import AutoSourceType, STREAK_TYPES
 
@@ -29,7 +31,8 @@ class AutoSourceInput:
     target_value: bool | None = None  # for streak: True=streak_true, False=streak_false
     start_slot_data: dict[str, float] | None = None  # for delta: start checkpoint values
     end_slot_data: dict[str, float] | None = None  # for delta: end checkpoint values
-    raw_data: dict[str, list[float]] | None = None  # for free_cp_*: date → list of values
+    raw_data: dict[str, list[float]] | None = None  # for free_cp_*/free_iv_*: date → list of values
+    duration_data: dict[str, list[float]] | None = None  # for free_iv_*_dur: date → list of durations (minutes)
 
 
 def compute_auto_source(
@@ -62,6 +65,14 @@ def compute_auto_source(
         return _compute_free_cp_agg(auto_type, inp)
     if auto_type == AutoSourceType.FREE_CP_RANGE:
         return _compute_free_cp_range(inp)
+    if auto_type in (AutoSourceType.FREE_IV_MAX, AutoSourceType.FREE_IV_MIN):
+        return _compute_free_iv_agg(auto_type, inp)
+    if auto_type == AutoSourceType.FREE_IV_RANGE:
+        return _compute_free_iv_range(inp)
+    if auto_type == AutoSourceType.FREE_IV_COUNT:
+        return _compute_free_iv_count(inp)
+    if auto_type in (AutoSourceType.FREE_IV_AVG_DUR, AutoSourceType.FREE_IV_MAX_DUR, AutoSourceType.FREE_IV_MIN_DUR):
+        return _compute_free_iv_dur(auto_type, inp)
     if auto_type == AutoSourceType.ROLLING_AVG:
         return _compute_rolling_avg(inp)
     if auto_type in STREAK_TYPES:
@@ -187,3 +198,42 @@ def _compute_free_cp_range(inp: AutoSourceInput) -> dict[str, float]:
         for d, vals in inp.raw_data.items()
         if len(vals) >= 2
     }
+
+
+def _compute_free_iv_agg(auto_type: AutoSourceType, inp: AutoSourceInput) -> dict[str, float]:
+    """Max or min across free_interval entries per day."""
+    if not inp.raw_data:
+        return {}
+    agg_fn = max if auto_type == AutoSourceType.FREE_IV_MAX else min
+    return {d: agg_fn(vals) for d, vals in inp.raw_data.items() if vals}
+
+
+def _compute_free_iv_range(inp: AutoSourceInput) -> dict[str, float]:
+    """Range (max - min) across free_interval entries per day."""
+    if not inp.raw_data:
+        return {}
+    return {
+        d: max(vals) - min(vals)
+        for d, vals in inp.raw_data.items()
+        if len(vals) >= 2
+    }
+
+
+def _compute_free_iv_count(inp: AutoSourceInput) -> dict[str, float]:
+    """Count of free_interval entries per day."""
+    if not inp.raw_data:
+        return {}
+    return {d: float(len(vals)) for d, vals in inp.raw_data.items() if vals}
+
+
+def _compute_free_iv_dur(auto_type: AutoSourceType, inp: AutoSourceInput) -> dict[str, float]:
+    """Avg/max/min duration across free_interval entries per day."""
+    if not inp.duration_data:
+        return {}
+    if auto_type == AutoSourceType.FREE_IV_AVG_DUR:
+        return {d: _mean(durs) for d, durs in inp.duration_data.items() if durs}
+    if auto_type == AutoSourceType.FREE_IV_MAX_DUR:
+        return {d: max(durs) for d, durs in inp.duration_data.items() if durs}
+    if auto_type == AutoSourceType.FREE_IV_MIN_DUR:
+        return {d: min(durs) for d, durs in inp.duration_data.items() if durs}
+    return {}

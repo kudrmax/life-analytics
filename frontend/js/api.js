@@ -171,6 +171,11 @@ const api = {
         invalidateCache('/api/daily/', '/api/entries');
         return result;
     },
+    async updateEntryTimeRange(id, timeStart, timeEnd) {
+        const result = await this.request('PATCH', `/api/entries/${id}/time-range`, { time_start: timeStart, time_end: timeEnd });
+        invalidateCache('/api/daily/', '/api/entries');
+        return result;
+    },
 
     // Daily
     getDailySummary(date) {

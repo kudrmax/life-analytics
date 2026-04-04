@@ -2877,6 +2877,63 @@ emoji-picker {
     color: var(--red);
 }
 
+/* Free intervals */
+.free-interval-entries-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.free-interval-entry-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    background: var(--surface2);
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.free-interval-entry-item .time-range-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--primary);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.free-interval-entry-item .free-interval-value {
+    flex: 1;
+    font-weight: 500;
+}
+
+.free-interval-add-section {
+    margin-bottom: 6px;
+}
+
+.time-range-picker {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.time-range-picker select {
+    flex: 1;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 14px;
+}
+
+.time-range-picker .time-range-separator {
+    font-size: 14px;
+    color: var(--text-dim);
+}
+
 .note-input-row {
     display: flex;
     gap: 6px;

@@ -251,6 +251,13 @@ class PairFormatter:
                 AutoSourceType.FREE_CP_MAX: "максимум",
                 AutoSourceType.FREE_CP_MIN: "минимум",
                 AutoSourceType.FREE_CP_RANGE: "размах",
+                AutoSourceType.FREE_IV_MAX: "максимум",
+                AutoSourceType.FREE_IV_MIN: "минимум",
+                AutoSourceType.FREE_IV_RANGE: "размах",
+                AutoSourceType.FREE_IV_COUNT: "кол-во записей",
+                AutoSourceType.FREE_IV_AVG_DUR: "ср. длительность",
+                AutoSourceType.FREE_IV_MAX_DUR: "макс. длительность",
+                AutoSourceType.FREE_IV_MIN_DUR: "мин. длительность",
             }
             if sk.auto_type in tag_map:
                 return tag_map[sk.auto_type]

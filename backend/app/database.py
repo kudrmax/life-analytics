@@ -115,7 +115,8 @@ async def _init_db_schema(conn):
         )
     """)
 
-    # Entries (spine table — one row per metric per user per date; free_checkpoint allows multiple)
+    # Entries (spine table — one row per metric per user per date;
+    # free_checkpoint/free_interval allows multiple)
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS entries (
             id SERIAL PRIMARY KEY,
@@ -124,6 +125,9 @@ async def _init_db_schema(conn):
             date DATE NOT NULL,
             recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             is_free_checkpoint BOOLEAN NOT NULL DEFAULT FALSE,
+            is_free_interval BOOLEAN NOT NULL DEFAULT FALSE,
+            time_start TIME,
+            time_end TIME,
             UNIQUE(metric_id, user_id, date)
         )
     """)

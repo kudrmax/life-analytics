@@ -47,6 +47,13 @@ class AutoSourceType(str, Enum):
     FREE_CP_MAX = "free_cp_max"
     FREE_CP_MIN = "free_cp_min"
     FREE_CP_RANGE = "free_cp_range"
+    FREE_IV_MAX = "free_iv_max"
+    FREE_IV_MIN = "free_iv_min"
+    FREE_IV_RANGE = "free_iv_range"
+    FREE_IV_COUNT = "free_iv_count"
+    FREE_IV_AVG_DUR = "free_iv_avg_dur"
+    FREE_IV_MAX_DUR = "free_iv_max_dur"
+    FREE_IV_MIN_DUR = "free_iv_min_dur"
 
 
 ROLLING_AVG_WINDOWS: list[int] = [3, 7, 14]
@@ -99,6 +106,9 @@ _DELTA_TYPES: frozenset[AutoSourceType] = frozenset({
     AutoSourceType.FREE_CP_MAX,
     AutoSourceType.FREE_CP_MIN,
     AutoSourceType.FREE_CP_RANGE,
+    AutoSourceType.FREE_IV_MAX,
+    AutoSourceType.FREE_IV_MIN,
+    AutoSourceType.FREE_IV_RANGE,
 })
 
 # Legacy auto source type values for backward compat parsing

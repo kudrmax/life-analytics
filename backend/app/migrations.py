@@ -865,6 +865,55 @@ MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_entries_free_checkpoint
             ON entries(metric_id, user_id, date) WHERE is_free_checkpoint;
     """),
+
+    (30, "add_free_interval_support", """
+        ALTER TABLE entries ADD COLUMN IF NOT EXISTS is_free_interval BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE entries ADD COLUMN IF NOT EXISTS time_start TIME;
+        ALTER TABLE entries ADD COLUMN IF NOT EXISTS time_end TIME;
+
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'entries_free_iv_exclusive') THEN
+                ALTER TABLE entries ADD CONSTRAINT entries_free_iv_exclusive
+                    CHECK (NOT (is_free_interval AND (
+                        checkpoint_id IS NOT NULL OR interval_id IS NOT NULL OR is_free_checkpoint
+                    )));
+            END IF;
+        END $$;
+
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'entries_free_iv_time_required') THEN
+                ALTER TABLE entries ADD CONSTRAINT entries_free_iv_time_required
+                    CHECK (NOT (is_free_interval AND (time_start IS NULL OR time_end IS NULL)));
+            END IF;
+        END $$;
+
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'entries_time_range_pair') THEN
+                ALTER TABLE entries ADD CONSTRAINT entries_time_range_pair
+                    CHECK ((time_start IS NULL) = (time_end IS NULL));
+            END IF;
+        END $$;
+
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'entries_time_range_order') THEN
+                ALTER TABLE entries ADD CONSTRAINT entries_time_range_order
+                    CHECK (time_end > time_start);
+            END IF;
+        END $$;
+
+        DROP INDEX IF EXISTS entries_no_binding_key;
+        CREATE UNIQUE INDEX IF NOT EXISTS entries_no_binding_key
+            ON entries(metric_id, user_id, date)
+            WHERE checkpoint_id IS NULL AND interval_id IS NULL
+              AND NOT is_free_checkpoint AND NOT is_free_interval;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS entries_time_range_key
+            ON entries(metric_id, user_id, date, time_start, time_end)
+            WHERE is_free_interval;
+
+        CREATE INDEX IF NOT EXISTS idx_entries_free_interval
+            ON entries(metric_id, user_id, date) WHERE is_free_interval;
+    """),
 ]
 
 

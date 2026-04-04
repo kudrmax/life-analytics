@@ -20,6 +20,7 @@ class IntervalBinding(str, Enum):
     ALL_DAY = "all_day"
     BY_INTERVAL = "by_interval"
     FREE_CHECKPOINTS = "free_checkpoints"
+    FREE_INTERVALS = "free_intervals"
 
 
 class PairStatus(str, Enum):

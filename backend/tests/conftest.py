@@ -242,6 +242,8 @@ async def create_entry(
     value: bool | int | str | list[int],
     checkpoint_id: int | None = None,
     interval_id: int | None = None,
+    time_start: str | None = None,
+    time_end: str | None = None,
 ) -> dict:
     """Create an entry via API, return full response dict."""
     payload: dict = {"metric_id": metric_id, "date": date, "value": value}
@@ -249,6 +251,10 @@ async def create_entry(
         payload["checkpoint_id"] = checkpoint_id
     if interval_id is not None:
         payload["interval_id"] = interval_id
+    if time_start is not None:
+        payload["time_start"] = time_start
+    if time_end is not None:
+        payload["time_end"] = time_end
     resp = await client.post("/api/entries", json=payload, headers=auth_headers(token))
     assert resp.status_code == 201, resp.text
     return resp.json()

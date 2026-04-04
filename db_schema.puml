@@ -68,6 +68,9 @@ entity "entries" as entries {
     * date : DATE
     * recorded_at : TIMESTAMPTZ
     * is_free_checkpoint : BOOLEAN
+    * is_free_interval : BOOLEAN
+    time_start : TIME
+    time_end : TIME
     checkpoint_id : INTEGER <<FK>>
     interval_id : INTEGER <<FK>>
     --

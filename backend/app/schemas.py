@@ -158,6 +158,8 @@ class EntryCreate(BaseModel):
     value: bool | str | int | list[int]  # list[int] for enum option IDs
     checkpoint_id: int | None = None
     interval_id: int | None = None
+    time_start: str | None = None  # "HH:MM"
+    time_end: str | None = None    # "HH:MM"
 
 
 class EntryUpdate(BaseModel):
@@ -166,6 +168,11 @@ class EntryUpdate(BaseModel):
 
 class EntryTimeUpdate(BaseModel):
     recorded_at: str  # HH:MM
+
+
+class EntryTimeRangeUpdate(BaseModel):
+    time_start: str  # HH:MM
+    time_end: str    # HH:MM
 
 
 class EntryOut(BaseModel):
@@ -179,6 +186,9 @@ class EntryOut(BaseModel):
     interval_id: int | None = None
     interval_label: str = ""
     is_free_checkpoint: bool = False
+    is_free_interval: bool = False
+    time_start: str | None = None
+    time_end: str | None = None
 
 
 # Auth schemas

@@ -10,7 +10,7 @@ from app.integrations.activitywatch.registry import ACTIVITYWATCH_METRICS, ACTIV
 from app.services.metric_builder import build_metric_out
 from app.repositories.metric_repository import MetricRepository
 from app.repositories.metric_config_repository import MetricConfigRepository
-from app.domain.constants import FREE_CHECKPOINTS_SUPPORTED_TYPES
+from app.domain.constants import FREE_CHECKPOINTS_SUPPORTED_TYPES, FREE_INTERVALS_SUPPORTED_TYPES
 from app.domain.enums import IntervalBinding, MetricType
 from app.schemas import MetricDefinitionCreate, MetricDefinitionUpdate, MetricDefinitionOut
 from app.services.metric_conversion_service import MetricConversionService, ALLOWED_CONVERSIONS
@@ -59,6 +59,7 @@ class MetricsService:
 
     async def create(self, data: MetricDefinitionCreate, privacy_mode: bool) -> MetricDefinitionOut:
         self._validate_free_checkpoints(data)
+        self._validate_free_intervals(data)
         await self._validate_integration(data)
         self._validate_enum(data)
         slug = await self._resolve_slug(data)
@@ -357,7 +358,7 @@ class MetricsService:
         interval_ids: list[int] | None,
     ) -> None:
         """Auto-create metric_intervals for interval-bound facts."""
-        if binding in ("all_day", IntervalBinding.FREE_CHECKPOINTS):
+        if binding in ("all_day", IntervalBinding.FREE_CHECKPOINTS, IntervalBinding.FREE_INTERVALS):
             return
         if not interval_ids:
             raise InvalidOperationError("interval_ids is required for by_interval binding")
@@ -385,14 +386,28 @@ class MetricsService:
         if mt is not None and mt.value not in FREE_CHECKPOINTS_SUPPORTED_TYPES:
             raise InvalidOperationError(f"Metric type '{mt.value}' does not support free_checkpoints")
 
+    @staticmethod
+    def _validate_free_intervals(data: MetricDefinitionCreate | MetricDefinitionUpdate) -> None:
+        """Validate free_intervals constraints."""
+        binding = getattr(data, "interval_binding", None)
+        if binding != IntervalBinding.FREE_INTERVALS:
+            return
+        is_cp = getattr(data, "is_checkpoint", None)
+        if is_cp:
+            raise InvalidOperationError("free_intervals is incompatible with is_checkpoint=True")
+        mt = getattr(data, "type", None)
+        if mt is not None and mt.value not in FREE_INTERVALS_SUPPORTED_TYPES:
+            raise InvalidOperationError(f"Metric type '{mt.value}' does not support free_intervals")
+
     async def _update_interval_binding(self, metric_id: int, row, data: MetricDefinitionUpdate) -> None:
         """Handle interval_binding changes — recreate metric_intervals."""
         if data.interval_binding is not None:
             self._validate_free_checkpoints(data)
+            self._validate_free_intervals(data)
             # Also check is_checkpoint from existing row if not in update
-            if data.interval_binding == IntervalBinding.FREE_CHECKPOINTS and data.is_checkpoint is None:
+            if data.interval_binding in (IntervalBinding.FREE_CHECKPOINTS, IntervalBinding.FREE_INTERVALS) and data.is_checkpoint is None:
                 if row.get("is_checkpoint"):
-                    raise InvalidOperationError("free_checkpoints is incompatible with is_checkpoint=True")
+                    raise InvalidOperationError(f"{data.interval_binding} is incompatible with is_checkpoint=True")
         if data.interval_binding is None and data.interval_ids is None:
             return
         old_binding = row.get("interval_binding", "all_day")
@@ -415,7 +430,7 @@ class MetricsService:
 
         # When transitioning from by_interval to all_day/free_checkpoints, the metric becomes standalone
         # and needs a layout entry (category block or metric block).
-        if old_binding == "by_interval" and new_binding in ("all_day", IntervalBinding.FREE_CHECKPOINTS):
+        if old_binding == "by_interval" and new_binding in ("all_day", IntervalBinding.FREE_CHECKPOINTS, IntervalBinding.FREE_INTERVALS):
             layout = self._layout_repo()
             cat_id = row.get("category_id")
             if cat_id:
