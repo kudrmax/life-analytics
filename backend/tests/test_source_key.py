@@ -47,7 +47,7 @@ class TestAutoSourceType(unittest.TestCase):
         self.assertEqual(AutoSourceType.ROLLING_AVG.value, "rolling_avg")
 
     def test_total_member_count(self) -> None:
-        self.assertEqual(len(AutoSourceType), 15)
+        self.assertEqual(len(AutoSourceType), 25)
 
     def test_is_str_subclass(self) -> None:
         self.assertIsInstance(AutoSourceType.NONZERO, str)
@@ -246,6 +246,34 @@ class TestSourceKeyToStr(unittest.TestCase):
         )
         self.assertEqual(sk.to_str(), "auto:rolling_avg:metric:1:opt:14")
 
+    def test_auto_free_iv_max_with_parent(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.FREE_IV_MAX, auto_parent_metric_id=50)
+        self.assertEqual(sk.to_str(), "auto:free_iv_max:metric:50")
+
+    def test_auto_free_iv_min_with_parent(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.FREE_IV_MIN, auto_parent_metric_id=50)
+        self.assertEqual(sk.to_str(), "auto:free_iv_min:metric:50")
+
+    def test_auto_free_iv_range_with_parent(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.FREE_IV_RANGE, auto_parent_metric_id=50)
+        self.assertEqual(sk.to_str(), "auto:free_iv_range:metric:50")
+
+    def test_auto_free_iv_count_with_parent(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.FREE_IV_COUNT, auto_parent_metric_id=50)
+        self.assertEqual(sk.to_str(), "auto:free_iv_count:metric:50")
+
+    def test_auto_free_iv_avg_dur_with_parent(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.FREE_IV_AVG_DUR, auto_parent_metric_id=50)
+        self.assertEqual(sk.to_str(), "auto:free_iv_avg_dur:metric:50")
+
+    def test_auto_free_iv_max_dur_with_parent(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.FREE_IV_MAX_DUR, auto_parent_metric_id=50)
+        self.assertEqual(sk.to_str(), "auto:free_iv_max_dur:metric:50")
+
+    def test_auto_free_iv_min_dur_with_parent(self) -> None:
+        sk = SourceKey(auto_type=AutoSourceType.FREE_IV_MIN_DUR, auto_parent_metric_id=50)
+        self.assertEqual(sk.to_str(), "auto:free_iv_min_dur:metric:50")
+
 
 class TestSourceKeyParse(unittest.TestCase):
     """Tests for SourceKey.parse() deserialization."""
@@ -366,6 +394,41 @@ class TestSourceKeyParse(unittest.TestCase):
         self.assertEqual(sk.auto_type, AutoSourceType.WEEK_NUMBER)
         self.assertIsNone(sk.auto_option_id)
 
+    def test_parse_auto_free_iv_max(self) -> None:
+        sk = SourceKey.parse("auto:free_iv_max:metric:50")
+        self.assertEqual(sk.auto_type, AutoSourceType.FREE_IV_MAX)
+        self.assertEqual(sk.auto_parent_metric_id, 50)
+
+    def test_parse_auto_free_iv_min(self) -> None:
+        sk = SourceKey.parse("auto:free_iv_min:metric:50")
+        self.assertEqual(sk.auto_type, AutoSourceType.FREE_IV_MIN)
+        self.assertEqual(sk.auto_parent_metric_id, 50)
+
+    def test_parse_auto_free_iv_range(self) -> None:
+        sk = SourceKey.parse("auto:free_iv_range:metric:50")
+        self.assertEqual(sk.auto_type, AutoSourceType.FREE_IV_RANGE)
+        self.assertEqual(sk.auto_parent_metric_id, 50)
+
+    def test_parse_auto_free_iv_count(self) -> None:
+        sk = SourceKey.parse("auto:free_iv_count:metric:50")
+        self.assertEqual(sk.auto_type, AutoSourceType.FREE_IV_COUNT)
+        self.assertEqual(sk.auto_parent_metric_id, 50)
+
+    def test_parse_auto_free_iv_avg_dur(self) -> None:
+        sk = SourceKey.parse("auto:free_iv_avg_dur:metric:50")
+        self.assertEqual(sk.auto_type, AutoSourceType.FREE_IV_AVG_DUR)
+        self.assertEqual(sk.auto_parent_metric_id, 50)
+
+    def test_parse_auto_free_iv_max_dur(self) -> None:
+        sk = SourceKey.parse("auto:free_iv_max_dur:metric:50")
+        self.assertEqual(sk.auto_type, AutoSourceType.FREE_IV_MAX_DUR)
+        self.assertEqual(sk.auto_parent_metric_id, 50)
+
+    def test_parse_auto_free_iv_min_dur(self) -> None:
+        sk = SourceKey.parse("auto:free_iv_min_dur:metric:50")
+        self.assertEqual(sk.auto_type, AutoSourceType.FREE_IV_MIN_DUR)
+        self.assertEqual(sk.auto_parent_metric_id, 50)
+
 
 class TestSourceKeyRoundTrip(unittest.TestCase):
     """Tests for to_str() -> parse() round-trip consistency."""
@@ -436,6 +499,41 @@ class TestSourceKeyRoundTrip(unittest.TestCase):
     def test_round_trip_auto_rolling_avg_window_14(self) -> None:
         self._assert_round_trip(
             SourceKey(auto_type=AutoSourceType.ROLLING_AVG, auto_parent_metric_id=5, auto_option_id=14)
+        )
+
+    def test_round_trip_auto_free_iv_max(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.FREE_IV_MAX, auto_parent_metric_id=50)
+        )
+
+    def test_round_trip_auto_free_iv_min(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.FREE_IV_MIN, auto_parent_metric_id=50)
+        )
+
+    def test_round_trip_auto_free_iv_range(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.FREE_IV_RANGE, auto_parent_metric_id=50)
+        )
+
+    def test_round_trip_auto_free_iv_count(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.FREE_IV_COUNT, auto_parent_metric_id=50)
+        )
+
+    def test_round_trip_auto_free_iv_avg_dur(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.FREE_IV_AVG_DUR, auto_parent_metric_id=50)
+        )
+
+    def test_round_trip_auto_free_iv_max_dur(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.FREE_IV_MAX_DUR, auto_parent_metric_id=50)
+        )
+
+    def test_round_trip_auto_free_iv_min_dur(self) -> None:
+        self._assert_round_trip(
+            SourceKey(auto_type=AutoSourceType.FREE_IV_MIN_DUR, auto_parent_metric_id=50)
         )
 
 

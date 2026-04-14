@@ -1026,7 +1026,7 @@ async function renderTodayForm(preserveScroll = false, direction = null) {
 
 function renderMetricInput(m, metricNameById) {
     const hicCls = m.hide_in_cards ? ' hide-in-cards' : '';
-    const roleCls = m.is_checkpoint ? ' metric-role-assessment' : (m.interval_binding === 'by_interval' ? ' metric-role-interval' : '');
+    const roleCls = m.is_checkpoint ? ' metric-role-assessment' : (m.interval_binding === 'by_interval' || m.interval_binding === 'free_intervals' ? ' metric-role-interval' : '');
     // Private metric blocked in privacy mode
     if (isMetricBlocked(m)) {
         return `<div class="metric-card${hicCls}${roleCls} metric-private">
@@ -1246,6 +1246,77 @@ function renderMetricInput(m, metricNameById) {
         </div>`;
     }
 
+    // Free checkpoints — multiple entries per day at arbitrary times
+    if (m.interval_binding === 'free_checkpoints') {
+        const freeEntries = m.free_entries || [];
+        const isFilled = freeEntries.length > 0;
+        let entriesHtml = '';
+        for (const fe of freeEntries) {
+            const time = fe.recorded_at ? new Date(fe.recorded_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+            const dv = fe.display_value !== null && fe.display_value !== undefined ? fe.display_value : fe.value;
+            entriesHtml += `<div class="free-entry-item" data-free-entry-id="${fe.id}">
+                <button type="button" class="time-picker-btn has-value free-entry-time-btn" data-action="pick-free-time" data-entry-id="${fe.id}">${time}</button>
+                <span class="free-entry-value">${dv}</span>
+                <button class="btn-icon-tiny btn-icon-danger" data-action="delete-free-entry" data-entry-id="${fe.id}" title="Удалить"><i data-lucide="trash-2"></i></button>
+            </div>`;
+        }
+        let addInput;
+        if (m.type === 'enum') addInput = renderEnum(null, m.enum_options, m.multi_select, false);
+        else if (m.type === 'time') addInput = renderTime(null);
+        else if (m.type === 'duration') addInput = renderDuration(null);
+        else if (m.type === 'number') addInput = renderNumber(null);
+        else if (m.type === 'scale') addInput = renderScale(null, m.scale_min, m.scale_max, m.scale_step, m.scale_labels);
+        else addInput = renderBoolean(null);
+
+        const descHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
+        return `<div class="metric-card${hicCls} metric-role-free-cp ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-free-checkpoints="true">
+            <div class="metric-header">
+                <label class="metric-label">${metricLabelHtml(m)}</label>
+                ${isFilled ? `<span class="note-count-badge">${freeEntries.length}</span>` : ''}
+            </div>
+            ${descHtml}
+            <div class="free-entries-list">${entriesHtml}</div>
+            <div class="metric-input">${addInput}</div>
+        </div>`;
+    }
+
+    // Free intervals — multiple entries per day with time ranges
+    if (m.interval_binding === 'free_intervals') {
+        const freeIntervalEntries = m.free_interval_entries || [];
+        const isFilled = freeIntervalEntries.length > 0;
+        let entriesHtml = '';
+        for (const fe of freeIntervalEntries) {
+            const timeLabel = (fe.time_start && fe.time_end) ? `${fe.time_start}–${fe.time_end}` : '';
+            const dv = fe.display_value !== null && fe.display_value !== undefined ? fe.display_value : fe.value;
+            entriesHtml += `<div class="free-interval-entry-item" data-free-interval-entry-id="${fe.id}" data-entry-id="${fe.id}">
+                <span class="time-range-label" data-action="edit-free-interval-time" data-entry-id="${fe.id}" data-time-start="${fe.time_start || ''}" data-time-end="${fe.time_end || ''}">${timeLabel}</span>
+                <span class="free-interval-value" data-action="edit-free-interval-value" data-entry-id="${fe.id}" title="Изменить">${dv}</span>
+                <button class="btn-icon-tiny btn-icon-danger" data-action="delete-free-interval-entry" data-entry-id="${fe.id}" title="Удалить"><i data-lucide="trash-2"></i></button>
+            </div>`;
+        }
+        let addInput;
+        if (m.type === 'enum') addInput = renderEnum(null, m.enum_options, m.multi_select, false);
+        else if (m.type === 'time') addInput = renderTime(null);
+        else if (m.type === 'duration') addInput = renderDuration(null);
+        else if (m.type === 'number') addInput = renderNumber(null);
+        else if (m.type === 'scale') addInput = renderScale(null, m.scale_min, m.scale_max, m.scale_step, m.scale_labels);
+        else addInput = renderBoolean(null);
+
+        const descHtml = m.description ? `<div class="metric-description">${_escapeHtml(m.description)}</div>` : '';
+        return `<div class="metric-card${hicCls} metric-role-interval ${isFilled ? 'filled' : ''}" data-metric-id="${m.metric_id}" data-metric-type="${m.type}" data-free-intervals="true">
+            <div class="metric-header">
+                <label class="metric-label">${metricLabelHtml(m)}</label>
+                ${isFilled ? `<span class="note-count-badge">${freeIntervalEntries.length}</span>` : ''}
+            </div>
+            ${descHtml}
+            <div class="free-interval-entries-list">${entriesHtml}</div>
+            <div class="free-interval-add-section">
+                <button type="button" class="btn-small" data-action="add-free-interval-entry" data-metric-id="${m.metric_id}"><i data-lucide="plus" style="width:14px;height:14px"></i> Добавить</button>
+            </div>
+            <div class="metric-input free-interval-input-area" style="display:none">${addInput}</div>
+        </div>`;
+    }
+
     // Single entry metric (no checkpoints/intervals)
     const entry = m.entry;
     const val = entry ? entry.value : null;
@@ -1346,6 +1417,7 @@ function renderEnum(selectedIds, options, multiSelect, hasEntry) {
 // ─── Event Handlers ───
 async function handleNumberChange(e) {
     const input = e.target;
+
     if (!input.classList.contains('number-value-input')) return;
 
     const card = input.closest('.metric-card');
@@ -1376,6 +1448,30 @@ async function handleNumberChange(e) {
     const parsed = parseInt(raw);
     if (isNaN(parsed)) {
         input.value = '';
+        return;
+    }
+
+    if (card.dataset.freeCheckpoints) {
+        api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: parsed })
+            .then(() => renderTodayForm(true))
+            .catch(err => { alert('Ошибка: ' + err.message); });
+        return;
+    }
+
+    if (card.dataset.freeIntervals) {
+        const editId = card.dataset.editingEntryId;
+        if (editId) {
+            api.updateEntry(parseInt(editId), { value: parsed })
+                .then(() => { delete card.dataset.editingEntryId; renderTodayForm(true); })
+                .catch(err => { alert('Ошибка: ' + err.message); });
+            return;
+        }
+        const ts = card.dataset.pendingTimeStart;
+        const te = card.dataset.pendingTimeEnd;
+        if (!ts || !te) return;
+        api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: parsed, time_start: ts, time_end: te })
+            .then(() => { delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd; renderTodayForm(true); })
+            .catch(err => { alert('Ошибка: ' + err.message); });
         return;
     }
 
@@ -1529,6 +1625,112 @@ async function handleFormClick(e) {
         return;
     }
 
+    // Free checkpoint: delete entry
+    if (btn.dataset.action === 'delete-free-entry') {
+        const entryId = parseInt(btn.dataset.entryId);
+        try {
+            await api.deleteEntry(entryId);
+            await renderTodayForm(true);
+        } catch (error) {
+            alert('Ошибка: ' + error.message);
+        }
+        return;
+    }
+
+    // Free checkpoint: edit time via clock picker
+    if (btn.dataset.action === 'pick-free-time') {
+        if (document.querySelector('.cp-overlay')) return;
+        const entryId = parseInt(btn.dataset.entryId);
+        const currentVal = btn.textContent.trim();
+        showClockPicker(currentVal, async (newVal) => {
+            try {
+                await api.updateEntryTime(entryId, newVal);
+                await renderTodayForm(true);
+            } catch (error) {
+                alert('Ошибка: ' + error.message);
+            }
+        });
+        return;
+    }
+
+    // Free interval: edit value — inline replace span with input
+    if (btn.dataset.action === 'edit-free-interval-value') {
+        const card = btn.closest('.metric-card');
+        if (!card) return;
+        card.dataset.editingEntryId = btn.dataset.entryId;
+        const inputArea = card.querySelector('.free-interval-input-area');
+        if (inputArea) inputArea.style.display = '';
+        return;
+    }
+
+    // Free interval: delete entry
+    if (btn.dataset.action === 'delete-free-interval-entry') {
+        const entryId = parseInt(btn.dataset.entryId);
+        try {
+            await api.deleteEntry(entryId);
+            await renderTodayForm(true);
+        } catch (error) {
+            alert('Ошибка: ' + error.message);
+        }
+        return;
+    }
+
+    // Free interval: edit time range
+    if (btn.dataset.action === 'edit-free-interval-time') {
+        if (document.querySelector('.modal-overlay')) return;
+        const entryId = parseInt(btn.dataset.entryId);
+        const curStart = btn.dataset.timeStart || '';
+        const curEnd = btn.dataset.timeEnd || '';
+        const card = btn.closest('.metric-card');
+        const existingEntries = [];
+        card.querySelectorAll('.free-interval-entry-item').forEach(item => {
+            const eid = parseInt(item.dataset.freeIntervalEntryId);
+            if (eid === entryId) return;
+            const lbl = item.querySelector('.time-range-label');
+            if (lbl) existingEntries.push({ time_start: lbl.dataset.timeStart, time_end: lbl.dataset.timeEnd });
+        });
+        showTimeRangePicker(existingEntries, async (newStart, newEnd) => {
+            try {
+                await api.updateEntryTimeRange(entryId, newStart, newEnd);
+                await renderTodayForm(true);
+            } catch (error) {
+                alert('Ошибка: ' + error.message);
+            }
+        }, curStart, curEnd);
+        return;
+    }
+
+    // Free interval: "+" add new entry — show time range picker then reveal value input
+    if (btn.dataset.action === 'add-free-interval-entry') {
+        if (document.querySelector('.modal-overlay')) return;
+        const card = btn.closest('.metric-card');
+        if (!card) return;
+        const existingEntries = [];
+        card.querySelectorAll('.free-interval-entry-item').forEach(item => {
+            const lbl = item.querySelector('.time-range-label');
+            if (lbl) existingEntries.push({ time_start: lbl.dataset.timeStart, time_end: lbl.dataset.timeEnd });
+        });
+        showTimeRangePicker(existingEntries, (timeStart, timeEnd) => {
+            // Store chosen time range on card, show input area
+            card.dataset.pendingTimeStart = timeStart;
+            card.dataset.pendingTimeEnd = timeEnd;
+            const inputArea = card.querySelector('.free-interval-input-area');
+            if (inputArea) {
+                inputArea.style.display = '';
+                // Add a label showing the chosen range
+                let lbl = inputArea.querySelector('.pending-range-label');
+                if (!lbl) {
+                    lbl = document.createElement('div');
+                    lbl.className = 'pending-range-label';
+                    lbl.style.cssText = 'font-size:12px;color:var(--primary);margin-bottom:4px;font-weight:500';
+                    inputArea.insertBefore(lbl, inputArea.firstChild);
+                }
+                lbl.textContent = `${timeStart} → ${timeEnd}`;
+            }
+        });
+        return;
+    }
+
     // Edit note — switch to inline editing
     if (btn.dataset.action === 'edit-note') {
         const noteId = btn.dataset.noteId;
@@ -1610,6 +1812,52 @@ async function handleFormClick(e) {
             renderTodayForm(true);
         });
         return;
+    }
+
+    // Free checkpoints: intercept value clicks → always create new entry
+    if (card.dataset.freeCheckpoints) {
+        let freeValue = null;
+        if (btn.classList.contains('scale-btn')) freeValue = parseInt(btn.dataset.value);
+        else if (btn.classList.contains('bool-btn')) freeValue = btn.dataset.value === 'true';
+        else if (btn.classList.contains('enum-btn')) {
+            const optId = parseInt(btn.dataset.optionId);
+            if (!isNaN(optId)) freeValue = [optId];
+        }
+        if (freeValue !== null) {
+            btn.disabled = true;
+            api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: freeValue })
+                .then(() => renderTodayForm(true))
+                .catch(err => { alert('Ошибка: ' + err.message); btn.disabled = false; });
+            return;
+        }
+    }
+
+    // Free intervals: intercept value clicks → create entry with pending time range
+    if (card.dataset.freeIntervals) {
+        let freeValue = null;
+        if (btn.classList.contains('scale-btn')) freeValue = parseInt(btn.dataset.value);
+        else if (btn.classList.contains('bool-btn')) freeValue = btn.dataset.value === 'true';
+        else if (btn.classList.contains('enum-btn')) {
+            const optId = parseInt(btn.dataset.optionId);
+            if (!isNaN(optId)) freeValue = [optId];
+        }
+        if (freeValue !== null) {
+            btn.disabled = true;
+            const editId = card.dataset.editingEntryId;
+            if (editId) {
+                api.updateEntry(parseInt(editId), { value: freeValue })
+                    .then(() => { delete card.dataset.editingEntryId; renderTodayForm(true); })
+                    .catch(err => { alert('Ошибка: ' + err.message); btn.disabled = false; });
+                return;
+            }
+            const timeStart = card.dataset.pendingTimeStart;
+            const timeEnd = card.dataset.pendingTimeEnd;
+            if (!timeStart || !timeEnd) return;
+            api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: freeValue, time_start: timeStart, time_end: timeEnd })
+                .then(() => { delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd; renderTodayForm(true); })
+                .catch(err => { alert('Ошибка: ' + err.message); btn.disabled = false; });
+            return;
+        }
     }
 
     // Boolean buttons
@@ -1712,6 +1960,24 @@ async function handleFormClick(e) {
         const container = bindingEl || card;
         const input = container.querySelector('.number-value-input');
         input.value = 0;
+        if (card.dataset.freeIntervals) {
+            const editId = card.dataset.editingEntryId;
+            if (editId) {
+                btn.remove();
+                api.updateEntry(parseInt(editId), { value: 0 })
+                    .then(() => { delete card.dataset.editingEntryId; renderTodayForm(true); })
+                    .catch(err => { alert('Ошибка: ' + err.message); });
+                return;
+            }
+            const ts = card.dataset.pendingTimeStart;
+            const te = card.dataset.pendingTimeEnd;
+            if (!ts || !te) return;
+            btn.remove();
+            api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: 0, time_start: ts, time_end: te })
+                .then(() => { delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd; renderTodayForm(true); })
+                .catch(err => { alert('Ошибка: ' + err.message); });
+            return;
+        }
         card.classList.add('filled');
         btn.remove();
         saveDaily(metricId, entryId, 0, bindingId, bindingType).then(({ entryId: newId }) => {
@@ -1736,6 +2002,26 @@ async function handleFormClick(e) {
         if (isNaN(currentVal)) currentVal = 0;
         const newVal = currentVal + (btn.dataset.action === 'increment' ? 1 : -1);
         input.value = newVal;
+        if (card.dataset.freeIntervals) {
+            const editId = card.dataset.editingEntryId;
+            if (editId) {
+                const zeroBtn = container.querySelector('.number-zero-btn');
+                if (zeroBtn) zeroBtn.remove();
+                api.updateEntry(parseInt(editId), { value: newVal })
+                    .then(() => { delete card.dataset.editingEntryId; renderTodayForm(true); })
+                    .catch(err => { alert('Ошибка: ' + err.message); });
+                return;
+            }
+            const ts = card.dataset.pendingTimeStart;
+            const te = card.dataset.pendingTimeEnd;
+            if (!ts || !te) return;
+            const zeroBtn = container.querySelector('.number-zero-btn');
+            if (zeroBtn) zeroBtn.remove();
+            api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: newVal, time_start: ts, time_end: te })
+                .then(() => { delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd; renderTodayForm(true); })
+                .catch(err => { alert('Ошибка: ' + err.message); });
+            return;
+        }
         card.classList.add('filled');
         const zeroBtn = container.querySelector('.number-zero-btn');
         if (zeroBtn) zeroBtn.remove();
@@ -1760,7 +2046,23 @@ async function handleFormClick(e) {
         const currentVal = timeTrigger.classList.contains('has-value') ? timeTrigger.textContent.trim() : '';
         showClockPicker(currentVal, async (newVal) => {
             try {
-                await saveDaily(metricId, entryId, newVal, bindingId, bindingType);
+                if (card.dataset.freeCheckpoints) {
+                    await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: newVal });
+                } else if (card.dataset.freeIntervals) {
+                    const editId = card.dataset.editingEntryId;
+                    if (editId) {
+                        await api.updateEntry(parseInt(editId), { value: newVal });
+                        delete card.dataset.editingEntryId;
+                    } else {
+                        const ts = card.dataset.pendingTimeStart;
+                        const te = card.dataset.pendingTimeEnd;
+                        if (!ts || !te) return;
+                        await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: newVal, time_start: ts, time_end: te });
+                        delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd;
+                    }
+                } else {
+                    await saveDaily(metricId, entryId, newVal, bindingId, bindingType);
+                }
                 await renderTodayForm(true);
             } catch (error) {
                 alert('Ошибка: ' + error.message);
@@ -1789,7 +2091,23 @@ async function handleFormClick(e) {
             try {
                 const parts = hhmmVal.split(':').map(Number);
                 const minutes = parts[0] * 60 + parts[1];
-                await saveDaily(metricId, entryId, minutes, bindingId, bindingType);
+                if (card.dataset.freeCheckpoints) {
+                    await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: minutes });
+                } else if (card.dataset.freeIntervals) {
+                    const editId = card.dataset.editingEntryId;
+                    if (editId) {
+                        await api.updateEntry(parseInt(editId), { value: minutes });
+                        delete card.dataset.editingEntryId;
+                    } else {
+                        const ts = card.dataset.pendingTimeStart;
+                        const te = card.dataset.pendingTimeEnd;
+                        if (!ts || !te) return;
+                        await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: minutes, time_start: ts, time_end: te });
+                        delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd;
+                    }
+                } else {
+                    await saveDaily(metricId, entryId, minutes, bindingId, bindingType);
+                }
                 await renderTodayForm(true);
             } catch (error) {
                 alert('Ошибка: ' + error.message);
@@ -2036,6 +2354,28 @@ async function showDayDetail(date) {
                 const time = n.created_at ? new Date(n.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
                 const val = blocked ? PRIVATE_MASK : `${_escapeHtml(n.text)} <span class="note-time">${time}</span>`;
                 html += `<div class="summary-row"><span class="summary-label">${metricLabelHtml(m)}</span><span class="summary-value">${val}</span></div>`;
+            }
+            continue;
+        }
+        // Free entries (free_checkpoints)
+        const _freeEntries = m.free_entries || [];
+        if (_freeEntries.length > 0) {
+            hasAny = true;
+            for (const fe of _freeEntries) {
+                const time = fe.recorded_at ? new Date(fe.recorded_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+                const dv = blocked ? PRIVATE_MASK : (fe.display_value ?? fe.value);
+                html += `<div class="summary-row"><span class="summary-label">${metricLabelHtml(m)}${time ? ' <span class="note-time">' + time + '</span>' : ''}</span><span class="summary-value">${dv}</span></div>`;
+            }
+            continue;
+        }
+        // Free interval entries (free_intervals)
+        const _freeIntervalEntries = m.free_interval_entries || [];
+        if (_freeIntervalEntries.length > 0) {
+            hasAny = true;
+            for (const fe of _freeIntervalEntries) {
+                const timeLabel = (fe.time_start && fe.time_end) ? `${fe.time_start}–${fe.time_end}` : '';
+                const dv = blocked ? PRIVATE_MASK : (fe.display_value ?? fe.value);
+                html += `<div class="summary-row"><span class="summary-label">${metricLabelHtml(m)}${timeLabel ? ' <span class="note-time">' + timeLabel + '</span>' : ''}</span><span class="summary-value">${dv}</span></div>`;
             }
             continue;
         }
@@ -6081,6 +6421,17 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <div class="role-choice-icon"><i data-lucide="pin"></i></div>
                             <span class="role-choice-title">В определённые интервалы</span>
                         </label>
+                        <label class="role-choice-card ${existingMetric?.interval_binding === 'free_checkpoints' ? 'selected' : ''}" data-interval="free_checkpoints">
+                            <input type="radio" name="nm-interval-binding" value="free_checkpoints" ${existingMetric?.interval_binding === 'free_checkpoints' ? 'checked' : ''}>
+                            <div class="role-choice-icon"><i data-lucide="clock"></i></div>
+                            <span class="role-choice-title">Свободные замеры</span>
+                        </label>
+                        <label class="role-choice-card ${existingMetric?.interval_binding === 'free_intervals' ? 'selected' : ''}" data-interval="free_intervals">
+                            <input type="radio" name="nm-interval-binding" value="free_intervals" ${existingMetric?.interval_binding === 'free_intervals' ? 'checked' : ''}>
+                            <div class="role-choice-icon"><i data-lucide="calendar-clock"></i></div>
+                            <span class="role-choice-title">Свободные интервалы</span>
+                            <span class="role-choice-desc">Несколько записей с временными отрезками</span>
+                        </label>
                     </div>
                     <div id="nm-interval-select" style="display:${existingMetric?.interval_binding === 'by_interval' ? '' : 'none'}">
                         <div id="nm-interval-list" class="checkbox-list"></div>
@@ -6266,6 +6617,17 @@ async function showMetricModal(mode = 'create', existingMetric = null) {
                             <input type="radio" name="nm-interval-binding" value="by_interval">
                             <div class="role-choice-icon"><i data-lucide="pin"></i></div>
                             <span class="role-choice-title">В определённые интервалы</span>
+                        </label>
+                        <label class="role-choice-card" data-interval="free_checkpoints">
+                            <input type="radio" name="nm-interval-binding" value="free_checkpoints">
+                            <div class="role-choice-icon"><i data-lucide="clock"></i></div>
+                            <span class="role-choice-title">Свободные замеры</span>
+                        </label>
+                        <label class="role-choice-card" data-interval="free_intervals">
+                            <input type="radio" name="nm-interval-binding" value="free_intervals">
+                            <div class="role-choice-icon"><i data-lucide="calendar-clock"></i></div>
+                            <span class="role-choice-title">Свободные интервалы</span>
+                            <span class="role-choice-desc">Несколько записей с временными отрезками</span>
                         </label>
                     </div>
                     <div id="nm-interval-select" style="display:none">
@@ -7361,6 +7723,278 @@ async function showAddMetricModal() {
 
 async function showEditMetricModal(metric) {
     await showMetricModal('edit', metric);
+}
+
+// ─── Time Range Picker (for free intervals) ───
+function _findNextFreeSlot(existingEntries) {
+    if (!existingEntries || existingEntries.length === 0) {
+        const now = new Date();
+        const h = now.getHours();
+        const m = now.getMinutes() < 30 ? 0 : 30;
+        const start = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+        const endH = h + 1;
+        const endM = m + 30;
+        const finalEndH = endM >= 60 ? endH + 1 : endH;
+        const finalEndM = endM >= 60 ? endM - 60 : endM;
+        if (finalEndH >= 24) return { start: '22:00', end: '23:30' };
+        return { start, end: `${String(finalEndH).padStart(2, '0')}:${String(finalEndM).padStart(2, '0')}` };
+    }
+    const sorted = [...existingEntries].sort((a, b) => (a.time_end || '').localeCompare(b.time_end || ''));
+    const lastEnd = sorted[sorted.length - 1].time_end || '00:00';
+    const [lh, lm] = lastEnd.split(':').map(Number);
+    const si = lh * 2 + (lm >= 30 ? 1 : 0);
+    const ei = Math.min(si + 3, 47); // 1.5h = 3 slots
+    if (si >= 47) return { start: '22:00', end: '23:30' };
+    const sh = Math.floor(si / 2), sm = (si % 2) * 30;
+    const eh = Math.floor((ei + 1) / 2), em = ((ei + 1) % 2) * 30;
+    return {
+        start: `${String(sh).padStart(2, '0')}:${String(sm).padStart(2, '0')}`,
+        end: `${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}`,
+    };
+}
+
+let _trpLastBlockSlots = 3; // remember last block length across picker invocations
+
+function showTimeRangePicker(existingEntries, callback, initialStart, initialEnd) {
+    const SLOT_H = 20;
+    const TOTAL_SLOTS = 48;
+
+    function timeToSlot(t) {
+        const [h, m] = t.split(':').map(Number);
+        return h * 2 + (m >= 30 ? 1 : 0);
+    }
+    function slotToTime(i) {
+        const h = Math.floor(i / 2), m = (i % 2) * 30;
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    }
+
+    // Occupied ranges as slot indices
+    const occupied = (existingEntries || [])
+        .filter(e => e.time_start && e.time_end)
+        .map(e => ({ s: timeToSlot(e.time_start), e: timeToSlot(e.time_end) }));
+
+    function isOccupied(slotIdx) {
+        return occupied.some(o => slotIdx >= o.s && slotIdx < o.e);
+    }
+    function rangeOverlapsOccupied(startSlot, endSlot) {
+        for (let i = startSlot; i < endSlot; i++) {
+            if (isOccupied(i)) return true;
+        }
+        return false;
+    }
+
+    // Initial selection
+    const defaults = (initialStart && initialEnd)
+        ? { start: initialStart, end: initialEnd }
+        : _findNextFreeSlot(existingEntries);
+    let selStart = timeToSlot(defaults.start);
+    let selEnd = timeToSlot(defaults.end);
+    if (selEnd <= selStart) selEnd = Math.min(selStart + _trpLastBlockSlots, TOTAL_SLOTS);
+
+    // If default overlaps occupied, find first free gap
+    if (rangeOverlapsOccupied(selStart, selEnd)) {
+        let found = false;
+        for (let i = 0; i <= TOTAL_SLOTS - _trpLastBlockSlots; i++) {
+            if (!rangeOverlapsOccupied(i, i + _trpLastBlockSlots)) {
+                selStart = i;
+                selEnd = i + _trpLastBlockSlots;
+                found = true;
+                break;
+            }
+        }
+        if (!found) { selStart = 0; selEnd = 1; }
+    }
+
+    // Build DOM
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.style.maxWidth = '340px';
+    overlay.appendChild(modal);
+
+    const title = document.createElement('h3');
+    title.textContent = initialStart ? 'Изменить время' : 'Выберите интервал';
+    modal.appendChild(title);
+
+    const timeline = document.createElement('div');
+    timeline.className = 'trp-timeline';
+    modal.appendChild(timeline);
+
+    // Slots
+    for (let i = 0; i < TOTAL_SLOTS; i++) {
+        const slot = document.createElement('div');
+        slot.className = 'trp-slot';
+        slot.dataset.idx = i;
+        const isHour = i % 2 === 0;
+        if (isHour) slot.classList.add('trp-slot-hour');
+        const label = document.createElement('div');
+        label.className = 'trp-slot-label';
+        label.textContent = isHour ? slotToTime(i) : '';
+        slot.appendChild(label);
+        const area = document.createElement('div');
+        area.className = 'trp-slot-area';
+        slot.appendChild(area);
+        timeline.appendChild(slot);
+    }
+
+    // Occupied blocks
+    for (const o of occupied) {
+        const block = document.createElement('div');
+        block.className = 'trp-occupied-block';
+        block.style.top = (o.s * SLOT_H) + 'px';
+        block.style.height = ((o.e - o.s) * SLOT_H) + 'px';
+        timeline.appendChild(block);
+    }
+
+    // Selection block
+    const block = document.createElement('div');
+    block.className = 'trp-block';
+    timeline.appendChild(block);
+
+    const handleTop = document.createElement('div');
+    handleTop.className = 'trp-handle trp-handle-top';
+    block.appendChild(handleTop);
+
+    const blockLabel = document.createElement('div');
+    blockLabel.className = 'trp-block-label';
+    block.appendChild(blockLabel);
+
+    const handleBottom = document.createElement('div');
+    handleBottom.className = 'trp-handle trp-handle-bottom';
+    block.appendChild(handleBottom);
+
+    // Selection label
+    const selLabel = document.createElement('div');
+    selLabel.className = 'trp-selection-label';
+    modal.appendChild(selLabel);
+
+    // Actions
+    const actions = document.createElement('div');
+    actions.className = 'modal-actions';
+    actions.innerHTML = '<button class="btn-primary" id="trp-ok">OK</button><button class="btn-small" id="trp-cancel">Отмена</button>';
+    modal.appendChild(actions);
+
+    function updateBlock() {
+        block.style.top = (selStart * SLOT_H) + 'px';
+        block.style.height = ((selEnd - selStart) * SLOT_H) + 'px';
+        const lbl = `${slotToTime(selStart)} – ${slotToTime(selEnd)}`;
+        blockLabel.textContent = lbl;
+        selLabel.textContent = lbl;
+    }
+    updateBlock();
+
+    document.body.appendChild(overlay);
+
+    // Auto-scroll to selection
+    const scrollTarget = Math.max(0, selStart * SLOT_H - 80);
+    timeline.scrollTop = scrollTarget;
+
+    // --- Drag logic ---
+    let dragMode = null; // 'move' | 'resize-top' | 'resize-bottom'
+    let dragStartY = 0;
+    let dragOrigStart = 0;
+    let dragOrigEnd = 0;
+
+    function clampSlot(v) { return Math.max(0, Math.min(v, TOTAL_SLOTS)); }
+
+    function applyDrag(clientY) {
+        const rect = timeline.getBoundingClientRect();
+        const y = clientY - rect.top + timeline.scrollTop;
+        const slotAtY = Math.round(y / SLOT_H);
+
+        if (dragMode === 'resize-top') {
+            let newStart = clampSlot(slotAtY);
+            if (newStart >= selEnd) newStart = selEnd - 1;
+            if (newStart < 0) newStart = 0;
+            if (!rangeOverlapsOccupied(newStart, selEnd)) {
+                selStart = newStart;
+            }
+        } else if (dragMode === 'resize-bottom') {
+            let newEnd = clampSlot(slotAtY);
+            if (newEnd <= selStart) newEnd = selStart + 1;
+            if (newEnd > TOTAL_SLOTS) newEnd = TOTAL_SLOTS;
+            if (!rangeOverlapsOccupied(selStart, newEnd)) {
+                selEnd = newEnd;
+            }
+        } else if (dragMode === 'move') {
+            const deltaSlots = Math.round((clientY - dragStartY) / SLOT_H);
+            const len = dragOrigEnd - dragOrigStart;
+            let newStart = clampSlot(dragOrigStart + deltaSlots);
+            let newEnd = newStart + len;
+            if (newEnd > TOTAL_SLOTS) { newEnd = TOTAL_SLOTS; newStart = newEnd - len; }
+            if (newStart < 0) { newStart = 0; newEnd = len; }
+            if (!rangeOverlapsOccupied(newStart, newEnd)) {
+                selStart = newStart;
+                selEnd = newEnd;
+            }
+        }
+        updateBlock();
+    }
+
+    function onPointerDown(e) {
+        const target = e.target;
+        if (target.closest('.trp-handle-top')) {
+            dragMode = 'resize-top';
+        } else if (target.closest('.trp-handle-bottom')) {
+            dragMode = 'resize-bottom';
+        } else if (target.closest('.trp-block')) {
+            dragMode = 'move';
+        } else if (target.closest('.trp-slot')) {
+            // Click on empty slot — create block at that position
+            const idx = parseInt(target.closest('.trp-slot').dataset.idx);
+            if (isOccupied(idx)) return;
+            const newEnd = Math.min(idx + _trpLastBlockSlots, TOTAL_SLOTS);
+            if (!rangeOverlapsOccupied(idx, newEnd)) {
+                selStart = idx;
+                selEnd = newEnd;
+                // Trim if overlaps occupied at the end
+                for (let i = selStart; i < selEnd; i++) {
+                    if (isOccupied(i)) { selEnd = i; break; }
+                }
+                if (selEnd <= selStart) selEnd = selStart + 1;
+                updateBlock();
+            }
+            return;
+        } else {
+            return;
+        }
+        e.preventDefault();
+        dragStartY = e.clientY;
+        dragOrigStart = selStart;
+        dragOrigEnd = selEnd;
+        block.classList.add('dragging');
+        timeline.setPointerCapture(e.pointerId);
+    }
+
+    function onPointerMove(e) {
+        if (!dragMode) return;
+        e.preventDefault();
+        applyDrag(e.clientY);
+    }
+
+    function onPointerUp(e) {
+        if (!dragMode) return;
+        const wasResize = dragMode === 'resize-top' || dragMode === 'resize-bottom';
+        dragMode = null;
+        block.classList.remove('dragging');
+        timeline.releasePointerCapture(e.pointerId);
+        // Remember block length after resize for next click
+        if (wasResize) _trpLastBlockSlots = selEnd - selStart;
+    }
+
+    timeline.addEventListener('pointerdown', onPointerDown);
+    timeline.addEventListener('pointermove', onPointerMove);
+    timeline.addEventListener('pointerup', onPointerUp);
+
+    // OK / Cancel
+    actions.querySelector('#trp-ok').addEventListener('click', () => {
+        overlay.remove();
+        callback(slotToTime(selStart), slotToTime(selEnd));
+    });
+    actions.querySelector('#trp-cancel').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 }
 
 // ─── Clock Picker ───

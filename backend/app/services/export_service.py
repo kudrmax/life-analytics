@@ -136,6 +136,8 @@ class ExportService:
             'date', 'metric_slug', 'value',
             'checkpoint_id', 'checkpoint_label',
             'interval_id', 'interval_start_label', 'interval_end_label',
+            'is_free_checkpoint', 'recorded_at',
+            'is_free_interval', 'time_start', 'time_end',
         ])
 
         entry_repo = EntryRepository(self.conn, self.repo.user_id)
@@ -151,6 +153,8 @@ class ExportService:
             if mt == MetricType.enum and isinstance(value, list):
                 id_map = enum_id_to_label.get(e["metric_id"], {})
                 value = [id_map.get(oid, str(oid)) for oid in value]
+            time_start = e.get("time_start")
+            time_end = e.get("time_end")
             writer.writerow([
                 str(e["date"]), slug, json.dumps(value),
                 e["checkpoint_id"] if e.get("checkpoint_id") is not None else '',
@@ -158,6 +162,11 @@ class ExportService:
                 e["interval_id"] if e.get("interval_id") is not None else '',
                 e.get("interval_start_label") or '',
                 e.get("interval_end_label") or '',
+                1 if e.get("is_free_checkpoint") else '',
+                str(e["recorded_at"]) if e.get("is_free_checkpoint") else '',
+                1 if e.get("is_free_interval") else '',
+                f"{time_start.hour:02d}:{time_start.minute:02d}" if time_start else '',
+                f"{time_end.hour:02d}:{time_end.minute:02d}" if time_end else '',
             ])
 
         zip_file.writestr('entries.csv', entries_csv.getvalue())

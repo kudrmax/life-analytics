@@ -67,11 +67,15 @@ entity "entries" as entries {
     * user_id : INTEGER <<FK>>
     * date : DATE
     * recorded_at : TIMESTAMPTZ
+    * is_free_checkpoint : BOOLEAN
+    * is_free_interval : BOOLEAN
+    time_start : TIME
+    time_end : TIME
     checkpoint_id : INTEGER <<FK>>
     interval_id : INTEGER <<FK>>
     --
     <<UNIQUE INDEX>> (metric_id, user_id, date)
-    WHERE checkpoint_id IS NULL AND interval_id IS NULL
+    WHERE checkpoint_id IS NULL AND interval_id IS NULL AND NOT is_free_checkpoint
     --
     <<UNIQUE INDEX>> (metric_id, user_id, date, checkpoint_id)
     WHERE checkpoint_id IS NOT NULL

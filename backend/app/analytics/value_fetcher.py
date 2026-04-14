@@ -96,6 +96,29 @@ class ValueFetcher:
                 result[d] = mean(vals) if vals else 0.0
         return result
 
+    async def values_list_by_date(
+        self,
+        metric_id: int,
+        metric_type: str,
+        start_date: date_type,
+        end_date: date_type,
+    ) -> dict[str, list[float]]:
+        """Get per-day list of numeric values WITHOUT aggregation.
+
+        Used by FREE_CP_MAX/MIN/RANGE auto-sources to compute max/min/range
+        from free_checkpoint entries.
+        """
+        value_table, extra_cols = ValueConverter.get_value_table(metric_type)
+        rows = await self._repo.fetch_entries_values_with_checkpoint(
+            metric_id, value_table, extra_cols, start_date, end_date,
+        )
+        day_values: dict[str, list[float]] = defaultdict(list)
+        for r in rows:
+            v = ValueConverter.extract_numeric(r, metric_type)
+            if v is not None:
+                day_values[str(r["date"])].append(v)
+        return dict(day_values)
+
     async def values_by_date_for_computed(
         self,
         formula: list,
@@ -145,6 +168,30 @@ class ValueFetcher:
                         result[d] = float(raw)
                 else:
                     result[d] = float(raw)
+        return result
+
+    async def time_ranges_by_date(
+        self,
+        metric_id: int,
+        start_date: date_type,
+        end_date: date_type,
+    ) -> dict[str, list[float]]:
+        """Load free interval durations in minutes, grouped by date."""
+        rows = await self._repo.conn.fetch(
+            "SELECT date, time_start, time_end FROM entries "
+            "WHERE metric_id = $1 AND user_id = $2 AND date >= $3 AND date <= $4 "
+            "AND is_free_interval = true AND time_start IS NOT NULL AND time_end IS NOT NULL",
+            metric_id, self._repo.user_id, start_date, end_date,
+        )
+        result: dict[str, list[float]] = {}
+        for r in rows:
+            d = str(r["date"])
+            ts = r["time_start"]
+            te = r["time_end"]
+            dur = (te.hour * 60 + te.minute) - (ts.hour * 60 + ts.minute)
+            if dur < 0:
+                dur += 24 * 60  # handle overnight intervals
+            result.setdefault(d, []).append(float(dur))
         return result
 
     async def values_by_date_for_enum_option(

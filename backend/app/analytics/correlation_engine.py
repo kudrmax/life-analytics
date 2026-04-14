@@ -125,6 +125,7 @@ class CorrelationEngine:
                 self._metrics_rows[i]["type"] = m["ic_value_type"] or MetricType.number
 
         metric_ids = [m["id"] for m in self._metrics_rows]
+        self._metrics_by_id: dict[int, dict] = {m["id"]: m for m in self._metrics_rows}
 
         # Load checkpoints and intervals
         checkpoint_rows = await repo.load_checkpoints_for_metrics(metric_ids)
@@ -308,6 +309,50 @@ class CorrelationEngine:
                         m["type"],
                     ))
 
+        # Free checkpoint auto-sources (max, min, range)
+        for m in self._metrics_rows:
+            mid = m["id"]
+            if m.get("interval_binding") != "free_checkpoints":
+                continue
+            if mid not in self._aggregate_indices:
+                continue
+            if m["type"] in self._CHECKPOINT_MINMAX_TYPES:
+                if _auto.free_cp_max:
+                    self._sources.append((SourceKey(auto_type=AutoSourceType.FREE_CP_MAX, auto_parent_metric_id=mid), m["type"]))
+                if _auto.free_cp_min:
+                    self._sources.append((SourceKey(auto_type=AutoSourceType.FREE_CP_MIN, auto_parent_metric_id=mid), m["type"]))
+            if m["type"] in self._DELTA_ELIGIBLE_TYPES:
+                if _auto.free_cp_range:
+                    self._sources.append((SourceKey(auto_type=AutoSourceType.FREE_CP_RANGE, auto_parent_metric_id=mid), m["type"]))
+
+        # Free interval auto-sources (max, min, range, count, duration-based)
+        for m in self._metrics_rows:
+            mid = m["id"]
+            if m.get("interval_binding") != "free_intervals":
+                continue
+            if mid not in self._aggregate_indices:
+                continue
+            # value-based: max, min
+            if m["type"] in self._CHECKPOINT_MINMAX_TYPES:
+                if _auto.free_iv_max:
+                    self._sources.append((SourceKey(auto_type=AutoSourceType.FREE_IV_MAX, auto_parent_metric_id=mid), m["type"]))
+                if _auto.free_iv_min:
+                    self._sources.append((SourceKey(auto_type=AutoSourceType.FREE_IV_MIN, auto_parent_metric_id=mid), m["type"]))
+            # range
+            if m["type"] in self._DELTA_ELIGIBLE_TYPES:
+                if _auto.free_iv_range:
+                    self._sources.append((SourceKey(auto_type=AutoSourceType.FREE_IV_RANGE, auto_parent_metric_id=mid), m["type"]))
+            # count
+            if _auto.free_iv_count:
+                self._sources.append((SourceKey(auto_type=AutoSourceType.FREE_IV_COUNT, auto_parent_metric_id=mid), MetricType.number))
+            # duration-based
+            if _auto.free_iv_avg_dur:
+                self._sources.append((SourceKey(auto_type=AutoSourceType.FREE_IV_AVG_DUR, auto_parent_metric_id=mid), MetricType.duration))
+            if _auto.free_iv_max_dur:
+                self._sources.append((SourceKey(auto_type=AutoSourceType.FREE_IV_MAX_DUR, auto_parent_metric_id=mid), MetricType.duration))
+            if _auto.free_iv_min_dur:
+                self._sources.append((SourceKey(auto_type=AutoSourceType.FREE_IV_MIN_DUR, auto_parent_metric_id=mid), MetricType.duration))
+
         if _auto.note_count:
             for m in self._metrics_rows:
                 if m["type"] == MetricType.text:
@@ -391,6 +436,40 @@ class CorrelationEngine:
                 end_data = self._get_checkpoint_source_data(sk.auto_parent_metric_id, end_checkpoint_id) if end_checkpoint_id else {}
                 inp = AutoSourceInput(all_dates=all_dates, start_slot_data=start_data, end_slot_data=end_data)
                 self._source_data[idx] = compute_auto_source(sk.auto_type, inp)
+                continue
+
+            # Free checkpoint auto-sources: load raw values per day
+            if sk.auto_type in (AutoSourceType.FREE_CP_MAX, AutoSourceType.FREE_CP_MIN, AutoSourceType.FREE_CP_RANGE):
+                mid = sk.auto_parent_metric_id
+                if mid is not None:
+                    mt = self._metrics_by_id[mid]["type"] if mid in self._metrics_by_id else MetricType.number
+                    raw = await self._fetcher.values_list_by_date(mid, mt, self._start_date, self._end_date)
+                    inp = AutoSourceInput(all_dates=all_dates, raw_data=raw)
+                    self._source_data[idx] = compute_auto_source(sk.auto_type, inp)
+                continue
+
+            # Free interval auto-sources: value-based and duration-based
+            if sk.auto_type in (
+                AutoSourceType.FREE_IV_MAX, AutoSourceType.FREE_IV_MIN,
+                AutoSourceType.FREE_IV_RANGE, AutoSourceType.FREE_IV_COUNT,
+                AutoSourceType.FREE_IV_AVG_DUR, AutoSourceType.FREE_IV_MAX_DUR,
+                AutoSourceType.FREE_IV_MIN_DUR,
+            ):
+                mid = sk.auto_parent_metric_id
+                if mid is not None:
+                    mt = self._metrics_by_id[mid]["type"] if mid in self._metrics_by_id else MetricType.number
+                    raw = await self._fetcher.values_list_by_date(mid, mt, self._start_date, self._end_date)
+                    dur_data: dict[str, list[float]] | None = None
+                    if sk.auto_type in (
+                        AutoSourceType.FREE_IV_AVG_DUR,
+                        AutoSourceType.FREE_IV_MAX_DUR,
+                        AutoSourceType.FREE_IV_MIN_DUR,
+                    ):
+                        dur_data = await self._fetcher.time_ranges_by_date(
+                            mid, self._start_date, self._end_date,
+                        )
+                    inp = AutoSourceInput(all_dates=all_dates, raw_data=raw, duration_data=dur_data)
+                    self._source_data[idx] = compute_auto_source(sk.auto_type, inp)
                 continue
 
             # Trend/Range: use ordered checkpoint data

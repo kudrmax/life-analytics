@@ -19,6 +19,8 @@ class IntervalBinding(str, Enum):
     """Привязка факта к времени (metric_definitions.interval_binding)."""
     ALL_DAY = "all_day"
     BY_INTERVAL = "by_interval"
+    FREE_CHECKPOINTS = "free_checkpoints"
+    FREE_INTERVALS = "free_intervals"
 
 
 class PairStatus(str, Enum):

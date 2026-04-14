@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 
 from app.database import get_db
-from app.schemas import EntryCreate, EntryUpdate, EntryOut
+from app.schemas import EntryCreate, EntryTimeUpdate, EntryTimeRangeUpdate, EntryUpdate, EntryOut
 from app.auth import get_current_user
 from app.repositories.entry_repository import EntryRepository
 from app.services.entries_service import EntriesService
@@ -25,12 +25,32 @@ async def list_entries(
 
 @router.post("", response_model=EntryOut, status_code=201)
 async def create_entry(data: EntryCreate, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return await _service(db, current_user).create(data.metric_id, data.date, data.value, data.checkpoint_id, data.interval_id)
+    return await _service(db, current_user).create(
+        data.metric_id, data.date, data.value,
+        data.checkpoint_id, data.interval_id,
+        data.time_start, data.time_end,
+    )
 
 
 @router.put("/{entry_id}", response_model=EntryOut)
 async def update_entry(entry_id: int, data: EntryUpdate, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     return await _service(db, current_user).update(entry_id, data.value)
+
+
+@router.patch("/{entry_id}/time", response_model=EntryOut)
+async def update_entry_time(
+    entry_id: int, data: EntryTimeUpdate,
+    db=Depends(get_db), current_user: dict = Depends(get_current_user),
+):
+    return await _service(db, current_user).update_time(entry_id, data.recorded_at)
+
+
+@router.patch("/{entry_id}/time-range", response_model=EntryOut)
+async def update_entry_time_range(
+    entry_id: int, data: EntryTimeRangeUpdate,
+    db=Depends(get_db), current_user: dict = Depends(get_current_user),
+):
+    return await _service(db, current_user).update_time_range(entry_id, data.time_start, data.time_end)
 
 
 @router.delete("/{entry_id}", status_code=204)
