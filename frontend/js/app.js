@@ -1286,9 +1286,9 @@ function renderMetricInput(m, metricNameById) {
         for (const fe of freeIntervalEntries) {
             const timeLabel = (fe.time_start && fe.time_end) ? `${fe.time_start}–${fe.time_end}` : '';
             const dv = fe.display_value !== null && fe.display_value !== undefined ? fe.display_value : fe.value;
-            entriesHtml += `<div class="free-interval-entry-item" data-free-interval-entry-id="${fe.id}">
+            entriesHtml += `<div class="free-interval-entry-item" data-free-interval-entry-id="${fe.id}" data-entry-id="${fe.id}">
                 <span class="time-range-label" data-action="edit-free-interval-time" data-entry-id="${fe.id}" data-time-start="${fe.time_start || ''}" data-time-end="${fe.time_end || ''}">${timeLabel}</span>
-                <span class="free-interval-value">${dv}</span>
+                <span class="free-interval-value" data-action="edit-free-interval-value" data-entry-id="${fe.id}" title="Изменить">${dv}</span>
                 <button class="btn-icon-tiny btn-icon-danger" data-action="delete-free-interval-entry" data-entry-id="${fe.id}" title="Удалить"><i data-lucide="trash-2"></i></button>
             </div>`;
         }
@@ -1457,6 +1457,13 @@ async function handleNumberChange(e) {
     }
 
     if (card.dataset.freeIntervals) {
+        const editId = card.dataset.editingEntryId;
+        if (editId) {
+            api.updateEntry(parseInt(editId), { value: parsed })
+                .then(() => { delete card.dataset.editingEntryId; renderTodayForm(true); })
+                .catch(err => { alert('Ошибка: ' + err.message); });
+            return;
+        }
         const ts = card.dataset.pendingTimeStart;
         const te = card.dataset.pendingTimeEnd;
         if (!ts || !te) return;
@@ -1644,6 +1651,16 @@ async function handleFormClick(e) {
         return;
     }
 
+    // Free interval: edit value — inline replace span with input
+    if (btn.dataset.action === 'edit-free-interval-value') {
+        const card = btn.closest('.metric-card');
+        if (!card) return;
+        card.dataset.editingEntryId = btn.dataset.entryId;
+        const inputArea = card.querySelector('.free-interval-input-area');
+        if (inputArea) inputArea.style.display = '';
+        return;
+    }
+
     // Free interval: delete entry
     if (btn.dataset.action === 'delete-free-interval-entry') {
         const entryId = parseInt(btn.dataset.entryId);
@@ -1815,12 +1832,6 @@ async function handleFormClick(e) {
 
     // Free intervals: intercept value clicks → create entry with pending time range
     if (card.dataset.freeIntervals) {
-        const timeStart = card.dataset.pendingTimeStart;
-        const timeEnd = card.dataset.pendingTimeEnd;
-        if (!timeStart || !timeEnd) {
-            // No time range picked yet — trigger picker first
-            return;
-        }
         let freeValue = null;
         if (btn.classList.contains('scale-btn')) freeValue = parseInt(btn.dataset.value);
         else if (btn.classList.contains('bool-btn')) freeValue = btn.dataset.value === 'true';
@@ -1830,6 +1841,16 @@ async function handleFormClick(e) {
         }
         if (freeValue !== null) {
             btn.disabled = true;
+            const editId = card.dataset.editingEntryId;
+            if (editId) {
+                api.updateEntry(parseInt(editId), { value: freeValue })
+                    .then(() => { delete card.dataset.editingEntryId; renderTodayForm(true); })
+                    .catch(err => { alert('Ошибка: ' + err.message); btn.disabled = false; });
+                return;
+            }
+            const timeStart = card.dataset.pendingTimeStart;
+            const timeEnd = card.dataset.pendingTimeEnd;
+            if (!timeStart || !timeEnd) return;
             api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: freeValue, time_start: timeStart, time_end: timeEnd })
                 .then(() => { delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd; renderTodayForm(true); })
                 .catch(err => { alert('Ошибка: ' + err.message); btn.disabled = false; });
@@ -1938,6 +1959,14 @@ async function handleFormClick(e) {
         const input = container.querySelector('.number-value-input');
         input.value = 0;
         if (card.dataset.freeIntervals) {
+            const editId = card.dataset.editingEntryId;
+            if (editId) {
+                btn.remove();
+                api.updateEntry(parseInt(editId), { value: 0 })
+                    .then(() => { delete card.dataset.editingEntryId; renderTodayForm(true); })
+                    .catch(err => { alert('Ошибка: ' + err.message); });
+                return;
+            }
             const ts = card.dataset.pendingTimeStart;
             const te = card.dataset.pendingTimeEnd;
             if (!ts || !te) return;
@@ -1972,6 +2001,15 @@ async function handleFormClick(e) {
         const newVal = currentVal + (btn.dataset.action === 'increment' ? 1 : -1);
         input.value = newVal;
         if (card.dataset.freeIntervals) {
+            const editId = card.dataset.editingEntryId;
+            if (editId) {
+                const zeroBtn = container.querySelector('.number-zero-btn');
+                if (zeroBtn) zeroBtn.remove();
+                api.updateEntry(parseInt(editId), { value: newVal })
+                    .then(() => { delete card.dataset.editingEntryId; renderTodayForm(true); })
+                    .catch(err => { alert('Ошибка: ' + err.message); });
+                return;
+            }
             const ts = card.dataset.pendingTimeStart;
             const te = card.dataset.pendingTimeEnd;
             if (!ts || !te) return;
@@ -2009,11 +2047,17 @@ async function handleFormClick(e) {
                 if (card.dataset.freeCheckpoints) {
                     await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: newVal });
                 } else if (card.dataset.freeIntervals) {
-                    const ts = card.dataset.pendingTimeStart;
-                    const te = card.dataset.pendingTimeEnd;
-                    if (!ts || !te) return;
-                    await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: newVal, time_start: ts, time_end: te });
-                    delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd;
+                    const editId = card.dataset.editingEntryId;
+                    if (editId) {
+                        await api.updateEntry(parseInt(editId), { value: newVal });
+                        delete card.dataset.editingEntryId;
+                    } else {
+                        const ts = card.dataset.pendingTimeStart;
+                        const te = card.dataset.pendingTimeEnd;
+                        if (!ts || !te) return;
+                        await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: newVal, time_start: ts, time_end: te });
+                        delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd;
+                    }
                 } else {
                     await saveDaily(metricId, entryId, newVal, bindingId, bindingType);
                 }
@@ -2048,11 +2092,17 @@ async function handleFormClick(e) {
                 if (card.dataset.freeCheckpoints) {
                     await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: minutes });
                 } else if (card.dataset.freeIntervals) {
-                    const ts = card.dataset.pendingTimeStart;
-                    const te = card.dataset.pendingTimeEnd;
-                    if (!ts || !te) return;
-                    await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: minutes, time_start: ts, time_end: te });
-                    delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd;
+                    const editId = card.dataset.editingEntryId;
+                    if (editId) {
+                        await api.updateEntry(parseInt(editId), { value: minutes });
+                        delete card.dataset.editingEntryId;
+                    } else {
+                        const ts = card.dataset.pendingTimeStart;
+                        const te = card.dataset.pendingTimeEnd;
+                        if (!ts || !te) return;
+                        await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: minutes, time_start: ts, time_end: te });
+                        delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd;
+                    }
                 } else {
                     await saveDaily(metricId, entryId, minutes, bindingId, bindingType);
                 }
@@ -7738,6 +7788,20 @@ function showTimeRangePicker(existingEntries, callback, initialStart, initialEnd
     let selStart = timeToSlot(defaults.start);
     let selEnd = timeToSlot(defaults.end);
     if (selEnd <= selStart) selEnd = Math.min(selStart + _trpLastBlockSlots, TOTAL_SLOTS);
+
+    // If default overlaps occupied, find first free gap
+    if (rangeOverlapsOccupied(selStart, selEnd)) {
+        let found = false;
+        for (let i = 0; i <= TOTAL_SLOTS - _trpLastBlockSlots; i++) {
+            if (!rangeOverlapsOccupied(i, i + _trpLastBlockSlots)) {
+                selStart = i;
+                selEnd = i + _trpLastBlockSlots;
+                found = true;
+                break;
+            }
+        }
+        if (!found) { selStart = 0; selEnd = 1; }
+    }
 
     // Build DOM
     const overlay = document.createElement('div');

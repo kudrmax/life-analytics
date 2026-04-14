@@ -2906,6 +2906,10 @@ emoji-picker {
 .free-interval-entry-item .free-interval-value {
     flex: 1;
     font-weight: 500;
+    cursor: pointer;
+}
+.free-interval-entry-item .free-interval-value:hover {
+    color: var(--primary);
 }
 
 .free-interval-add-section {
