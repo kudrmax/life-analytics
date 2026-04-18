@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up build-up down delete reset logs logs-backend test test-unit test-int test-user migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db lint-js
+.PHONY: help up build-up down delete reset logs logs-backend venv ensure-db test test-unit test-int test-user migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db lint-js
 
 .DEFAULT_GOAL := help
 
@@ -21,8 +21,9 @@ help: ## Показать эту справку
 	@echo "    make status          Статус контейнеров"
 	@echo ""
 	@echo "  Lint и тесты:"
+	@echo "    make venv            Создать/обновить виртуальное окружение"
 	@echo "    make lint-js         Проверить синтаксис JS файлов"
-	@echo "    make test            Запустить все тесты (нужен PostgreSQL)"
+	@echo "    make test            Запустить все тесты (БД поднимается автоматически)"
 	@echo "    make test-unit       Запустить только unit-тесты"
 	@echo "    make test-int        Запустить только интеграционные тесты"
 	@echo "    make test-user       Создать тестового пользователя с данными за 15 дней"
@@ -98,15 +99,35 @@ logs:
 logs-backend:
 	docker compose logs -f backend
 
+# ─── Virtual environment ───
+
+backend/venv/bin/activate: backend/requirements.txt backend/requirements-test.txt
+	python3 -m venv backend/venv
+	backend/venv/bin/pip install -r backend/requirements.txt -r backend/requirements-test.txt
+	@touch $@
+
+venv: backend/venv/bin/activate ## Создать/обновить виртуальное окружение
+
 # ─── Тесты ───
 
-test: ## Запустить все тесты (нужен запущенный PostgreSQL)
+ensure-db: ## Поднять контейнер БД если не запущен
+	@if ! docker compose ps db --format '{{.State}}' 2>/dev/null | grep -q running; then \
+		echo "Starting database..."; \
+		docker compose up -d db; \
+		echo "Waiting for PostgreSQL..."; \
+		for i in 1 2 3 4 5 6 7 8 9 10; do \
+			docker compose exec db pg_isready -U la_user -d life_analytics > /dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+	fi
+
+test: venv ensure-db ## Запустить все тесты
 	cd backend && source venv/bin/activate && python -m pytest -n auto $(ARGS)
 
-test-unit: ## Запустить только unit-тесты
+test-unit: venv ## Запустить только unit-тесты
 	cd backend && source venv/bin/activate && python -m pytest tests/ -k "unit" $(ARGS)
 
-test-int: ## Запустить только интеграционные (API) тесты
+test-int: venv ensure-db ## Запустить только интеграционные (API) тесты
 	cd backend && source venv/bin/activate && python -m pytest tests/ -k "not unit" -n auto $(ARGS)
 
 test-user: ## Создать тестового пользователя с данными за 15 дней
