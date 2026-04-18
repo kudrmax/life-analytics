@@ -1,11 +1,8 @@
 """Tests for free_intervals feature — multiple entries per day with time ranges."""
 
-import pytest
 from httpx import AsyncClient
 
 from tests.conftest import auth_headers, create_entry, create_metric
-
-pytestmark = pytest.mark.anyio
 
 
 # ---------------------------------------------------------------------------

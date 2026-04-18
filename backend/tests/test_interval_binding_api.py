@@ -1,7 +1,5 @@
 """API tests for interval binding feature."""
 
-import pytest
-
 from tests.conftest import auth_headers, create_entry, create_metric, create_checkpoint
 
 
@@ -12,7 +10,7 @@ async def _get_intervals(client, token: str) -> list[dict]:
     return resp.json()
 
 
-@pytest.mark.anyio
+
 class TestIntervalBindingCreate:
     async def test_create_all_day_default(self, client, user_a):
         metric = await create_metric(client, user_a["token"], name="Спорт", metric_type="bool")
@@ -58,7 +56,7 @@ class TestIntervalBindingCreate:
         assert len(data["intervals"]) == 2
 
 
-@pytest.mark.anyio
+
 class TestIntervalBindingUpdate:
     async def test_switch_to_by_interval(self, client, user_a):
         await create_checkpoint(client, user_a["token"], "Утро")
@@ -107,7 +105,7 @@ class TestIntervalBindingUpdate:
         assert data["interval_binding"] == "all_day"
 
 
-@pytest.mark.anyio
+
 class TestIntervalBindingValidation:
     async def test_by_interval_without_interval_ids_returns_400(self, client, user_a):
         await create_checkpoint(client, user_a["token"], "Утро")
@@ -121,7 +119,7 @@ class TestIntervalBindingValidation:
         assert resp.status_code == 400
 
 
-@pytest.mark.anyio
+
 class TestIntervalLabelsInMetricsApi:
     async def test_single_interval_label(self, client, user_a):
         await create_checkpoint(client, user_a["token"], "Утро")
@@ -198,7 +196,7 @@ class TestIntervalLabelsInMetricsApi:
         assert "Утро → День" not in labels
 
 
-@pytest.mark.anyio
+
 class TestIntervalDailyPage:
     async def test_daily_shows_interval_labels(self, client, user_a):
         await create_checkpoint(client, user_a["token"], "Утро")
@@ -244,7 +242,7 @@ class TestIntervalDailyPage:
         assert coffee[0]["interval_binding"] == "by_interval"
 
 
-@pytest.mark.anyio
+
 class TestMultiIntervalCreate:
     async def test_create_by_interval_with_multiple_intervals(self, client, user_a):
         await create_checkpoint(client, user_a["token"], "Утро")
@@ -288,7 +286,7 @@ class TestMultiIntervalCreate:
         assert len(data["intervals"]) == 2
 
 
-@pytest.mark.anyio
+
 class TestMultiIntervalUpdate:
     async def test_update_add_interval(self, client, user_a):
         await create_checkpoint(client, user_a["token"], "Утро")
@@ -370,7 +368,7 @@ class TestMultiIntervalUpdate:
         assert data["intervals"][0]["id"] == iv2["id"]
 
 
-@pytest.mark.anyio
+
 class TestMultiIntervalValidation:
     async def test_by_interval_empty_array_returns_400(self, client, user_a):
         await create_checkpoint(client, user_a["token"], "Утро")
@@ -432,7 +430,7 @@ class TestMultiIntervalValidation:
         assert len(data["intervals"]) == 1
 
 
-@pytest.mark.anyio
+
 class TestMultiIntervalDailyPage:
     async def test_daily_shows_only_selected_intervals(self, client, user_a):
         await create_checkpoint(client, user_a["token"], "Утро")
@@ -457,7 +455,7 @@ class TestMultiIntervalDailyPage:
         assert coffee[0]["intervals"][0]["label"] == "Утро → День"
 
 
-@pytest.mark.anyio
+
 class TestIntervalBindingChangeMigration:
     """Bug A + Bug B: entry visibility when interval_binding changes."""
 
@@ -572,7 +570,7 @@ class TestIntervalBindingChangeMigration:
         assert has_entry_in_intervals or has_single_entry, "Entry should be accessible after full cycle"
 
 
-@pytest.mark.anyio
+
 class TestDisabledIntervalsNoCrossMetricContamination:
     """Bug: disabled metric_intervals picked up entries from OTHER metrics.
 
@@ -684,7 +682,7 @@ class TestDisabledIntervalsNoCrossMetricContamination:
         )
 
 
-@pytest.mark.anyio
+
 class TestIntervalBindingUpdateNoMigration:
     async def test_update_category_does_not_remigrate_entries(self, client, user_a):
         """Bug: PATCH with same interval_ids on already-by_interval metric caused 500
@@ -736,7 +734,7 @@ class TestIntervalBindingUpdateNoMigration:
         assert resp.status_code == 200
 
 
-@pytest.mark.anyio
+
 class TestIntervalMetricInListRegression:
     """Факт-метрика с interval_ids корректно возвращается в GET /api/metrics.
 

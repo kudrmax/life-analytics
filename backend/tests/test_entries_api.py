@@ -344,10 +344,6 @@ class TestDataIsolation:
         assert entry["id"] in ids
 
 
-import pytest
-
-
-@pytest.mark.anyio
 class TestEntryExclusiveConstraint:
     """Entry не может иметь одновременно checkpoint_id и interval_id."""
 

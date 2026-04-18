@@ -1,11 +1,8 @@
 """API tests for checkpoint feature: checkpoint description and metric is_checkpoint."""
 
-import pytest
-
 from tests.conftest import auth_headers, create_metric, create_checkpoint
 
 
-@pytest.mark.anyio
 class TestCheckpointDescription:
     async def test_create_with_description(self, client, user_a):
         resp = await client.post(
@@ -63,7 +60,6 @@ class TestCheckpointDescription:
         assert any(cp["description"] == "Описание 1" for cp in checkpoints)
 
 
-@pytest.mark.anyio
 class TestMetricIsCheckpoint:
     async def test_create_with_is_checkpoint(self, client, user_a):
         resp = await client.post(

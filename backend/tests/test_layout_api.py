@@ -1,6 +1,5 @@
 """API tests for daily layout ordering."""
 
-import pytest
 from httpx import AsyncClient
 
 from tests.conftest import auth_headers, create_metric, create_checkpoint
@@ -18,7 +17,7 @@ async def _get_intervals(client: AsyncClient, token: str) -> list[dict]:
     return resp.json()
 
 
-@pytest.mark.anyio
+
 class TestLayoutSeedOnCheckpointCreate:
     """Creating checkpoints adds checkpoint + interval blocks to layout."""
 
@@ -44,7 +43,7 @@ class TestLayoutSeedOnCheckpointCreate:
         assert len(iv_blocks) == 2  # Утро→День, День→Вечер
 
 
-@pytest.mark.anyio
+
 class TestLayoutSeedOnMetricCreate:
     """Creating standalone metrics adds them to layout."""
 
@@ -87,7 +86,7 @@ class TestLayoutSeedOnMetricCreate:
         assert not any(b["id"] == metric_id for b in metric_blocks)
 
 
-@pytest.mark.anyio
+
 class TestLayoutOnDelete:
     """Deleting metrics/checkpoints removes them from layout."""
 
@@ -115,7 +114,7 @@ class TestLayoutOnDelete:
         assert not any(b["id"] == cp1["id"] and b["type"] == "checkpoint" for b in data_after["blocks"])
 
 
-@pytest.mark.anyio
+
 class TestLayoutBlockReorder:
     """POST /api/layout/blocks — reorder top-level blocks."""
 
@@ -186,7 +185,7 @@ class TestLayoutBlockReorder:
         assert resp.status_code == 200
 
 
-@pytest.mark.anyio
+
 class TestLayoutDailyPageRespected:
     """Daily page should render metrics in layout order."""
 
@@ -213,7 +212,7 @@ class TestLayoutDailyPageRespected:
             assert "block_id" in m
 
 
-@pytest.mark.anyio
+
 class TestLayoutInnerOrderPreservesCategory:
     """Inner order save only changes sort_order, never category_id."""
 
@@ -339,7 +338,7 @@ class TestLayoutInnerOrderPreservesCategory:
         assert found, "interval-bound metric not found in layout"
 
 
-@pytest.mark.anyio
+
 class TestLayoutDataIsolation:
     """Users cannot see or modify each other's layout."""
 
@@ -358,7 +357,7 @@ class TestLayoutDataIsolation:
         assert "B-Metric" not in a_labels
 
 
-@pytest.mark.anyio
+
 class TestLayoutEnsureMissingStandalone:
     """_ensure_layout adds missing standalone metrics to layout."""
 
@@ -401,7 +400,7 @@ class TestLayoutEnsureMissingStandalone:
         assert any(b["id"] == cat_id for b in cat_blocks)
 
 
-@pytest.mark.anyio
+
 class TestLayoutOnIntervalBindingChange:
     """Changing interval_binding from by_interval to all_day adds layout entry."""
 

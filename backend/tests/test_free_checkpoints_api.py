@@ -1,11 +1,8 @@
 """Tests for free_checkpoints feature — multiple entries per day at arbitrary times."""
 
-import pytest
 from httpx import AsyncClient
 
 from tests.conftest import auth_headers, create_entry, create_metric, register_user
-
-pytestmark = pytest.mark.anyio
 
 
 # ---------------------------------------------------------------------------
