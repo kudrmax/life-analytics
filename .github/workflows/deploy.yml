@@ -45,7 +45,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -r backend/requirements-test.txt
+        run: pip install backend/
       - name: Run tests
         working-directory: backend
         run: python -m pytest -n auto

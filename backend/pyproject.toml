@@ -1,3 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "life-analytics"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "asyncpg",
+    "pydantic",
+    "python-jose[cryptography]",
+    "bcrypt",
+    "python-multipart",
+    "todoist-api-python>=3.0.0",
+    "cryptography",
+    "httpx",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-xdist>=3.0",
+    "testcontainers[postgres]>=4.0",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
