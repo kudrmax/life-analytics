@@ -166,3 +166,6 @@ class EntriesService:
 
     async def delete(self, entry_id: int) -> None:
         await self.repo.delete(entry_id)
+
+    async def get_date_range(self) -> dict:
+        return await self.repo.get_date_range()

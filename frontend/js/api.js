@@ -146,6 +146,9 @@ const api = {
     },
 
     // Entries
+    getDateRange() {
+        return this.request('GET', '/api/entries/date-range');
+    },
     getEntries(date, metricId = null) {
         let q = `?date=${date}`;
         if (metricId) q += `&metric_id=${metricId}`;

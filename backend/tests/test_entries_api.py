@@ -368,3 +368,61 @@ class TestEntryExclusiveConstraint:
             headers=auth_headers(user_a["token"]),
         )
         assert resp.status_code in (400, 422), f"Expected 400/422, got {resp.status_code}"
+
+
+# ---------------------------------------------------------------------------
+# Date range
+# ---------------------------------------------------------------------------
+
+class TestDateRange:
+
+    async def test_date_range_empty(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        resp = await client.get(
+            "/api/entries/date-range",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["min_date"] is None
+        assert data["max_date"] is None
+
+    async def test_date_range_with_entries(
+        self, client: AsyncClient, user_a: dict,
+    ) -> None:
+        metric = await create_metric(
+            client, user_a["token"], name="DR", metric_type="bool",
+        )
+        await create_entry(client, user_a["token"], metric["id"], "2025-06-01", True)
+        await create_entry(client, user_a["token"], metric["id"], "2026-01-15", True)
+        await create_entry(client, user_a["token"], metric["id"], "2025-09-10", True)
+
+        resp = await client.get(
+            "/api/entries/date-range",
+            headers=auth_headers(user_a["token"]),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["min_date"] == "2025-06-01"
+        assert data["max_date"] == "2026-01-15"
+
+    async def test_date_range_isolation(
+        self, client: AsyncClient, user_a: dict, user_b: dict,
+    ) -> None:
+        metric_a = await create_metric(
+            client, user_a["token"], name="DR-A", metric_type="bool",
+        )
+        metric_b = await create_metric(
+            client, user_b["token"], name="DR-B", metric_type="bool",
+        )
+        await create_entry(client, user_a["token"], metric_a["id"], "2025-03-01", True)
+        await create_entry(client, user_b["token"], metric_b["id"], "2024-01-01", True)
+
+        resp = await client.get(
+            "/api/entries/date-range",
+            headers=auth_headers(user_a["token"]),
+        )
+        data = resp.json()
+        assert data["min_date"] == "2025-03-01"
+        assert data["max_date"] == "2025-03-01"

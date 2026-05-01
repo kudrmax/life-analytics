@@ -340,6 +340,15 @@ class EntryRepository(BaseRepository):
         )
         return row["value_type"] if row else "number"
 
+    async def get_date_range(self) -> dict[str, date_type | None]:
+        """Return min and max entry dates for the current user."""
+        row = await self.conn.fetchrow(
+            "SELECT MIN(date) AS min_date, MAX(date) AS max_date "
+            "FROM entries WHERE user_id = $1",
+            self.user_id,
+        )
+        return {"min_date": row["min_date"], "max_date": row["max_date"]}
+
     @staticmethod
     def _parse_time(value: str, entry_date: date_type | None) -> datetime:
         parts = value.split(":")

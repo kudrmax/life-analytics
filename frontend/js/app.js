@@ -2984,7 +2984,8 @@ async function renderAnalysis(container) {
     }
 
     const end = todayStr();
-    const start = daysAgo(30);
+    const range = await api.getDateRange();
+    const start = range.min_date || daysAgo(30);
 
     container.innerHTML = `
         <div class="stats-header">

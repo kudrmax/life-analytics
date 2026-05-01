@@ -13,6 +13,13 @@ def _service(db, user) -> EntriesService:
     return EntriesService(EntryRepository(db, user["id"]))
 
 
+@router.get("/date-range")
+async def get_date_range(
+    db=Depends(get_db), current_user: dict = Depends(get_current_user),
+):
+    return await _service(db, current_user).get_date_range()
+
+
 @router.get("", response_model=list[EntryOut])
 async def list_entries(
     date: str = Query(..., description="YYYY-MM-DD"),

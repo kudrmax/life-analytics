@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up build-up down delete reset logs logs-backend venv ensure-db test test-unit test-int test-user migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db lint-js
+.PHONY: help up build-up down delete reset logs logs-backend venv ensure-db test test-unit test-int test-user migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db lint-js setup
 
 .DEFAULT_GOAL := help
 
@@ -38,6 +38,9 @@ help: ## Показать эту справку
 	@echo "    make prod-logs       Логи production через SSH"
 	@echo "    make prod-status     Статус контейнеров на production"
 	@echo "    make prod-db         Подключиться к production БД"
+	@echo ""
+	@echo "  Настройка сервера:"
+	@echo "    make setup           Настроить файрвол (ufw: SSH + frontend)"
 	@echo ""
 	@echo "  Backup (нужен YADISK_TOKEN в .env):"
 	@echo "    make backup-up       Запустить сервис бэкапов"
@@ -173,6 +176,18 @@ prod-status:
 prod-db:
 	@test -n "$$VPS_HOST" || (echo "Error: VPS_HOST not set." && exit 1)
 	ssh -t root@$${VPS_HOST} "docker exec -it life-analytics-db-1 psql -U la_user -d life_analytics"
+
+# ─── Server setup ───
+
+setup: ## Настроить файрвол (ufw: разрешить SSH + frontend)
+	@echo "Настраиваю файрвол..."
+	ufw default deny incoming
+	ufw default allow outgoing
+	ufw allow 22/tcp
+	ufw allow 3000/tcp
+	ufw --force enable
+	ufw status verbose
+	@echo "Файрвол настроен!"
 
 # ─── Backup ───
 
