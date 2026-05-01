@@ -167,6 +167,10 @@ class CorrelationEngine:
             is_checkpoint = bool(m.get("is_checkpoint"))
             metric_checkpoints = self._checkpoints_by_metric.get(mid, [])
             metric_intervals = self._intervals_by_metric.get(mid, [])
+            binding = m.get("interval_binding", "all_day")
+            if binding in ("free_intervals", "free_checkpoints"):
+                metric_intervals = []
+                metric_checkpoints = []
             if mt == MetricType.enum:
                 opts = self._enum_opts_by_metric.get(mid, [])
                 for opt in opts:

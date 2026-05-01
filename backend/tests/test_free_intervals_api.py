@@ -1,5 +1,7 @@
 """Tests for free_intervals feature — multiple entries per day with time ranges."""
 
+import asyncio
+
 from httpx import AsyncClient
 
 from tests.conftest import auth_headers, create_entry, create_metric
@@ -313,3 +315,68 @@ class TestFreeIntervalDataIsolation:
             headers=auth_headers(user_b["token"]),
         )
         assert len(resp.json()) == 0
+
+
+# ---------------------------------------------------------------------------
+# Correlations
+# ---------------------------------------------------------------------------
+
+async def _wait_for_report(client: AsyncClient, token: str, max_wait: int = 200) -> dict:
+    for _ in range(max_wait):
+        resp = await client.get("/api/analytics/correlation-report", headers=auth_headers(token))
+        data = resp.json()
+        if data.get("report") is not None and data["report"]["status"] == "done":
+            return data
+        await asyncio.sleep(0.15)
+    return data
+
+
+class TestFreeIntervalCorrelations:
+    async def test_free_iv_auto_sources_generated(self, client: AsyncClient, user_a: dict) -> None:
+        """free_intervals metric should produce free_iv_count and free_iv_range auto-sources."""
+        token = user_a["token"]
+        m = await _create_free_iv_metric(client, token, name="FreeIvCorr", metric_type="number")
+        mid = m["id"]
+        # Also create a simple metric to have correlation pairs
+        m2 = await create_metric(client, token, name="NumRef", metric_type="number")
+
+        for day in range(1, 16):
+            date_str = f"2026-01-{day:02d}"
+            await _create_free_iv_entry(client, token, mid, date_str, day * 10, "10:00", "11:00")
+            if day % 3 == 0:
+                await _create_free_iv_entry(client, token, mid, date_str, day * 5, "14:00", "15:30")
+            await create_entry(client, token, m2["id"], date_str, day * 2)
+
+        resp = await client.post(
+            "/api/analytics/correlation-report",
+            json={"start": "2026-01-01", "end": "2026-01-31"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        report_id = resp.json()["report_id"]
+
+        data = await _wait_for_report(client, token)
+        assert data["report"]["status"] == "done"
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        all_keys: set[str] = set()
+        for p in pairs_data["pairs"]:
+            all_keys.add(p["source_key_a"])
+            all_keys.add(p["source_key_b"])
+
+        # free_iv_count must be generated
+        assert any(f"free_iv_count:metric:{mid}" in k for k in all_keys), (
+            f"Expected free_iv_count auto-source for metric {mid}, got keys: "
+            f"{sorted(k for k in all_keys if str(mid) in k)}"
+        )
+
+        # No interval-bound sources (metric should not have per-interval sources)
+        interval_keys = [k for k in all_keys if f"metric:{mid}:interval:" in k]
+        assert interval_keys == [], (
+            f"free_intervals metric should not produce per-interval sources, got: {interval_keys}"
+        )

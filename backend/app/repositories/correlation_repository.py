@@ -14,7 +14,7 @@ class CorrelationRepository(BaseRepository):
 
     async def load_enabled_metrics(self) -> list[asyncpg.Record]:
         return await self.conn.fetch(
-            """SELECT md.id, md.name, md.type, md.is_checkpoint, ic.value_type AS ic_value_type
+            """SELECT md.id, md.name, md.type, md.is_checkpoint, md.interval_binding, ic.value_type AS ic_value_type
                FROM metric_definitions md
                LEFT JOIN integration_config ic ON ic.metric_id = md.id
                WHERE md.user_id = $1 AND md.enabled = TRUE ORDER BY md.sort_order""",
