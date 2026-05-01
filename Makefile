@@ -104,9 +104,9 @@ logs-backend:
 
 # ─── Virtual environment ───
 
-backend/venv/bin/activate: backend/requirements.txt backend/requirements-test.txt
+backend/venv/bin/activate: backend/pyproject.toml
 	python3 -m venv backend/venv
-	backend/venv/bin/pip install -r backend/requirements.txt -r backend/requirements-test.txt
+	backend/venv/bin/pip install -e backend
 	@touch $@
 
 venv: backend/venv/bin/activate ## Создать/обновить виртуальное окружение
