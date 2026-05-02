@@ -311,18 +311,21 @@ class AnalyticsRepository(BaseRepository):
     async def fetch_entries_values_with_checkpoint(
         self, metric_id: int, value_table: str, extra_cols: str,
         start: date_type, end: date_type, checkpoint_id: int | None = None,
+        *, free_interval_only: bool = False,
     ) -> list[asyncpg.Record]:
-        checkpoint_filter = ""
+        extra_filter = ""
         params: list = [metric_id, start, end, self.user_id]
         if checkpoint_id is not None:
-            checkpoint_filter = " AND e.checkpoint_id = $5"
+            extra_filter += f" AND e.checkpoint_id = ${len(params) + 1}"
             params.append(checkpoint_id)
+        if free_interval_only:
+            extra_filter += " AND e.is_free_interval = true"
         return await self.conn.fetch(
             f"""SELECT e.date, v.value{extra_cols}
                 FROM entries e
                 JOIN {value_table} v ON v.entry_id = e.id
                 WHERE e.metric_id = $1 AND e.date >= $2 AND e.date <= $3
-                  AND e.user_id = $4{checkpoint_filter}
+                  AND e.user_id = $4{extra_filter}
                 ORDER BY e.date""",
             *params,
         )

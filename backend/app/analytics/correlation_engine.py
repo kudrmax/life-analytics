@@ -235,8 +235,11 @@ class CorrelationEngine:
                     sk.metric_id, mt, self._start_date, self._end_date, self._user_id, interval_id=sk.interval_id,
                 )
             else:
+                m = self._metrics_by_id.get(sk.metric_id, {})
+                fio = m.get("interval_binding") == "free_intervals"
                 self._source_data[i] = await self._fetcher.values_by_date_for_checkpoint(
                     sk.metric_id, mt, self._start_date, self._end_date, self._user_id, checkpoint_id=sk.checkpoint_id,
+                    free_interval_only=fio,
                 )
         self._qt.mark(f"fetch_{len(self._sources)}_sources")
 
@@ -462,7 +465,7 @@ class CorrelationEngine:
                 mid = sk.auto_parent_metric_id
                 if mid is not None:
                     mt = self._metrics_by_id[mid]["type"] if mid in self._metrics_by_id else MetricType.number
-                    raw = await self._fetcher.values_list_by_date(mid, mt, self._start_date, self._end_date)
+                    raw = await self._fetcher.values_list_by_date(mid, mt, self._start_date, self._end_date, free_interval_only=True)
                     dur_data: dict[str, list[float]] | None = None
                     if sk.auto_type in (
                         AutoSourceType.FREE_IV_AVG_DUR,

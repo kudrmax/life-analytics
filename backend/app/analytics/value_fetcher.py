@@ -27,11 +27,14 @@ class ValueFetcher:
         end_date: date_type,
         user_id: int,
         checkpoint_id: int | None = None,
+        *,
+        free_interval_only: bool = False,
     ) -> dict[str, float]:
         """Get values by date for a metric, optionally filtered by checkpoint."""
         value_table, extra_cols = ValueConverter.get_value_table(metric_type)
         rows = await self._repo.fetch_entries_values_with_checkpoint(
             metric_id, value_table, extra_cols, start_date, end_date, checkpoint_id,
+            free_interval_only=free_interval_only,
         )
         return ValueConverter.aggregate_by_date(rows, metric_type)
 
@@ -102,15 +105,18 @@ class ValueFetcher:
         metric_type: str,
         start_date: date_type,
         end_date: date_type,
+        *,
+        free_interval_only: bool = False,
     ) -> dict[str, list[float]]:
         """Get per-day list of numeric values WITHOUT aggregation.
 
-        Used by FREE_CP_MAX/MIN/RANGE auto-sources to compute max/min/range
-        from free_checkpoint entries.
+        Used by FREE_CP_MAX/MIN/RANGE and FREE_IV auto-sources to compute
+        max/min/range from free_checkpoint/free_interval entries.
         """
         value_table, extra_cols = ValueConverter.get_value_table(metric_type)
         rows = await self._repo.fetch_entries_values_with_checkpoint(
             metric_id, value_table, extra_cols, start_date, end_date,
+            free_interval_only=free_interval_only,
         )
         day_values: dict[str, list[float]] = defaultdict(list)
         for r in rows:

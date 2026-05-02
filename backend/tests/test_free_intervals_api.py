@@ -380,3 +380,79 @@ class TestFreeIntervalCorrelations:
         assert interval_keys == [], (
             f"free_intervals metric should not produce per-interval sources, got: {interval_keys}"
         )
+
+    async def test_switched_metric_ignores_old_entries(self, client: AsyncClient, user_a: dict) -> None:
+        """After switching by_interval→free_intervals, old entries are excluded from correlations."""
+        from tests.conftest import create_checkpoint
+        token = user_a["token"]
+
+        # Create checkpoints and intervals
+        await create_checkpoint(client, token, "AM")
+        await create_checkpoint(client, token, "PM")
+        resp = await client.get("/api/checkpoints/intervals", headers=auth_headers(token))
+        intervals = resp.json()
+        assert len(intervals) >= 1
+        iv_id = intervals[0]["id"]
+
+        # Create by_interval metric
+        resp = await client.post("/api/metrics", json={
+            "name": "SwitchTest", "type": "number",
+            "interval_binding": "by_interval", "interval_ids": [iv_id],
+        }, headers=auth_headers(token))
+        assert resp.status_code == 201
+        mid = resp.json()["id"]
+
+        # Create old by_interval entries (value=999)
+        for day in range(1, 11):
+            await create_entry(client, token, mid, f"2026-01-{day:02d}", 999, interval_id=iv_id)
+
+        # Switch to free_intervals
+        resp = await client.patch(f"/api/metrics/{mid}", json={
+            "interval_binding": "free_intervals",
+        }, headers=auth_headers(token))
+        assert resp.status_code == 200
+        assert resp.json()["interval_binding"] == "free_intervals"
+
+        # Create new free_interval entries (value=1)
+        for day in range(1, 16):
+            await _create_free_iv_entry(client, token, mid, f"2026-01-{day:02d}", 1, "10:00", "11:00")
+            if day % 3 == 0:
+                await _create_free_iv_entry(client, token, mid, f"2026-01-{day:02d}", 2, "14:00", "15:30")
+
+        # Also create a reference metric
+        m2 = await create_metric(client, token, name="Ref", metric_type="number")
+        for day in range(1, 16):
+            await create_entry(client, token, m2["id"], f"2026-01-{day:02d}", day)
+
+        # Run correlations
+        resp = await client.post(
+            "/api/analytics/correlation-report",
+            json={"start": "2026-01-01", "end": "2026-01-31"},
+            headers=auth_headers(token),
+        )
+        assert resp.status_code == 200
+        report_id = resp.json()["report_id"]
+        data = await _wait_for_report(client, token)
+        assert data["report"]["status"] == "done"
+
+        resp = await client.get(
+            f"/api/analytics/correlation-report/{report_id}/pairs?limit=500",
+            headers=auth_headers(token),
+        )
+        pairs_data = resp.json()
+
+        all_keys: set[str] = set()
+        for p in pairs_data["pairs"]:
+            all_keys.add(p["source_key_a"])
+            all_keys.add(p["source_key_b"])
+
+        # No per-interval sources from old binding
+        interval_keys = [k for k in all_keys if f"metric:{mid}:interval:" in k]
+        assert interval_keys == [], (
+            f"Switched metric should not have per-interval sources, got: {interval_keys}"
+        )
+
+        # free_iv_count should exist
+        assert any(f"free_iv_count:metric:{mid}" in k for k in all_keys), (
+            f"Expected free_iv_count for switched metric {mid}"
+        )
