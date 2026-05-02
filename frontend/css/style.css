@@ -504,6 +504,16 @@ h3 {
     color: #fff;
 }
 
+.scale-buttons.vertical { flex-direction: column; }
+.scale-buttons.vertical .scale-btn {
+    flex: 0 0 auto;
+    white-space: normal;
+    text-align: left;
+    text-overflow: clip;
+    padding: 10px 12px;
+    line-height: 1.35;
+}
+
 /* ─── Bool Buttons ─── */
 .bool-buttons {
     display: flex;

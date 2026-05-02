@@ -1398,7 +1398,8 @@ function renderScale(val, min, max, step, labels) {
         const title = (labels && labels[String(v)]) ? ` title="${v}"` : '';
         buttons += `<button class="scale-btn ${val === v ? 'active' : ''}" data-value="${v}"${title}>${text}</button>`;
     }
-    return `<div class="scale-buttons">${buttons}</div>`;
+    const hasLabels = labels && Object.keys(labels).length > 0;
+    return `<div class="scale-buttons${hasLabels ? ' vertical' : ''}">${buttons}</div>`;
 }
 
 function renderEnum(selectedIds, options, multiSelect, hasEntry) {
