@@ -8,15 +8,12 @@ Life Analytics — multi-user daily metrics tracker. FastAPI + PostgreSQL backen
 
 ## Commands
 
+**Проект работает ТОЛЬКО через Docker Compose. Никаких локальных запусков (venv, `python -m http.server`, прямой uvicorn) — не предлагать и не использовать.**
+
 ```bash
-# Run everything (Docker Compose — preferred)
+# Запуск
 make up                     # запустить сервисы (быстро, офлайн)
 make build-up               # пересобрать образы и запустить (после изменений кода)
-
-# Run locally (without Docker — needs local PostgreSQL)
-cd backend && source venv/bin/activate
-python -m uvicorn app.main:app --reload --port 8000
-cd frontend && python -m http.server 3000
 
 # Logs
 make logs                   # all services
@@ -46,7 +43,12 @@ make backup-now             # run one-off backup immediately
 
 **URLs:** Frontend :3000, Backend :8000, API docs :8000/docs, Health check: GET /api/health
 
-Frontend is served by `python -m http.server` (local) or nginx (Docker). Both serve files from disk on each request — no restart needed for JS/CSS/HTML changes, just refresh the browser.
+Frontend раздаётся nginx из контейнера. `frontend/Dockerfile` **копирует** `js/`, `css/`, `index.html` и т.п. внутрь image при build (нет bind-mount). Это значит: **любое изменение фронта требует пересборки контейнера** — без неё nginx продолжит раздавать старую версию, F5 в браузере ничего не покажет.
+
+- Только фронт менялся: `docker compose up -d --build frontend` (быстро).
+- Менялся бэк или несколько частей: `make build-up`.
+
+Проверка, что новый код доехал: `curl -s http://localhost:3000/js/app.js | grep -c "<имя_новой_функции>"`. Если `0` — пересборка не выполнена.
 
 ## Testing
 
