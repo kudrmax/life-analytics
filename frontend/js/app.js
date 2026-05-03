@@ -1415,6 +1415,49 @@ function renderEnum(selectedIds, options, multiSelect, hasEntry) {
     return `<div class="enum-buttons ${multiSelect ? 'multi' : 'single'}" data-multi-select="${multiSelect ? 'true' : 'false'}">${buttons}</div>`;
 }
 
+// ─── Free interval input area: единая точка управления режимом ───
+// modes: 'idle' | 'editing' | 'adding'
+// payload editing: { entryId, label }   (label, например, "08:00–09:00")
+// payload adding:  { timeStart, timeEnd }
+function setFreeIntervalMode(card, mode, payload = {}) {
+    const inputArea = card.querySelector('.free-interval-input-area');
+    if (!inputArea) return;
+
+    delete card.dataset.editingEntryId;
+    delete card.dataset.pendingTimeStart;
+    delete card.dataset.pendingTimeEnd;
+    delete card.dataset.mode;
+    const oldHeader = inputArea.querySelector('.free-interval-input-header');
+    if (oldHeader) oldHeader.remove();
+    const oldPendingLabel = inputArea.querySelector('.pending-range-label');
+    if (oldPendingLabel) oldPendingLabel.remove();
+
+    if (mode === 'idle') {
+        inputArea.style.display = 'none';
+        return;
+    }
+
+    card.dataset.mode = mode;
+    let labelText = '';
+    if (mode === 'editing') {
+        card.dataset.editingEntryId = String(payload.entryId);
+        labelText = payload.label ? `Редактирование ${payload.label}` : 'Редактирование';
+    } else if (mode === 'adding') {
+        card.dataset.pendingTimeStart = payload.timeStart;
+        card.dataset.pendingTimeEnd = payload.timeEnd;
+        labelText = `${payload.timeStart} → ${payload.timeEnd}`;
+    }
+
+    const header = document.createElement('div');
+    header.className = 'free-interval-input-header';
+    header.innerHTML = `<span class="free-interval-input-label">${labelText}</span>`
+        + `<button type="button" class="btn-icon-tiny" data-action="cancel-free-interval-input" title="Отменить"><i data-lucide="x"></i></button>`;
+    inputArea.insertBefore(header, inputArea.firstChild);
+    inputArea.style.display = '';
+
+    if (window.lucide) lucide.createIcons();
+}
+
 // ─── Event Handlers ───
 async function handleNumberChange(e) {
     const input = e.target;
@@ -1463,7 +1506,7 @@ async function handleNumberChange(e) {
         const editId = card.dataset.editingEntryId;
         if (editId) {
             api.updateEntry(parseInt(editId), { value: parsed })
-                .then(() => { delete card.dataset.editingEntryId; renderTodayForm(true); })
+                .then(() => { setFreeIntervalMode(card, 'idle'); renderTodayForm(true); })
                 .catch(err => { alert('Ошибка: ' + err.message); });
             return;
         }
@@ -1471,7 +1514,7 @@ async function handleNumberChange(e) {
         const te = card.dataset.pendingTimeEnd;
         if (!ts || !te) return;
         api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: parsed, time_start: ts, time_end: te })
-            .then(() => { delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd; renderTodayForm(true); })
+            .then(() => { setFreeIntervalMode(card, 'idle'); renderTodayForm(true); })
             .catch(err => { alert('Ошибка: ' + err.message); });
         return;
     }
@@ -1654,13 +1697,28 @@ async function handleFormClick(e) {
         return;
     }
 
-    // Free interval: edit value — inline replace span with input
+    // Free interval: cancel current input (close header + hide input area)
+    if (btn.dataset.action === 'cancel-free-interval-input') {
+        const card = btn.closest('.metric-card');
+        if (card) setFreeIntervalMode(card, 'idle');
+        return;
+    }
+
+    // Free interval: edit value — toggle input area for clicked entry
     if (btn.dataset.action === 'edit-free-interval-value') {
         const card = btn.closest('.metric-card');
         if (!card) return;
-        card.dataset.editingEntryId = btn.dataset.entryId;
-        const inputArea = card.querySelector('.free-interval-input-area');
-        if (inputArea) inputArea.style.display = '';
+        const clickedId = btn.dataset.entryId;
+        if (card.dataset.mode === 'editing' && card.dataset.editingEntryId === clickedId) {
+            setFreeIntervalMode(card, 'idle');
+            return;
+        }
+        const item = btn.closest('.free-interval-entry-item');
+        const tlbl = item ? item.querySelector('.time-range-label') : null;
+        const ts = tlbl ? tlbl.dataset.timeStart : '';
+        const te = tlbl ? tlbl.dataset.timeEnd : '';
+        const label = (ts && te) ? `${ts}–${te}` : '';
+        setFreeIntervalMode(card, 'editing', { entryId: clickedId, label });
         return;
     }
 
@@ -1712,22 +1770,7 @@ async function handleFormClick(e) {
             if (lbl) existingEntries.push({ time_start: lbl.dataset.timeStart, time_end: lbl.dataset.timeEnd });
         });
         showTimeRangePicker(existingEntries, (timeStart, timeEnd) => {
-            // Store chosen time range on card, show input area
-            card.dataset.pendingTimeStart = timeStart;
-            card.dataset.pendingTimeEnd = timeEnd;
-            const inputArea = card.querySelector('.free-interval-input-area');
-            if (inputArea) {
-                inputArea.style.display = '';
-                // Add a label showing the chosen range
-                let lbl = inputArea.querySelector('.pending-range-label');
-                if (!lbl) {
-                    lbl = document.createElement('div');
-                    lbl.className = 'pending-range-label';
-                    lbl.style.cssText = 'font-size:12px;color:var(--primary);margin-bottom:4px;font-weight:500';
-                    inputArea.insertBefore(lbl, inputArea.firstChild);
-                }
-                lbl.textContent = `${timeStart} → ${timeEnd}`;
-            }
+            setFreeIntervalMode(card, 'adding', { timeStart, timeEnd });
         });
         return;
     }
@@ -1847,7 +1890,7 @@ async function handleFormClick(e) {
             const editId = card.dataset.editingEntryId;
             if (editId) {
                 api.updateEntry(parseInt(editId), { value: freeValue })
-                    .then(() => { delete card.dataset.editingEntryId; renderTodayForm(true); })
+                    .then(() => { setFreeIntervalMode(card, 'idle'); renderTodayForm(true); })
                     .catch(err => { alert('Ошибка: ' + err.message); btn.disabled = false; });
                 return;
             }
@@ -1855,7 +1898,7 @@ async function handleFormClick(e) {
             const timeEnd = card.dataset.pendingTimeEnd;
             if (!timeStart || !timeEnd) return;
             api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: freeValue, time_start: timeStart, time_end: timeEnd })
-                .then(() => { delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd; renderTodayForm(true); })
+                .then(() => { setFreeIntervalMode(card, 'idle'); renderTodayForm(true); })
                 .catch(err => { alert('Ошибка: ' + err.message); btn.disabled = false; });
             return;
         }
@@ -1966,7 +2009,7 @@ async function handleFormClick(e) {
             if (editId) {
                 btn.remove();
                 api.updateEntry(parseInt(editId), { value: 0 })
-                    .then(() => { delete card.dataset.editingEntryId; renderTodayForm(true); })
+                    .then(() => { setFreeIntervalMode(card, 'idle'); renderTodayForm(true); })
                     .catch(err => { alert('Ошибка: ' + err.message); });
                 return;
             }
@@ -1975,7 +2018,7 @@ async function handleFormClick(e) {
             if (!ts || !te) return;
             btn.remove();
             api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: 0, time_start: ts, time_end: te })
-                .then(() => { delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd; renderTodayForm(true); })
+                .then(() => { setFreeIntervalMode(card, 'idle'); renderTodayForm(true); })
                 .catch(err => { alert('Ошибка: ' + err.message); });
             return;
         }
@@ -2009,7 +2052,7 @@ async function handleFormClick(e) {
                 const zeroBtn = container.querySelector('.number-zero-btn');
                 if (zeroBtn) zeroBtn.remove();
                 api.updateEntry(parseInt(editId), { value: newVal })
-                    .then(() => { delete card.dataset.editingEntryId; renderTodayForm(true); })
+                    .then(() => { setFreeIntervalMode(card, 'idle'); renderTodayForm(true); })
                     .catch(err => { alert('Ошибка: ' + err.message); });
                 return;
             }
@@ -2019,7 +2062,7 @@ async function handleFormClick(e) {
             const zeroBtn = container.querySelector('.number-zero-btn');
             if (zeroBtn) zeroBtn.remove();
             api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: newVal, time_start: ts, time_end: te })
-                .then(() => { delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd; renderTodayForm(true); })
+                .then(() => { setFreeIntervalMode(card, 'idle'); renderTodayForm(true); })
                 .catch(err => { alert('Ошибка: ' + err.message); });
             return;
         }
@@ -2053,14 +2096,13 @@ async function handleFormClick(e) {
                     const editId = card.dataset.editingEntryId;
                     if (editId) {
                         await api.updateEntry(parseInt(editId), { value: newVal });
-                        delete card.dataset.editingEntryId;
                     } else {
                         const ts = card.dataset.pendingTimeStart;
                         const te = card.dataset.pendingTimeEnd;
                         if (!ts || !te) return;
                         await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: newVal, time_start: ts, time_end: te });
-                        delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd;
                     }
+                    setFreeIntervalMode(card, 'idle');
                 } else {
                     await saveDaily(metricId, entryId, newVal, bindingId, bindingType);
                 }
@@ -2098,14 +2140,13 @@ async function handleFormClick(e) {
                     const editId = card.dataset.editingEntryId;
                     if (editId) {
                         await api.updateEntry(parseInt(editId), { value: minutes });
-                        delete card.dataset.editingEntryId;
                     } else {
                         const ts = card.dataset.pendingTimeStart;
                         const te = card.dataset.pendingTimeEnd;
                         if (!ts || !te) return;
                         await api.createEntry({ metric_id: parseInt(metricId), date: currentDate, value: minutes, time_start: ts, time_end: te });
-                        delete card.dataset.pendingTimeStart; delete card.dataset.pendingTimeEnd;
                     }
+                    setFreeIntervalMode(card, 'idle');
                 } else {
                     await saveDaily(metricId, entryId, minutes, bindingId, bindingType);
                 }

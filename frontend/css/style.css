@@ -2926,6 +2926,19 @@ emoji-picker {
     margin-bottom: 6px;
 }
 
+.free-interval-input-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.free-interval-input-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--primary);
+}
+
 /* Time Range Picker — vertical calendar timeline */
 .trp-timeline {
     position: relative;
