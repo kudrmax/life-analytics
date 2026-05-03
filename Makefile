@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help up build-up down delete reset logs logs-backend venv ensure-db test test-unit test-int test-user migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy ssh prod-logs prod-status prod-db lint-js setup
+.PHONY: help up build-up down delete reset logs logs-backend venv ensure-db test test-unit test-int test-user migrate restart update status backup-up backup-down backup-logs backup-now backup-restore deploy prod-logs prod-status prod-db lint-js setup
 
 .DEFAULT_GOAL := help
 
@@ -34,7 +34,6 @@ help: ## Показать эту справку
 	@echo ""
 	@echo "  Production (с локальной машины, нужен VPS_HOST):"
 	@echo "    make deploy          Ручной деплой на VPS через SSH"
-	@echo "    make ssh             Подключиться к VPS"
 	@echo "    make prod-logs       Логи production через SSH"
 	@echo "    make prod-status     Статус контейнеров на production"
 	@echo "    make prod-db         Подключиться к production БД"
@@ -168,10 +167,6 @@ status:
 deploy:
 	@test -n "$$VPS_HOST" || (echo "Error: VPS_HOST not set. Usage: VPS_HOST=1.2.3.4 make deploy" && exit 1)
 	ssh root@$${VPS_HOST} "cd /opt/life-analytics && git pull origin master && docker compose up -d --build --remove-orphans && docker image prune -f"
-
-ssh:
-	@test -n "$$VPS_HOST" || (echo "Error: VPS_HOST not set. Usage: VPS_HOST=1.2.3.4 make ssh" && exit 1)
-	ssh root@$${VPS_HOST}
 
 prod-logs:
 	@test -n "$$VPS_HOST" || (echo "Error: VPS_HOST not set." && exit 1)
