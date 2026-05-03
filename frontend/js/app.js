@@ -2423,8 +2423,7 @@ async function renderCharts(container) {
         return;
     }
 
-    const end = todayStr();
-    const start = daysAgo(30);
+    const { start, end } = await getDefaultDateRange();
 
     container.innerHTML = `
         <div class="stats-header">
@@ -2443,16 +2442,7 @@ async function renderCharts(container) {
 
     if (window.lucide) lucide.createIcons();
 
-    const chartsStartPicker = createDatePicker('charts-start-picker', start, () => {
-        loadChartsTrends(chartsStartPicker.getValue(), chartsEndPicker.getValue());
-    });
-    const chartsEndPicker = createDatePicker('charts-end-picker', end, () => {
-        loadChartsTrends(chartsStartPicker.getValue(), chartsEndPicker.getValue());
-    });
-
-    document.getElementById('charts-refresh').addEventListener('click', () => {
-        loadChartsTrends(chartsStartPicker.getValue(), chartsEndPicker.getValue());
-    });
+    setupDateRangeControls('charts', start, end, loadChartsTrends);
 
     await loadChartsTrends(start, end);
 }
@@ -2984,9 +2974,7 @@ async function renderAnalysis(container) {
         return;
     }
 
-    const end = todayStr();
-    const range = await api.getDateRange();
-    const start = range.min_date || daysAgo(30);
+    const { start, end } = await getDefaultDateRange();
 
     container.innerHTML = `
         <div class="stats-header">
@@ -3005,16 +2993,7 @@ async function renderAnalysis(container) {
 
     if (window.lucide) lucide.createIcons();
 
-    const analysisStartPicker = createDatePicker('analysis-start-picker', start, () => {
-        loadAnalysisCorrelation(analysisStartPicker.getValue(), analysisEndPicker.getValue());
-    });
-    const analysisEndPicker = createDatePicker('analysis-end-picker', end, () => {
-        loadAnalysisCorrelation(analysisStartPicker.getValue(), analysisEndPicker.getValue());
-    });
-
-    document.getElementById('analysis-refresh').addEventListener('click', () => {
-        loadAnalysisCorrelation(analysisStartPicker.getValue(), analysisEndPicker.getValue());
-    });
+    setupDateRangeControls('analysis', start, end, loadAnalysisCorrelation);
 
     await loadAnalysisCorrelation(start, end);
 }
@@ -3991,8 +3970,7 @@ async function renderMetricDetail(container, metricId) {
         return;
     }
 
-    const end = todayStr();
-    const start = daysAgo(90);
+    const { start, end } = await getDefaultDateRange();
 
     container.innerHTML = `
         <div class="detail-header">
@@ -4017,17 +3995,8 @@ async function renderMetricDetail(container, metricId) {
 
     if (window.lucide) lucide.createIcons();
 
-    const detailStartPicker = createDatePicker('detail-start-picker', start, () => {
-        loadMetricDetail(metricId, metric, detailStartPicker.getValue(), detailEndPicker.getValue());
-    });
-    const detailEndPicker = createDatePicker('detail-end-picker', end, () => {
-        loadMetricDetail(metricId, metric, detailStartPicker.getValue(), detailEndPicker.getValue());
-    });
-
+    setupDateRangeControls('detail', start, end, (s, e) => loadMetricDetail(metricId, metric, s, e));
     document.getElementById('detail-back').addEventListener('click', () => navigateTo('charts'));
-    document.getElementById('detail-refresh').addEventListener('click', () => {
-        loadMetricDetail(metricId, metric, detailStartPicker.getValue(), detailEndPicker.getValue());
-    });
 
     await loadMetricDetail(metricId, metric, start, end);
 }
@@ -8286,6 +8255,30 @@ function createDatePicker(containerId, initialValue, onChange) {
             container.innerHTML = '';
             container.classList.remove('date-picker');
         }
+    };
+}
+
+async function getDefaultDateRange() {
+    const range = await api.getDateRange();
+    return {
+        start: range.min_date || daysAgo(30),
+        end: todayStr(),
+    };
+}
+
+function setupDateRangeControls(prefix, start, end, onChange) {
+    const startPicker = createDatePicker(`${prefix}-start-picker`, start, () => {
+        onChange(startPicker.getValue(), endPicker.getValue());
+    });
+    const endPicker = createDatePicker(`${prefix}-end-picker`, end, () => {
+        onChange(startPicker.getValue(), endPicker.getValue());
+    });
+    document.getElementById(`${prefix}-refresh`).addEventListener('click', () => {
+        onChange(startPicker.getValue(), endPicker.getValue());
+    });
+    return {
+        getStart: () => startPicker.getValue(),
+        getEnd: () => endPicker.getValue(),
     };
 }
 
